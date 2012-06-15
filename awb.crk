@@ -1,0 +1,1017 @@
+
+#import crack.ext._sdl SDL_Init, SDL_Event, SDL_Event_GetType, SDL_EventNew,
+#    SDL_PollEvent, SDL_SetVideoMode, SDL_Quit, SDL_INIT_EVERYTHING,
+#    SDL_RESIZABLE;
+import crack.ascii parseInt;
+import crack.lang CString, AssertionError;
+import crack.cmdline CmdOptions, Option, CMD_STR;
+import crack.sys argv, exit;
+import crack.time Time;
+import crack.cont.array Array;
+import crack.game.sdl fillRect, SDLApp = App, Coord, KeyboardEvent, KeyboardHandler,
+    ResizeEvent, ResizeHandler, Surface;
+import crack.game.sdlgfx drawLine, drawRect, drawString, RED, BLACK, BLUE, GREEN,
+    WHITE, YELLOW;
+import crack.io cout, cerr;
+import crack.midi.alsa Port, Queue, Sequencer, SND_SEQ_OPEN_INPUT, SND_SEQ_OPEN_OUTPUT;
+import crack.midi.event merge, ChannelEvent, Event, NoteOn, NoteOff,
+    ProgramChange, Track;
+import crack.midi.fluidsynth FluidSettings, FluidSynth;
+#import crack.ccl CCLInterpreter;
+
+@import crack.ann implements, interface;
+
+## Used as a marker for the end of the track.
+class EndEvent : Event {
+    oper init(uint time) : Event(time) {}
+
+    typeof(EndEvent(0).toMidiString(0)) toMidiString(byte status) {
+        return null;
+    }
+
+    Event clone() {
+        return EndEvent(time);
+    }
+}
+
+#SDL_Init(SDL_INIT_EVERYTHING);
+#SDL_SetVideoMode(640, 480, 24, SDL_RESIZABLE);
+#
+#SDL_Event e = SDL_EventNew();
+#while (true) {
+#    if (SDL_PollEvent(e)) {
+#        eventType := SDL_Event_GetType(e);
+#        if (eventType == SDL_KEYDOWN)
+#
+#    }
+#}
+#SDL_Quit();
+
+CmdOptions cl = [Option('port', 'p', 'Midi port (e.g. "20:0")', '', CMD_STR)];
+cl.parse(argv);
+
+int clientNum, portNum;
+portName := cl['port'].value;
+if (!portName) {
+#    cerr `Usage: -p <port-name>\n`;
+#    exit(1);
+} else {
+    cout `parsing port name\n`;
+    colonPos := portName.lfind(b':');
+    if (colonPos == -1) {
+        cerr `Invalid port name (need device:port, do aplaymidi -l to see \
+options)\n`;
+        exit(1);
+    }
+
+    clientNum = parseInt(portName.slice(0, colonPos));
+    portNum = parseInt(portName.slice(colonPos + 1));
+}
+cout `client num = $clientNum, port num = $portNum\n`;
+
+Array[byte] MAJ_CHORD = [0, 4, 7];
+
+@interface Instrument {
+    @abstract void noteOn(byte note, byte velocity);
+    @abstract void noteOff(byte note);
+    @abstract void programChange(byte program);
+
+    ## Stop playing all notes.
+    @abstract void stop();
+
+    void chord(byte primary, bool start) {
+        if (start) {
+            for (offset :in MAJ_CHORD)
+                noteOn(primary + offset, 127);
+        } else {
+            for (offset :in MAJ_CHORD)
+                noteOff(primary + offset);
+        }
+    }
+
+    void onEvent(Event event) {
+        if (no := NoteOn.cast(event, null)) {
+            noteOn(no.note, no.velocity);
+        } else if (no := NoteOff.cast(event, null)) {
+            noteOff(no.note);
+        } else if (pc := ProgramChange.cast(event, null)) {
+            programChange(pc.program);
+        }
+    }
+}
+
+class Orchestra : Object @implements Instrument {
+    class Inst { Instrument i; oper init(Instrument i) : i = i {} }
+    Array[Inst] __instruments;
+    oper init(uint size) : __instruments(size) {}
+    void append(Instrument instrument) { __instruments.append(Inst(instrument)); }
+    void noteOn(byte note, byte velocity) {
+        __instruments[0].i.noteOn(note, velocity);
+    }
+
+    void noteOff(byte note) { __instruments[0].i.noteOff(note); }
+
+    void programChange(byte program) {
+        __instruments[0].i.programChange(program);
+    }
+
+    void onEvent(Event event) {
+        if (e := ChannelEvent.cast(event, null))
+            __instruments[e.channel].i.onEvent(event);
+    }
+
+    void stop() {
+        for (inst :in __instruments)
+            inst.i.stop();
+    }
+}
+
+
+class MidiInstrument : Object @implements Instrument {
+    Port port;
+    byte channel;
+    oper init(Port port, byte channel) : port = port, channel = channel {}
+
+    void noteOn(byte note, byte velocity) {
+        port.send(NoteOn(0, channel, note, velocity));
+    }
+
+    void noteOff(byte note) {
+        port.send(NoteOff(0, channel, note, 0));
+    }
+
+    void programChange(byte program) {
+        port.send(ProgramChange(0, channel, program));
+    }
+
+    void stop() {
+        throw AssertionError('need to implement stop for MidiInstrument');
+    }
+}
+
+class FluidSynthInstrument : Object @implements Instrument {
+    FluidSynth synth;
+    byte channel;
+
+    oper init(FluidSynth synth, byte channel) :
+        synth = synth,
+        channel = channel {
+    }
+
+    void noteOn(byte note, byte velocity) {
+        synth.noteOn(channel, note, velocity);
+    }
+
+    void noteOff(byte note) {
+        synth.noteOff(channel, note);
+    }
+
+    void programChange(byte program) {
+        synth.programChange(channel, program);
+    }
+
+    void stop() {
+        synth.allNotesOff(channel);
+    }
+}
+
+Array[byte] CHORD_PRIMARIES = [57, 59, 60, 62, 64, 65, 67];
+const DRUM := 9;
+
+class ChordPlayer {
+    SDLApp app = {640, 480};
+    Instrument instrument;
+
+    class KeyHandler : Object @implements KeyboardHandler {
+        SDLApp app;
+        Instrument instrument;
+        oper init(SDLApp app, Instrument instrument) : app = app,
+            instrument = instrument {
+        }
+
+        bool onKeyDown(KeyboardEvent event) {
+            sym := event.sym;
+            if (sym == b'q')
+                app.terminate();
+            else if (sym <= b'g' && sym >= b'a') {
+                instrument.chord(CHORD_PRIMARIES[sym - b'a'], true);
+            }
+
+            return true;
+        }
+
+        bool onKeyUp(KeyboardEvent event) {
+            sym := event.sym;
+            if (sym <= b'g' && sym >= b'a') {
+                instrument.chord(CHORD_PRIMARIES[sym - b'a'], false);
+            }
+
+            return true;
+        }
+    }
+
+    oper init(Instrument instrument) : instrument = instrument {
+        app.resizable = true;
+        app.initialize();
+        app.addKeyboardHandler(KeyHandler(app, instrument));
+    }
+
+    void run() {
+        app.mainloop();
+    }
+}
+
+class Widget {
+
+    Coord pos;
+
+    oper init(Coord pos) : pos = pos {}
+
+    Coord getMinSize() { return Coord(0, 0); }
+
+    void draw(Surface surface) {}
+
+    void setPos(Coord newPos) { pos = newPos; }
+}
+
+class Button : Widget {
+    CString text;
+    Coord size;
+
+    uint32 background = 0x202020FF, foreground = WHITE;
+    oper init(Coord pos, CString text) :
+        Widget(pos),
+        text = text,
+        size(text.size * 8 + 2, 10) {
+    }
+
+    Coord getMinSize() { return size; }
+
+    void draw(Surface surface) {
+        fillRect(surface, pos, size, background);
+        drawString(surface, pos + Coord(1, 1), text, foreground);
+    }
+}
+
+class Panel : Widget {
+    Array[Widget] widgets = {};
+    Coord minSize;
+
+    oper init(Coord pos) : Widget(pos) {}
+    oper init(uint size) : Widget(null), widgets(size) {}
+
+    void append(Widget widget) { widgets.append(widget); minSize = null; }
+
+    Coord getMinSize() {
+        if (!minSize) {
+            minSize = Coord(0, 0);
+            for (child :in widgets) {
+                childMin := child.getMinSize();
+                minSize.x += childMin.x;
+                if (childMin.y > minSize.y)
+                    minSize.y = childMin.y;
+            }
+            minSize.x += 4 * (widgets.count() + 1);
+            minSize.y += 8;
+        }
+        return minSize;
+    }
+
+    void draw(Surface surface) {
+        drawRect(surface, pos, pos + getMinSize(), BLUE);
+        int xoff;
+        for (child :in widgets) {
+            xoff += 5;
+            child.pos = Coord(pos.x + xoff, pos.y + 5);
+            xoff += child.getMinSize().x;
+            child.draw(surface);
+        }
+    }
+}
+
+## Track widgets display a graphical representation of a track and its events.
+class TrackWidget : Widget {
+    Coord size;
+    Track model;
+    uint endTime;
+
+    # these are transient fields that only exist when we're drawing.
+    uint left, width;
+
+    oper init(Coord pos, Coord size, Track model, uint endTime) :
+        Widget(pos),
+        size = size,
+        model = model,
+        endTime = endTime {
+    }
+
+    uint16 __toX(uint t) {
+        return uint16(t * width / endTime + left);
+    }
+
+    void draw(Surface surface) {
+        fillRect(surface, pos, size, 0x202020);
+        drawString(surface, pos + Coord(0, (size.y - 8) / 2),
+                   CString(model.name),
+                   WHITE
+                   );
+        textWidth := model.name.size * 8;
+        left = pos.x + textWidth;
+        width = size.x - textWidth;
+
+        # first determine high and low notes
+        byte low = 0xff, high = 0;
+        for (event :in model) {
+            if (n := NoteOn.cast(event, null)) {
+                high = (n.note > high) ? n.note : high;
+                low = (n.note < low) ? n.note : low;
+            }
+        }
+
+        # if the track only has one note, split it out so the note is in the
+        # middle of the range
+        if (!(high - low)) {
+            if (low > 0) --low;
+            if (high < 0xff) ++high;
+        }
+
+        # now draw the events
+        Array[uint] startTime = {256};
+        for (int i; i < 256; ++i)
+            startTime.append(0);
+        for (event :in model) {
+            if (n := NoteOn.cast(event, null)) {
+                startTime[n.note] = n.time;
+            } else if (n := NoteOff.cast(event, null)) {
+                y := (n.note - low) * size.y / (high - low) + pos.y;
+                Coord
+                    a = {__toX(startTime[n.note]), y},
+                    b = {__toX(n.time), y};
+
+                drawLine(surface, a, b, YELLOW);
+            }
+        }
+    }
+}
+
+Array[String] programNames = [
+    'Acoustic Grand Piano',
+    'Bright Acoustic Piano',
+    'Electric Grand Piano',
+    'Honky-tonk Piano',
+    'Electric Piano 1',
+    'Electric Piano 2',
+    'Harpsichord',
+    'Clavi',
+    'Celesta',
+    'Glockenspiel',
+    'Music Box',
+    'Vibraphone',
+    'Marimba',
+    'Xylophone',
+    'Tubular Bells',
+    'Dulcimer',
+    'Drawbar Organ',
+    'Percussive Organ	',
+    'Rock Organ',
+    'Church Organ',
+    'Reed Organ',
+    'Accordion',
+    'Harmonica',
+    'Tango Accordion',
+    'Acoustic Guitar (nylon)',
+    'Acoustic Guitar (steel)',
+    'Electric Guitar (jazz)',
+    'Electric Guitar (clean)',
+    'Electric Guitar (muted)',
+    'Overdriven Guitar',
+    'Distortion Guitar',
+    'Guitar harmonics',
+    'Acoustic Bass',
+    'Electric Bass (finger)',
+    'Electric Bass (pick)',
+    'Fretless Bass',
+    'Slap Bass 1	',
+    'Slap Bass 2	',
+    'Synth Bass 1',
+    'Synth Bass 2',
+    'Violin',
+    'Viola',
+    'Cello',
+    'Contrabass',
+    'Tremolo Strings',
+    'Pizzicato Strings',
+    'Orchestral Harp',
+    'Timpani',
+    'String Ensemble 1',
+    'String Ensemble 2',
+    'SynthStrings 1',
+    'SynthStrings 2',
+    'Choir Aahs',
+    'Voice Oohs',
+    'Synth Voice',
+    'Orchestra Hit',
+    'Trumpet',
+    'Trombone',
+    'Tuba',
+    'Muted Trumpet',
+    'French Horn',
+    'Brass Section',
+    'SynthBrass 1',
+    'SynthBrass 2',
+    'Soprano Sax',
+    'Alto Sax',
+    'Tenor Sax',
+    'Baritone Sax',
+    'Oboe',
+    'English Horn',
+    'Bassoon',
+    'Clarinet',
+    'Piccolo',
+    'Flute',
+    'Recorder',
+    'Pan Flute',
+    'Blown Bottle',
+    'Shakuhachi',
+    'Whistle',
+    'Ocarina',
+    'Lead 1 (square)',
+    'Lead 2 (sawtooth)',
+    'Lead 3 (calliope)',
+    'Lead 4 (chiff)',
+    'Lead 5 (charang)',
+    'Lead 6 (voice)',
+    'Lead 7 (fifths)',
+    'Lead 8 (bass + lead)',
+    'Pad 1 (new age)',
+    'Pad 2 (warm)',
+    'Pad 3 (polysynth)',
+    'Pad 4 (choir)',
+    'Pad 5 (bowed)',
+    'Pad 6 (metallic)',
+    'Pad 7 (halo)',
+    'Pad 8 (sweep)',
+    'FX 1 (rain)',
+    'FX 2 (soundtrack)',
+    'FX 3 (crystal)',
+    'FX 4 (atmosphere)',
+    'FX 5 (brightness)',
+    'FX 6 (goblins)',
+    'FX 7 (echoes)',
+    'FX 8 (sci-fi)',
+    'Sitar',
+    'Banjo',
+    'Shamisen',
+    'Koto',
+    'Kalimba',
+    'Bag pipe',
+    'Fiddle',
+    'Shanai',
+    'Tinkle Bell',
+    'Agogo',
+    'Steel Drums',
+    'Woodblock',
+    'Taiko Drum',
+    'Melodic Tom',
+    'Synth Drum',
+    'Reverse Cymbal',
+    'Guitar Fret Noise',
+    'Breath Noise',
+    'Seashore',
+    'Bird Tweet',
+    'Telephone Ring',
+    'Helicopter',
+    'Applause',
+    'Gunshot',
+];
+
+class ChannelInfo {
+    byte program;
+
+    oper init(byte program) : program = program {}
+}
+
+class ChannelMap {
+    byte currentChannel;
+    Array[ChannelInfo] programs = [
+        ChannelInfo(0), # 0 Grand Piano
+        ChannelInfo(32), # 1 Bass
+        ChannelInfo(48), # 2 strings
+        ChannelInfo(18), # 3 Rock Organ
+        ChannelInfo(3),  # 4 Honky Tonk
+        ChannelInfo(80), # 5 Synth (square)
+        ChannelInfo(30), # 6 Overdrive Guitar
+        ChannelInfo(66), # 7 Tenor Sax
+        ChannelInfo(62), # 8 Brass Section
+        ChannelInfo(0),  # channel 9, this is going to be drums
+    ];
+}
+
+## The channel widget shows the current channel pallete and the programs for
+## each channel.
+class ChannelWidget : Widget {
+
+    ChannelMap model;
+    byte lastCurrentChannel;
+    Coord __size;
+
+    uint textWidth;
+
+    Array[Button] channelButtons = {16};
+
+    oper init(Coord pos, ChannelMap model) : Widget(pos), model = model {
+
+        # find the maximum width needed for any program name
+        for (channel :in model.programs) {
+            tw := programNames[model.currentChannel].size;
+            if (tw > textWidth)
+                textWidth = tw;
+        }
+
+        # create buttons for all of the programs
+        uint xoff, yoff, index, xmax;
+        for (chi :in model.programs) {
+            programName := (index == 9) ? "Drumz" :
+                                          CString(programNames[chi.program]);
+
+            btn := Button(Coord(pos.x + xoff, pos.y + yoff), programName);
+
+            # make the button for the current channel visually distinct
+            if (index == model.currentChannel) {
+                btn.background = BLUE;
+                btn.foreground = BLACK;
+                lastCurrentChannel = byte(index);
+            }
+
+            channelButtons.append(btn);
+            if (++index % 4) {
+                xoff += textWidth * 8;
+            } else {
+                yoff += btn.getMinSize().y;
+                xmax = xoff;
+                xoff = 0;
+            }
+        }
+
+        __size = Coord(xmax, yoff);
+    }
+
+    void draw(Surface surface) {
+        for (btn :in channelButtons)
+            btn.draw(surface);
+    }
+
+    void onCurrentChanged(Surface surface) {
+        button := channelButtons[lastCurrentChannel];
+        button.background = 0x202020FF;
+        button.foreground = WHITE;
+        button.draw(surface);
+
+        button = channelButtons[model.currentChannel];
+        button.background = BLUE;
+        button.foreground = WHITE;
+        button.draw(surface);
+        lastCurrentChannel = model.currentChannel;
+    }
+}
+
+const int IDLE = 0, RECORD = 1, PLAY = 2, LATCHED_RECORD = 3;
+
+/*
+    Record state machine:
+
+        idle -> play
+            begin playing from the beginning of the section
+        idle -> latched record
+            if the section already has events, go directly to 'record'
+            on the first event, switch to 'record'
+        latched record -> record
+            set the offset, begin storing events.
+        record -> play
+            merge recorded events
+            if there are no events, just go to idle.
+*/
+
+## The main application class.
+class App : Object @implements KeyboardHandler, ResizeHandler {
+    SDLApp app = {640, 480};
+    Instrument instrument;
+    Sequencer sequencer;
+
+    int mode;
+
+    Time t = {};
+
+    # time that the current loop started.
+    uint startTime;
+
+    Track recordTrack, mergedTrack;
+
+    # the number of pulses to add to the start time of each
+    # event
+    uint offset;
+
+    # the cursor that points to the next event in the merged track.  This
+    # should get reset whenever we reset the start time
+    typeof(Track('').iter()) trackCursor;
+
+    byte drumOffset = 40;
+
+    Button
+        playBtn = {Coord(10, 10), 'play'},
+        recBtn = {Coord(80, 10), 'record'};
+    Panel panel;
+    Array[TrackWidget] trackWdgs = {};
+
+    ChannelMap channelMap = {};
+    ChannelWidget channelWidget;
+
+    ## Return the absolute time in ticks of 100ths of a second since the epoch.
+    uint getAbsTime() {
+        t.setToNow(null);
+        return t.secs * 100 + t.nsecs / 10000000;
+    }
+
+    ## Returns the time relative to the beginning of the loop (also in 100ths
+    ## of a second).
+    uint getRelTime() {
+        return getAbsTime() - startTime;
+    }
+
+    bool mergeTrack() {
+        if (!mergedTrack && !recordTrack)
+            return false;
+
+        # if we didn't get a record track, nothing has changed.  Otherwise do
+        # a merge.
+        if (recordTrack) {
+            uint endTime;
+            bool endTimeChanged;
+            if (!mergedTrack) {
+                mergedTrack = recordTrack;
+                endTime = recordTrack[-1].time;
+            } else {
+
+                # if the last event of the record track is later than the last
+                # event of the merged track, copy the merged track as many times as
+                # necessary to encompass the size of the record track.
+                if ((newEnd := recordTrack[-1].time) >
+                    (oldEnd := mergedTrack[-1].time)) {
+                    count := newEnd / oldEnd + 1;
+
+                    newMergedTrack := Track('playback');
+                    for (i := 0; i < count; ++i) {
+                        for (event :in mergedTrack) {
+                            newEvent := event.clone();
+                            newEvent.time += oldEnd * i;
+                            newMergedTrack.append(newEvent);
+                        }
+                    }
+
+                    mergedTrack = newMergedTrack;
+                    endTime = newEnd;
+                    endTimeChanged = true;
+                } else {
+                    endTime = mergedTrack[-1].time;
+                }
+
+                mergedTrack = merge("playback", Array[Track]![mergedTrack, recordTrack]);
+            }
+
+            # rename the record track after the program that we're currently
+            # using
+            uint currentProgram =
+                channelMap.programs[channelMap.currentChannel].program;
+            recordTrack.name = programNames[currentProgram];
+
+            # create a new track widget for the track.
+            trackWdgs.append(TrackWidget(Coord(0,
+                                               panel.getMinSize().y + 4 +
+                                                trackWdgs.count() * 14
+                                               ),
+                                         Coord(app.width, 10),
+                                         recordTrack,
+                                         endTime
+                                         )
+                             );
+
+            # if we changed end times, redraw everything.  Otherwise just
+            # draw the new track.
+            if (endTimeChanged) {
+                for (tw :in trackWdgs) {
+                    tw.endTime = endTime;
+                    tw.draw(app.surface);
+                }
+            } else {
+                trackWdgs[-1].draw(app.surface);
+            }
+            app.flip();
+        }
+
+        return true;
+    }
+
+    void setPlayBtn(bool enabled) {
+        if (enabled) {
+            playBtn.background = GREEN;
+            playBtn.foreground = 0xFF;
+        } else {
+            playBtn.background = 0x202020FF;
+            playBtn.foreground = WHITE;
+        }
+        playBtn.draw(app.surface);
+    }
+
+    void setRecBtn(bool enabled) {
+        if (enabled) {
+            recBtn.foreground = 0xFF;
+            recBtn.background = RED;
+        } else {
+            recBtn.foreground = WHITE;
+            recBtn.background = 0x202020FF;
+        }
+        recBtn.draw(app.surface);
+    }
+
+    void doRecord() {
+        if (mode == PLAY)
+            setPlayBtn(false);
+        else if (mode == RECORD)
+            mergeTrack();
+        setRecBtn(true);
+        app.flip();
+        cout `record\n`;
+        mode = RECORD;
+        if (!mergedTrack) {
+            startTime = getAbsTime();
+        } else if (offset) {
+            startTime += offset;
+            offset = 0;
+        }
+        recordTrack = Track('record');
+
+    }
+
+    void doLatchedRecord() {
+        # XXX going from play -> latched seems to be broken
+        cout `latched\n`;
+        if (mode == RECORD)
+            mergeTrack();
+        mode = LATCHED_RECORD;
+    }
+
+    void doIdle() {
+        instrument.stop();
+        if (mode == PLAY)
+            setPlayBtn(false);
+        if (mode == RECORD)
+            setRecBtn(false);
+        if (mode == PLAY || mode == RECORD)
+            app.flip();
+        mode = IDLE;
+        trackCursor = null;
+    }
+
+    void doPlay() {
+        if (!mergedTrack && !recordTrack)
+            return;
+
+        cout `play\n`;
+        if (mode == RECORD)
+            setRecBtn(false);
+        setPlayBtn(true);
+        app.flip();
+
+        if (mode == RECORD) {
+            mergeTrack();
+            mergedTrack.add(EndEvent(getRelTime()));
+        }
+        mode = PLAY;
+        startTime = getAbsTime();
+        offset = 0;
+        trackCursor = mergedTrack.iter();
+    }
+
+    void doStop() {
+        if (mode == RECORD) {
+            relTime := getRelTime();
+            # if there's no merged track, the record track is the first track
+            # and we want to preserve his absolute end time.
+            if (!mergedTrack)
+                recordTrack.append(EndEvent(relTime));
+
+            mergeTrack();
+        }
+
+        mode = IDLE;
+    }
+
+    void repaint();
+
+    ## restore the app to its pristine state
+    void clear() {
+        cout `clearing state\n`;
+        mergedTrack = null;
+        recordTrack = null;
+        mode = IDLE;
+        startTime = 0;
+        offset = 0;
+
+        trackWdgs.clear();
+        repaint();
+    }
+
+    void onInputEvent(Event event) {
+        if (mode == LATCHED_RECORD)
+            doRecord();
+
+        event.time = getRelTime();
+        if (chev := ChannelEvent.cast(event, null))
+            chev.channel = channelMap.currentChannel;
+        cout `adding event with time $(event.time)\n`;
+        instrument.onEvent(event);
+        if (mode == RECORD)
+            recordTrack.append(event);
+    }
+
+    void changeChannel(int direction) {
+        channelMap.currentChannel += byte(direction);
+        if (channelMap.currentChannel == 255)
+            channelMap.currentChannel = byte(channelMap.programs.count() - 1);
+        else if (channelMap.currentChannel == channelMap.programs.count())
+            channelMap.currentChannel = 0;
+
+        channelWidget.onCurrentChanged(app.surface);
+        app.flip();
+    }
+
+    bool onKeyDown(KeyboardEvent event) {
+        sym := event.sym;
+        if (sym == b'q')
+            app.terminate();
+        else if (sym == b'r') {
+            doLatchedRecord();
+        } else if (sym == b' ') {
+            if (mode == PLAY)
+                doIdle();
+            else
+                doPlay();
+        } else if (sym == b'c') {
+            clear();
+        } else if (sym == b's') {
+            doIdle();
+        } else if (sym == b'l') {
+            changeChannel(+1);
+        } else if (sym == b'h') {
+            changeChannel(-1);
+        } else if (sym >= b'0' && sym <= b'9') {
+            # add a drum event
+            byte note = byte(sym - b'0' + drumOffset);
+            onInputEvent(NoteOn(0, DRUM, note, 127));
+        } else if (sym == b'=') {
+            byte note = ++drumOffset;
+            onInputEvent(NoteOn(0, DRUM, note, 127));
+            cout `drum = $note\n`;
+        }
+
+        return true;
+    }
+
+    bool onKeyUp(KeyboardEvent event) {
+        sym := event.sym;
+
+        if (sym >= b'0' && sym <= b'9') {
+            # add a drum event
+            byte note = byte(sym - b'0' + drumOffset);
+            onInputEvent(NoteOff(0, DRUM, note, 0));
+        } else if (sym == b'=') {
+            byte note = ++drumOffset;
+            onInputEvent(NoteOff(0, DRUM, note, 127));
+        }
+
+        return true;
+    }
+
+    void repaint() {
+        fillRect(app.surface, Coord(0, 0), Coord(app.width, app.height),
+                 BLACK
+                 );
+        panel.draw(app.surface);
+
+        for (track :in trackWdgs)
+            track.draw(app.surface);
+
+        channelWidget.draw(app.surface);
+
+        app.flip();
+    }
+
+    bool onResize(ResizeEvent event) {
+        repaint();
+        return true;
+    }
+
+    oper init(Instrument instrument, Sequencer sequencer) :
+        instrument = instrument,
+        sequencer = sequencer {
+
+        app.resizable = true;
+        app.initialize();
+        app.addKeyboardHandler(this);
+
+        panel = Panel(Coord(0, 0));
+        panel.append(playBtn);
+        panel.append(recBtn);
+
+        channelWidget = ChannelWidget(Coord(0, app.height - 40), channelMap);
+
+        repaint();
+
+        app.addResizeHandler(this);
+
+        # set up the programs for the synthesizer
+        byte i;
+        for (chi :in channelMap.programs) {
+            instrument.onEvent(ProgramChange(0, i, chi.program));
+            ++i;
+        }
+
+    }
+
+    ## Run the application until the user quits.
+    void run() {
+        Event lastPlayed;
+
+        while (app.isActive()) {
+            app.runOneCycle();
+            relTime := getRelTime();
+            if (sequencer.hasEvent()) {
+                event := sequencer.getEvent();
+                if (event)
+                    onInputEvent(event);
+                cout `event is $event\n`;
+            }
+
+            if (mode == RECORD || mode == PLAY || mode == LATCHED_RECORD) {
+                if (!trackCursor && mergedTrack) {
+                    trackCursor = mergedTrack.iter();
+                    if (lastPlayed)
+                        offset += lastPlayed.time;
+                }
+
+                if (trackCursor) {
+                    lastPlayed = trackCursor.elem();
+                    if (relTime >= lastPlayed.time + offset) {
+                        cout I`rel time = $relTime, event time = \
+                               $(lastPlayed.time + offset)\n`;
+                        instrument.onEvent(lastPlayed);
+                        trackCursor.next();
+                    }
+                }
+            }
+        }
+    }
+}
+
+Sequencer s = {SND_SEQ_OPEN_INPUT, 0};
+port := s.makeWritePort('Crack Port');
+port.connectTo(clientNum, portNum);
+
+cout `creating fluid synth\n`;
+FluidSynth synth = {FluidSettings()};
+synth.loadFont('/usr/share/sounds/sf2/FluidR3_GM.sf2', true);
+Orchestra orch = [
+    FluidSynthInstrument(synth, 0),
+    FluidSynthInstrument(synth, 1),
+    FluidSynthInstrument(synth, 2),
+    FluidSynthInstrument(synth, 3),
+    FluidSynthInstrument(synth, 4),
+    FluidSynthInstrument(synth, 5),
+    FluidSynthInstrument(synth, 6),
+    FluidSynthInstrument(synth, 7),
+    FluidSynthInstrument(synth, 8),
+    FluidSynthInstrument(synth, 9),
+    FluidSynthInstrument(synth, 10),
+    FluidSynthInstrument(synth, 11),
+    FluidSynthInstrument(synth, 12),
+    FluidSynthInstrument(synth, 13),
+    FluidSynthInstrument(synth, 14),
+    FluidSynthInstrument(synth, 15)
+];
+
+App app = {orch, s};
+cout `running\n`;
+app.run();
+
+#Sequencer s = {SND_SEQ_OPEN_OUTPUT, 0};
+#port := s.makeReadPort(CString('Crack Port'));
+#port.connectTo(clientNum, portNum);
+
+#cout `creating fluid synth\n`;
+#FluidSynth synth = {FluidSettings()};
+#synth.loadFont('/usr/share/sounds/sf2/FluidR3_GM.sf2', true);
+#cout `creating player\n`;
+#ChordPlayer player = {FluidSynthInstrument(synth, 0)};
+#cout `running\n`;
+#player.run();
+
