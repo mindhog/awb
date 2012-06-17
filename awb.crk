@@ -556,6 +556,20 @@ class ChannelWidget : Widget {
         __size = Coord(xmax, yoff);
     }
 
+    void moveTo(Coord coord) {
+        pos = coord;
+        uint xoff, yoff, index;
+        for (btn :in channelButtons) {
+            btn.pos = Coord(pos.x + xoff, pos.y + yoff);
+            if (++index % 4) {
+                xoff += textWidth * 8;
+            } else {
+                yoff += btn.getMinSize().y;
+                xoff = 0;
+            }
+        }
+    }
+
     void draw(Surface surface) {
         for (btn :in channelButtons)
             btn.draw(surface);
@@ -907,6 +921,7 @@ class App : Object @implements KeyboardHandler, ResizeHandler {
     }
 
     bool onResize(ResizeEvent event) {
+        channelWidget.moveTo(Coord(0, app.height - 40));
         repaint();
         return true;
     }
