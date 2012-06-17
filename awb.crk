@@ -629,7 +629,9 @@ class App : Object @implements KeyboardHandler, ResizeHandler {
     # should get reset whenever we reset the start time
     typeof(Track('').iter()) trackCursor;
 
-    byte drumOffset = 40;
+    # when using the QWERTY keyboard as a controller, this is midi note value
+    # of the lowest note.
+    byte inputOffset = 40;
 
     Button
         playBtn = {Coord(10, 10), 'play'},
@@ -696,7 +698,10 @@ class App : Object @implements KeyboardHandler, ResizeHandler {
             # using
             uint currentProgram =
                 channelMap.programs[channelMap.currentChannel].program;
-            recordTrack.name = programNames[currentProgram];
+            if (channelMap.currentChannel = 9)
+                recordTrack.name = 'Drums';
+            else
+                recordTrack.name = programNames[currentProgram];
 
             # create a new track widget for the track.
             trackWdgs.append(TrackWidget(Coord(0,
@@ -879,13 +884,13 @@ class App : Object @implements KeyboardHandler, ResizeHandler {
         } else if (sym == b'h') {
             changeChannel(-1);
         } else if (sym >= b'0' && sym <= b'9') {
-            # add a drum event
-            byte note = byte(sym - b'0' + drumOffset);
+            # add an input event.
+            byte note = byte(sym - b'0' + inputOffset);
             onInputEvent(NoteOn(0, DRUM, note, 127));
         } else if (sym == b'=') {
-            byte note = ++drumOffset;
-            onInputEvent(NoteOn(0, DRUM, note, 127));
-            cout `drum = $note\n`;
+            inputOffset += 10;
+        } else if (sym == b'-') {
+            inputOffset -= 10;
         }
 
         return true;
@@ -896,10 +901,10 @@ class App : Object @implements KeyboardHandler, ResizeHandler {
 
         if (sym >= b'0' && sym <= b'9') {
             # add a drum event
-            byte note = byte(sym - b'0' + drumOffset);
+            byte note = byte(sym - b'0' + inputOffset);
             onInputEvent(NoteOff(0, DRUM, note, 0));
         } else if (sym == b'=') {
-            byte note = ++drumOffset;
+            byte note = ++inputOffset;
             onInputEvent(NoteOff(0, DRUM, note, 127));
         }
 
