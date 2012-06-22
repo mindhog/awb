@@ -9,7 +9,8 @@ import crack.sys argv, exit;
 import crack.time Time;
 import crack.cont.array Array;
 import crack.game.sdl fillRect, SDLApp = App, Coord, KeyboardEvent, KeyboardHandler,
-    ResizeEvent, ResizeHandler, Surface;
+    ResizeEvent, ResizeHandler, Surface, SDLK_LEFT, SDLK_RIGHT, SDLK_UP,
+    SDLK_DOWN;
 import crack.game.sdlgfx drawLine, drawRect, drawString, RED, BLACK, BLUE, GREEN,
     WHITE, YELLOW;
 import crack.io cout, cerr;
@@ -517,6 +518,9 @@ class ChannelWidget : Widget {
 
     uint textWidth;
 
+    # if true, this is the active panel
+    bool active;
+
     Array[Button] channelButtons = {16};
 
     oper init(Coord pos, ChannelMap model) : Widget(pos), model = model {
@@ -529,12 +533,13 @@ class ChannelWidget : Widget {
         }
 
         # create buttons for all of the programs
-        uint xoff, yoff, index, xmax;
+        uint xoff = 3, yoff = 3, index, xmax, buttonHeight;
         for (chi :in model.programs) {
             programName := (index == 9) ? "Drumz" :
                                           CString(programNames[chi.program]);
 
             btn := Button(Coord(pos.x + xoff, pos.y + yoff), programName);
+            buttonHeight = btn.getMinSize().y;
 
             # make the button for the current channel visually distinct
             if (index == model.currentChannel) {
@@ -549,28 +554,41 @@ class ChannelWidget : Widget {
             } else {
                 yoff += btn.getMinSize().y;
                 xmax = xoff;
-                xoff = 0;
+                xoff = 3;
             }
+
         }
 
-        __size = Coord(xmax, yoff);
+        # calculate the size
+        __size = Coord(4 * textWidth * 8 + 6,
+                       buttonHeight * (channelButtons.count() + 3) / 4 + 6
+                       );
     }
+
+    Coord getMinSize() { return __size; }
 
     void moveTo(Coord coord) {
         pos = coord;
-        uint xoff, yoff, index;
+        uint xoff = 3, yoff = 3, index;
         for (btn :in channelButtons) {
             btn.pos = Coord(pos.x + xoff, pos.y + yoff);
             if (++index % 4) {
                 xoff += textWidth * 8;
             } else {
                 yoff += btn.getMinSize().y;
-                xoff = 0;
+                xoff = 3;
             }
         }
     }
 
+    ## activate/deactivate the window.
+    void activate(Surface surface, bool newActive) {
+        active = newActive;
+        drawRect(surface, pos, pos + getMinSize(), active ? YELLOW : BLACK);
+    }
+
     void draw(Surface surface) {
+        activate(surface, active);
         for (btn :in channelButtons)
             btn.draw(surface);
     }
@@ -586,6 +604,35 @@ class ChannelWidget : Widget {
         button.foreground = WHITE;
         button.draw(surface);
         lastCurrentChannel = model.currentChannel;
+    }
+
+    bool onKeyPress(Surface surface, KeyboardEvent event) {
+        cout `got key press, $(event.sym)\n`;
+        if (event.sym == SDLK_LEFT) {
+            --model.currentChannel;
+            if (model.currentChannel == 0xff)
+                model.currentChannel = byte(channelButtons.count() - 1);
+            onCurrentChanged(surface);
+        } else if (event.sym == SDLK_RIGHT) {
+            ++model.currentChannel;
+            if (model.currentChannel == channelButtons.count())
+                model.currentChannel = 0;
+            onCurrentChanged(surface);
+        } else if (event.sym == SDLK_UP) {
+            model.currentChannel -= 4;
+            if (model.currentChannel >= 0xfc)
+                model.currentChannel += 4;
+            onCurrentChanged(surface);
+        } else if (event.sym == SDLK_DOWN) {
+            model.currentChannel += 4;
+            if (model.currentChannel >= channelButtons.count())
+                model.currentChannel -= byte(channelButtons.count());
+            onCurrentChanged(surface);
+        } else {
+            return false;
+        }
+
+        return true;
     }
 }
 
@@ -866,6 +913,13 @@ class App : Object @implements KeyboardHandler, ResizeHandler {
 
     bool onKeyDown(KeyboardEvent event) {
         sym := event.sym;
+        if (channelWidget.active &&
+            channelWidget.onKeyPress(app.surface, event)
+            ) {
+            app.flip();
+            return true;
+        }
+
         if (sym == b'q')
             app.terminate();
         else if (sym == b'r') {
@@ -944,6 +998,7 @@ class App : Object @implements KeyboardHandler, ResizeHandler {
         panel.append(recBtn);
 
         channelWidget = ChannelWidget(Coord(0, app.height - 40), channelMap);
+        channelWidget.active = true;
 
         repaint();
 
