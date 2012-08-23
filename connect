@@ -1,0 +1,5 @@
+#!/bin/sh
+
+jack_connect fluidsynth:r_00 system:playback_1;
+jack_connect fluidsynth:l_00 system:playback_2;
+aconnect 24:0 130:0  # midi keyboard

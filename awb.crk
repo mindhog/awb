@@ -9,15 +9,17 @@ import crack.sys argv, exit;
 import crack.time Time;
 import crack.cont.array Array;
 import crack.game.sdl fillRect, SDLApp = App, Coord, KeyboardEvent, KeyboardHandler,
-    ResizeEvent, ResizeHandler, Surface, SDLK_LEFT, SDLK_RIGHT, SDLK_UP,
+    ResizeEvent, ResizeHandler, Surface, SDLK_LEFT, SDLK_RIGHT, SDLK_TAB, SDLK_UP,
     SDLK_DOWN;
 import crack.game.sdlgfx drawLine, drawRect, drawString, RED, BLACK, BLUE, GREEN,
     WHITE, YELLOW;
 import crack.io cout, cerr;
 import crack.midi.alsa Port, Queue, Sequencer, SND_SEQ_OPEN_INPUT, SND_SEQ_OPEN_OUTPUT;
 import crack.midi.event merge, ChannelEvent, Event, NoteOn, NoteOff,
-    ProgramChange, Track;
+    PitchWheel, ProgramChange, Track;
 import crack.midi.fluidsynth FluidSettings, FluidSynth;
+import crack.process Process, ProcessHandlerImpl;
+import crack.strutil StringArray;
 #import crack.ccl CCLInterpreter;
 
 @import crack.ann implements, interface;
@@ -76,6 +78,7 @@ Array[byte] MAJ_CHORD = [0, 4, 7];
     @abstract void noteOn(byte note, byte velocity);
     @abstract void noteOff(byte note);
     @abstract void programChange(byte program);
+    @abstract void pitchBend(int value);
 
     ## Stop playing all notes.
     @abstract void stop();
@@ -97,6 +100,8 @@ Array[byte] MAJ_CHORD = [0, 4, 7];
             noteOff(no.note);
         } else if (pc := ProgramChange.cast(event, null)) {
             programChange(pc.program);
+        } else if (pb := PitchWheel.cast(event, null)) {
+            pitchBend(pb.value);
         }
     }
 }
@@ -111,6 +116,8 @@ class Orchestra : Object @implements Instrument {
     }
 
     void noteOff(byte note) { __instruments[0].i.noteOff(note); }
+
+    void pitchBend(int value) { __instruments[0].i.pitchBend(value); }
 
     void programChange(byte program) {
         __instruments[0].i.programChange(program);
@@ -145,6 +152,10 @@ class MidiInstrument : Object @implements Instrument {
         port.send(ProgramChange(0, channel, program));
     }
 
+    void pitchBend(int value) {
+        port.send(PitchWheel(0, channel, value));
+    }
+
     void stop() {
         throw AssertionError('need to implement stop for MidiInstrument');
     }
@@ -169,6 +180,10 @@ class FluidSynthInstrument : Object @implements Instrument {
 
     void programChange(byte program) {
         synth.programChange(channel, program);
+    }
+
+    void pitchBend(int value) {
+        synth.pitchBend(channel, value);
     }
 
     void stop() {
@@ -233,6 +248,11 @@ class Widget {
     void draw(Surface surface) {}
 
     void setPos(Coord newPos) { pos = newPos; }
+
+    bool isActive() { return false; }
+    void activate(Surface surface, bool newActive) { }
+
+    bool onKeyPress(Surface surface, KeyboardEvent event) { return false; }
 }
 
 class Button : Widget {
@@ -519,7 +539,7 @@ class ChannelWidget : Widget {
     uint textWidth;
 
     # if true, this is the active panel
-    bool active;
+    bool __active;
 
     Array[Button] channelButtons = {16};
 
@@ -583,12 +603,16 @@ class ChannelWidget : Widget {
 
     ## activate/deactivate the window.
     void activate(Surface surface, bool newActive) {
-        active = newActive;
-        drawRect(surface, pos, pos + getMinSize(), active ? YELLOW : BLACK);
+        __active = newActive;
+        drawRect(surface, pos, pos + getMinSize(), __active ? YELLOW : BLACK);
+    }
+
+    bool isActive() {
+        return __active;
     }
 
     void draw(Surface surface) {
-        activate(surface, active);
+        activate(surface, __active);
         for (btn :in channelButtons)
             btn.draw(surface);
     }
@@ -634,6 +658,64 @@ class ChannelWidget : Widget {
 
         return true;
     }
+}
+
+## Widget that manages a list of TrackWidget's.
+class TrackPanel : Widget {
+
+    bool __active;
+    Coord __size;
+    Array[TrackWidget] __elems = {};
+
+    oper init(Coord pos, Coord size) : Widget(pos), __size = size {
+    }
+
+    typeof(Array[TrackWidget]().iter()) iter() { return __elems.iter(); }
+    TrackWidget oper [](int index) { return __elems[index]; }
+    TrackWidget oper [](uint index) { return __elems[index]; }
+    void clear() { __elems.clear(); }
+    uint count() { return __elems.count(); }
+
+    void activate(Surface surface, bool newActive) {
+        __active = newActive;
+        drawRect(surface, pos, pos + __size, __active ? YELLOW : BLACK);
+    }
+
+    bool isActive() { return __active; }
+
+    void draw(Surface surface) {
+        activate(surface, __active);
+        for (track :in this)
+            track.draw(surface);
+    }
+
+    ## Add a new track, creating a new track widget.
+    void addTrack(Track track, uint endTime) {
+        __elems.append(TrackWidget(Coord(pos.x + 3,
+                                         pos.y + 3 + count() * 14),
+                                   Coord(__size.x - 6, 10),
+                                   track,
+                                   endTime
+                                   )
+                         );
+    }
+
+    void moveTo(Coord coord, Coord size) {
+//        pos = coord;
+//        __size = size;
+//        for (tw :in __elems) { # xxx finish
+//        uint xoff = 3, yoff = 3, index;
+//        for (btn :in channelButtons) {
+//            btn.pos = Coord(pos.x + xoff, pos.y + yoff);
+//            if (++index % 4) {
+//                xoff += textWidth * 8;
+//            } else {
+//                yoff += btn.getMinSize().y;
+//                xoff = 3;
+//            }
+//        }
+    }
+
 }
 
 const int IDLE = 0, RECORD = 1, PLAY = 2, LATCHED_RECORD = 3;
@@ -684,10 +766,12 @@ class App : Object @implements KeyboardHandler, ResizeHandler {
         playBtn = {Coord(10, 10), 'play'},
         recBtn = {Coord(80, 10), 'record'};
     Panel panel;
-    Array[TrackWidget] trackWdgs = {};
+    TrackPanel trackWdgs;
 
     ChannelMap channelMap = {};
     ChannelWidget channelWidget;
+    TrackPanel trackPanel;
+    Array[Widget] panels = {};
 
     ## Return the absolute time in ticks of 100ths of a second since the epoch.
     uint getAbsTime() {
@@ -745,21 +829,13 @@ class App : Object @implements KeyboardHandler, ResizeHandler {
             # using
             uint currentProgram =
                 channelMap.programs[channelMap.currentChannel].program;
-            if (channelMap.currentChannel = 9)
+            if (channelMap.currentChannel == 9)
                 recordTrack.name = 'Drums';
             else
                 recordTrack.name = programNames[currentProgram];
 
             # create a new track widget for the track.
-            trackWdgs.append(TrackWidget(Coord(0,
-                                               panel.getMinSize().y + 4 +
-                                                trackWdgs.count() * 14
-                                               ),
-                                         Coord(app.width, 10),
-                                         recordTrack,
-                                         endTime
-                                         )
-                             );
+            trackWdgs.addTrack(recordTrack, endTime);
 
             # if we changed end times, redraw everything.  Otherwise just
             # draw the new track.
@@ -913,11 +989,11 @@ class App : Object @implements KeyboardHandler, ResizeHandler {
 
     bool onKeyDown(KeyboardEvent event) {
         sym := event.sym;
-        if (channelWidget.active &&
-            channelWidget.onKeyPress(app.surface, event)
-            ) {
-            app.flip();
-            return true;
+        for (p :in panels) {
+            if (p.isActive() && p.onKeyPress(app.surface, event)) {
+                app.flip();
+                return true;
+            }
         }
 
         if (sym == b'q')
@@ -945,6 +1021,30 @@ class App : Object @implements KeyboardHandler, ResizeHandler {
             inputOffset += 10;
         } else if (sym == b'-') {
             inputOffset -= 10;
+        } else if (sym == SDLK_TAB) {
+
+            # find the active widget.
+            int i;
+            Widget p;
+            for (p in panels) {
+                if (p.isActive()) {
+                    cout `active panel is $i\n`;
+                    break;
+                }
+                ++i;
+            }
+
+            # store the current (last) active widget, find the next one.
+            last := p;
+            if (++i >= panels.count())
+                i = 0;
+            next := panels[i];
+
+            # change the active one, update the display.
+            last.activate(app.surface, false);
+            next.activate(app.surface, true);
+            app.flip();
+            return true;
         }
 
         return true;
@@ -971,9 +1071,7 @@ class App : Object @implements KeyboardHandler, ResizeHandler {
                  );
         panel.draw(app.surface);
 
-        for (track :in trackWdgs)
-            track.draw(app.surface);
-
+        trackWdgs.draw(app.surface);
         channelWidget.draw(app.surface);
 
         app.flip();
@@ -981,6 +1079,12 @@ class App : Object @implements KeyboardHandler, ResizeHandler {
 
     bool onResize(ResizeEvent event) {
         channelWidget.moveTo(Coord(0, app.height - 40));
+        ypos := panel.getMinSize().y + 4;
+        trackWdgs.moveTo(Coord(0, ypos),
+                         Coord(app.width,
+                               app.height - 40 - ypos
+                               )
+                         );
         repaint();
         return true;
     }
@@ -997,8 +1101,17 @@ class App : Object @implements KeyboardHandler, ResizeHandler {
         panel.append(playBtn);
         panel.append(recBtn);
 
+        ypos := panel.getMinSize().y + 4;
+        trackWdgs = TrackPanel(Coord(0, ypos),
+                               Coord(app.width,
+                                     app.height - 40 - ypos
+                                     )
+                               );
+        panels.append(trackWdgs);
+
         channelWidget = ChannelWidget(Coord(0, app.height - 40), channelMap);
-        channelWidget.active = true;
+        channelWidget.activate(app.surface, true);
+        panels.append(channelWidget);
 
         repaint();
 
@@ -1037,8 +1150,8 @@ class App : Object @implements KeyboardHandler, ResizeHandler {
                 if (trackCursor) {
                     lastPlayed = trackCursor.elem();
                     if (relTime >= lastPlayed.time + offset) {
-                        cout I`rel time = $relTime, event time = \
-                               $(lastPlayed.time + offset)\n`;
+#                        cout I`rel time = $relTime, event time = \
+#                               $(lastPlayed.time + offset)\n`;
                         instrument.onEvent(lastPlayed);
                         trackCursor.next();
                     }
@@ -1073,6 +1186,9 @@ Orchestra orch = [
     FluidSynthInstrument(synth, 14),
     FluidSynthInstrument(synth, 15)
 ];
+
+class MyHandler : ProcessHandlerImpl {}
+Process(StringArray!['./connect']).run(MyHandler());
 
 App app = {orch, s};
 cout `running\n`;
