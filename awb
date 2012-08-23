@@ -1,0 +1,3 @@
+#!/bin/sh
+crackdir=/home/mmuller/w/crack
+$crackdir/crack -l $crackdir/lib $(dirname $0)/awb.crk
