@@ -310,11 +310,22 @@ class Panel : Widget {
     }
 }
 
+const uint32
+    TRACK_BACKGROUND = 0x202020,    # normal background is gray
+    TRACK_ACTIVE = 0x4000,          # active background adds green
+    TRACK_SELECTED = 0x40;          # selected background adds blue
+
 ## Track widgets display a graphical representation of a track and its events.
 class TrackWidget : Widget {
     Coord size;
     Track model;
     uint endTime;
+
+    ## True if the track is selected (multiple tracks can be selected)
+    bool selected;
+
+    ## True if the track is active (only one track can be active)
+    bool active;
 
     # these are transient fields that only exist when we're drawing.
     uint left, width;
@@ -331,7 +342,10 @@ class TrackWidget : Widget {
     }
 
     void draw(Surface surface) {
-        fillRect(surface, pos, size, 0x202020);
+        fillRect(surface, pos, size,
+                 TRACK_BACKGROUND | (active ? TRACK_ACTIVE : 0) |
+                  (selected ? TRACK_SELECTED : 0)
+                 );
         drawString(surface, pos + Coord(0, (size.y - 8) / 2),
                    CString(model.name),
                    WHITE
@@ -372,6 +386,11 @@ class TrackWidget : Widget {
                 drawLine(surface, a, b, YELLOW);
             }
         }
+    }
+
+    void activate(Surface surface, bool active) {
+        this.active = active;
+        draw(surface);
     }
 }
 
@@ -664,6 +683,7 @@ class ChannelWidget : Widget {
 class TrackPanel : Widget {
 
     bool __active;
+    int __activeIndex;
     Coord __size;
     Array[TrackWidget] __elems = {};
 
@@ -698,6 +718,25 @@ class TrackPanel : Widget {
                                    endTime
                                    )
                          );
+    }
+
+
+    void __activate(Surface surface, int index) {
+        this[__activeIndex].activate(surface, false);
+        this[index].activate(surface, true);
+        __activeIndex = index;
+    }
+
+    bool onKeyPress(Surface surface, KeyboardEvent event) {
+        if (event.sym == SDLK_DOWN) {
+            __activate(surface, __activeIndex + 1 >= count() ? 0 : __activeIndex + 1);
+        } else if (event.sym == SDLK_UP) {
+            __activate(surface, __activeIndex -1 < 0 ? count() : __activeIndex - 1);
+        } else {
+            return false;
+        }
+
+        return true;
     }
 
     void moveTo(Coord coord, Coord size) {
