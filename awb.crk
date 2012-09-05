@@ -3,20 +3,21 @@
 #    SDL_PollEvent, SDL_SetVideoMode, SDL_Quit, SDL_INIT_EVERYTHING,
 #    SDL_RESIZABLE;
 import crack.ascii parseInt;
+import crack.fs cwd;
 import crack.lang CString, AssertionError;
 import crack.cmdline CmdOptions, Option, CMD_STR;
 import crack.sys argv, exit;
 import crack.time Time;
 import crack.cont.array Array;
 import crack.game.sdl fillRect, SDLApp = App, Coord, KeyboardEvent, KeyboardHandler,
-    ResizeEvent, ResizeHandler, Surface, SDLK_LEFT, SDLK_RIGHT, SDLK_TAB, SDLK_UP,
-    SDLK_DOWN;
+    ResizeEvent, ResizeHandler, Surface, SDLK_DELETE, SDLK_LEFT, SDLK_RIGHT,
+    SDLK_TAB, SDLK_UP, SDLK_DOWN;
 import crack.game.sdlgfx drawLine, drawRect, drawString, RED, BLACK, BLUE, GREEN,
     WHITE, YELLOW;
-import crack.io cout, cerr;
+import crack.io cout, cerr, FStr;
 import crack.midi.alsa Port, Queue, Sequencer, SND_SEQ_OPEN_INPUT, SND_SEQ_OPEN_OUTPUT;
-import crack.midi.event merge, ChannelEvent, Event, NoteOn, NoteOff,
-    PitchWheel, ProgramChange, Track;
+import crack.midi.event merge, ChannelEvent, Event, MidiReader, MidiWriter,
+    NoteOn, NoteOff, PitchWheel, ProgramChange, Track;
 import crack.midi.fluidsynth FluidSettings, FluidSynth;
 import crack.process Process, ProcessHandlerImpl;
 import crack.strutil StringArray;
@@ -30,6 +31,12 @@ class EndEvent : Event {
 
     typeof(EndEvent(0).toMidiString(0)) toMidiString(byte status) {
         return null;
+    }
+
+    void writeTo(MidiWriter out) {
+        out.write(0xFF);
+        out.write(0x2F);
+        out.write(0);
     }
 
     Event clone() {
@@ -683,7 +690,7 @@ class ChannelWidget : Widget {
 class TrackPanel : Widget {
 
     bool __active;
-    int __activeIndex;
+    int __activeIndex = -1;
     Coord __size;
     Array[TrackWidget] __elems = {};
 
@@ -704,6 +711,7 @@ class TrackPanel : Widget {
     bool isActive() { return __active; }
 
     void draw(Surface surface) {
+        fillRect(surface, pos, pos + __size, BLACK);
         activate(surface, __active);
         for (track :in this)
             track.draw(surface);
@@ -718,8 +726,18 @@ class TrackPanel : Widget {
                                    endTime
                                    )
                          );
+        __activeIndex = __elems.count() - 1;
     }
 
+    void deleteActiveTrack(Surface surface) {
+        if (__activeIndex == -1) {
+            cerr `ERROR: deleteActiveTrack(): no active track\n`;
+            return;
+        }
+        __elems.delete(__activeIndex);
+        __activeIndex = (__activeIndex + 1) % __elems.count();
+        draw(surface);
+    }
 
     void __activate(Surface surface, int index) {
         this[__activeIndex].activate(surface, false);
@@ -728,10 +746,17 @@ class TrackPanel : Widget {
     }
 
     bool onKeyPress(Surface surface, KeyboardEvent event) {
+
+        # delegate to the active track
+        if (__activeIndex != -1 && this[__activeIndex].onKeyPress(surface, event))
+            return true;
+
         if (event.sym == SDLK_DOWN) {
             __activate(surface, __activeIndex + 1 >= count() ? 0 : __activeIndex + 1);
         } else if (event.sym == SDLK_UP) {
-            __activate(surface, __activeIndex -1 < 0 ? count() : __activeIndex - 1);
+            __activate(surface, __activeIndex - 1 < 0 ? count() - 1 : __activeIndex - 1);
+        } else if (event.sym == SDLK_DELETE) {
+            deleteActiveTrack(surface);
         } else {
             return false;
         }
@@ -788,6 +813,10 @@ class App : Object @implements KeyboardHandler, ResizeHandler {
     uint startTime;
 
     Track recordTrack, mergedTrack;
+
+    # this is the number to use as part of the file name when we write the
+    # next track.  It has to keep increasing, even if we delete a track.
+    uint nextTrackNumber;
 
     # the number of pulses to add to the start time of each
     # event
@@ -914,11 +943,17 @@ class App : Object @implements KeyboardHandler, ResizeHandler {
         recBtn.draw(app.surface);
     }
 
+    void endRecord() {
+        MidiWriter writer = {(cwd/(FStr() `track$(nextTrackNumber++).mtrk`)).writer()};
+        recordTrack.writeTo(writer);
+        mergeTrack();
+    }
+
     void doRecord() {
         if (mode == PLAY)
             setPlayBtn(false);
         else if (mode == RECORD)
-            mergeTrack();
+            endRecord();
         setRecBtn(true);
         app.flip();
         cout `record\n`;
@@ -937,7 +972,7 @@ class App : Object @implements KeyboardHandler, ResizeHandler {
         # XXX going from play -> latched seems to be broken
         cout `latched\n`;
         if (mode == RECORD)
-            mergeTrack();
+            endRecord();
         mode = LATCHED_RECORD;
     }
 
@@ -964,7 +999,7 @@ class App : Object @implements KeyboardHandler, ResizeHandler {
         app.flip();
 
         if (mode == RECORD) {
-            mergeTrack();
+            endRecord();
             mergedTrack.add(EndEvent(getRelTime()));
         }
         mode = PLAY;
@@ -981,7 +1016,7 @@ class App : Object @implements KeyboardHandler, ResizeHandler {
             if (!mergedTrack)
                 recordTrack.append(EndEvent(relTime));
 
-            mergeTrack();
+            endRecord();
         }
 
         mode = IDLE;
@@ -1165,6 +1200,21 @@ class App : Object @implements KeyboardHandler, ResizeHandler {
 
     }
 
+    void load() {
+        for (path :in cwd.children()) {
+            pathName := path.getName();
+            if (pathName.size > 10 && pathName.slice(0, 5) == 'track' &&
+                pathName.slice(-5) == '.mtrk'
+                ) {
+                track := MidiReader(path.reader()).readTrack(pathName);
+                recordTrack = track;
+                mergeTrack();
+                cerr `adding track with $(track.count()) events\n`;
+            }
+        }
+    }
+
+
     ## Run the application until the user quits.
     void run() {
         Event lastPlayed;
@@ -1230,6 +1280,7 @@ class MyHandler : ProcessHandlerImpl {}
 Process(StringArray!['./connect']).run(MyHandler());
 
 App app = {orch, s};
+app.load();
 cout `running\n`;
 app.run();
 
