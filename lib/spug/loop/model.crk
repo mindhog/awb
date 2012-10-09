@@ -1,0 +1,288 @@
+# Copyright 2012 Google Inc.  All Rights Reserved.
+#
+# Spugloop model objects.
+
+import crack.cont.array Array;
+import crack.fs cwd;
+import crack.io cout, FStr;
+import crack.midi.event ChannelEvent, Event, MidiWriter, ProgramChange,
+    SeekableEventSource, Track;
+import spug.loop.instrument Instrument;
+import crack.midi.alsa Sequencer;
+import crack.time Time;
+
+@import crack.ann interface;
+
+## This is a "section" of the piece.  A section consists of a group of tracks
+## that are played in parallel.  A section consists of one or more "measures"
+## which should normally be the size of the shortest track.  Every track
+## should completely fill some number of measures.
+class Section {
+
+    ## The size of a measure in pulses.  A value of zero is used when there
+    ## are no tracks.
+    uint measure;
+
+    ## The set of all tracks in the section.
+    Array[Track] tracks = {};
+
+    ## The next track number that hasn't been used as part of a name.
+    int nextTrackNumber;
+
+    ## Records the "end of track" time.  This is a no-op if there is more than
+    ## one track, if there is only one track it sets the measure time.
+    @final void markEnding(uint time) {
+        if (tracks.count() == 1)
+            measure = time;
+    }
+}
+
+## Global play modes.
+const int IDLE = 0, RECORD = 1, PLAY = 2, LATCHED_RECORD = 3;
+
+## This is the main class representing a project.
+class Project {
+    Array[Section] sections = {};
+
+    ## The next section number that hasn't been used as part of a section name.
+    int nextSectionNumber;
+}
+
+@interface Controller {
+    @abstract void changeState(int oldState, int newState);
+}
+
+class ChannelInfo {
+    byte program;
+
+    oper init(byte program) : program = program {}
+}
+
+class ChannelMap {
+    byte currentChannel;
+    Array[ChannelInfo] programs = [
+        ChannelInfo(0), # 0 Grand Piano
+        ChannelInfo(32), # 1 Bass
+        ChannelInfo(48), # 2 strings
+        ChannelInfo(18), # 3 Rock Organ
+        ChannelInfo(3),  # 4 Honky Tonk
+        ChannelInfo(80), # 5 Synth (square)
+        ChannelInfo(30), # 6 Overdrive Guitar
+        ChannelInfo(66), # 7 Tenor Sax
+        ChannelInfo(62), # 8 Brass Section
+        ChannelInfo(0),  # channel 9, this is going to be drums
+    ];
+}
+
+## The event manager deals with all of the scheduling and event dispatching.
+class EventManager {
+    Controller controller;
+    Instrument instrument;
+    Sequencer sequencer;
+    ChannelMap channelMap;
+
+    # initialize to default project.
+    Project project = {};
+
+    Section currentSection = {};
+    Track recordTrack;
+    Array[SeekableEventSource] trackCursors;
+
+    int mode;
+    uint offset;
+
+    Time t = {};
+
+    # time that the current loop started.
+    uint startTime;
+
+    oper init(Controller controller, Instrument instrument,
+              Sequencer sequencer,
+              ChannelMap channelMap
+              ) :
+        controller = controller,
+        instrument = instrument,
+        sequencer = sequencer,
+        channelMap = channelMap {
+
+        project.sections.append(currentSection);
+
+        # set up the programs for the synthesizer
+        byte i;
+        for (chi :in channelMap.programs) {
+            instrument.onEvent(ProgramChange(0, i, chi.program));
+            ++i;
+        }
+    }
+
+    ## Return the absolute time in "ticks since the epoch."
+    uint getAbsTime() {
+        t.setToNow(null);
+        return t.secs * 100 + t.nsecs / 10000000;
+    }
+
+    ## Returns the time relative to the beginning of the loop (also in ticks).
+    uint getRelTime() {
+        return getAbsTime() - startTime;
+    }
+
+    void endRecord() {
+        currentSection.tracks.append(recordTrack);
+        basename := FStr() `track$(currentSection.nextTrackNumber++).mtrk`;
+        MidiWriter writer = {(cwd/basename).writer()};
+        recordTrack.writeTo(writer);
+        trackCursors = null;
+    }
+
+    void doRecord() {
+        controller.changeState(mode, RECORD);
+        if (mode == RECORD)
+            endRecord();
+        cout `record\n`;
+
+        # if we're coming in from "latched" mode, adjust the start time
+        if (mode == LATCHED_RECORD && startTime) {
+            startTime += offset;
+            offset = 0;
+        } else {
+            # otherwise, just reset it.
+            startTime = getAbsTime();
+        }
+        mode = RECORD;
+        recordTrack = Track('record');
+    }
+
+    void doLatchedRecord() {
+        # XXX going from play -> latched seems to be broken
+        cout `latched\n`;
+        if (mode == RECORD)
+            endRecord();
+        mode = LATCHED_RECORD;
+    }
+
+    void doIdle() {
+        cout `idle\n`;
+        instrument.stop();
+        controller.changeState(PLAY, IDLE);
+        mode = IDLE;
+        trackCursors = null;
+    }
+
+    void setTrackCursors(uint ticks) {
+        if (trackCursors) {
+            for (cur :in trackCursors)
+                cur.setPos(ticks);
+        }
+    }
+
+    ## Sets our current position within the section.
+    void setPos(uint ticks) {
+        startTime = getAbsTime();
+        offset = 0;
+        setTrackCursors(ticks);
+    }
+
+    void doPlay() {
+        if (!currentSection.tracks && mode != RECORD) {
+            cout `No tracks to play!\n`;
+            return;
+        }
+
+        cout `play\n`;
+        controller.changeState(mode, PLAY);
+
+        if (mode == RECORD) {
+            endRecord();
+            currentSection.markEnding(getRelTime());
+        }
+        mode = PLAY;
+        setPos(0);
+    }
+
+    void doStop() {
+        if (mode == RECORD) {
+            relTime := getRelTime();
+            currentSection.markEnding(getRelTime());
+            endRecord();
+        }
+
+        mode = IDLE;
+    }
+
+    void togglePlay() {
+        if (mode == PLAY)
+            doIdle();
+        else
+            doPlay();
+    }
+
+    ## restore the app to its pristine state
+    void clear() {
+        cout `clearing state\n`;
+        recordTrack = null;
+        mode = IDLE;
+        startTime = 0;
+        offset = 0;
+        project = Project();
+        currentSection = Section();
+        project.sections.append(currentSection);
+    }
+
+
+    void onInputEvent(Event event) {
+        if (mode == LATCHED_RECORD)
+            doRecord();
+
+        event.time = getRelTime();
+        if (chev := ChannelEvent.cast(event, null))
+            chev.channel = channelMap.currentChannel;
+        cout `adding event with time $(event.time): $event\n`;
+        instrument.onEvent(event);
+        if (mode == RECORD)
+            recordTrack.append(event);
+    }
+
+
+    void runOneCycle() {
+        relTime := getRelTime();
+        if (currentSection.measure &&
+            relTime > offset + currentSection.measure
+            ) {
+            offset += currentSection.measure;
+            setTrackCursors(0);
+        }
+
+        # Check for an incoming event on the sequencer, play it and store it
+        # if we're recording.
+        if (sequencer.hasEvent()) {
+            event := sequencer.getEvent();
+            if (event)
+                onInputEvent(event);
+            cout `event is $event\n`;
+        }
+
+        # if we're recording, get the next event.
+        if (mode == RECORD || mode == PLAY || mode == LATCHED_RECORD) {
+
+            # if we don't currently have a set of cursors, generate them now.
+            if (!trackCursors && currentSection.tracks) {
+                trackCursors =
+                    Array[SeekableEventSource](currentSection.tracks.count());
+                for (track :in currentSection.tracks)
+                    trackCursors.append(SeekableEventSource.cast(track.iter()));
+            }
+
+            if (trackCursors) {
+                # play all of the events in all of the tracks that are due to
+                # be played.
+                for (cur :in trackCursors) {
+                    while (cur && relTime >= (event := cur.elem()).time + offset) {
+                        cout `playing event $(event.time):$event\n`;
+                        instrument.onEvent(event);
+                        cur.next();
+                    }
+                }
+            }
+        }
+    }
+}

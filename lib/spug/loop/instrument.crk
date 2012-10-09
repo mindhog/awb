@@ -1,0 +1,121 @@
+# Copyright 2012 Google Inc.  All Rights Reserved.
+#
+# Spugloop instrument objects.  Instruments are consumers of midi events and
+# use them to make sounds.
+
+import crack.cont.array Array;
+import crack.lang AssertionError;
+import crack.midi.alsa Port;
+import crack.midi.event ChannelEvent, Event, NoteOn, NoteOff,
+    PitchWheel, ProgramChange;
+import crack.midi.fluidsynth FluidSynth;
+
+@import crack.ann interface, implements;
+
+@interface Instrument {
+    @abstract void noteOn(byte note, byte velocity);
+    @abstract void noteOff(byte note);
+    @abstract void programChange(byte program);
+    @abstract void pitchBend(int value);
+
+    ## Stop playing all notes.
+    @abstract void stop();
+
+    void onEvent(Event event) {
+        if (no := NoteOn.cast(event, null)) {
+            noteOn(no.note, no.velocity);
+        } else if (no := NoteOff.cast(event, null)) {
+            noteOff(no.note);
+        } else if (pc := ProgramChange.cast(event, null)) {
+            programChange(pc.program);
+        } else if (pb := PitchWheel.cast(event, null)) {
+            pitchBend(pb.value);
+        }
+    }
+}
+
+class Orchestra : Object @implements Instrument {
+    class Inst { Instrument i; oper init(Instrument i) : i = i {} }
+    Array[Inst] __instruments;
+    oper init(uint size) : __instruments(size) {}
+    void append(Instrument instrument) { __instruments.append(Inst(instrument)); }
+    void noteOn(byte note, byte velocity) {
+        __instruments[0].i.noteOn(note, velocity);
+    }
+
+    void noteOff(byte note) { __instruments[0].i.noteOff(note); }
+
+    void pitchBend(int value) { __instruments[0].i.pitchBend(value); }
+
+    void programChange(byte program) {
+        __instruments[0].i.programChange(program);
+    }
+
+    void onEvent(Event event) {
+        if (e := ChannelEvent.cast(event, null))
+            __instruments[e.channel].i.onEvent(event);
+    }
+
+    void stop() {
+        for (inst :in __instruments)
+            inst.i.stop();
+    }
+}
+
+
+class MidiInstrument : Object @implements Instrument {
+    Port port;
+    byte channel;
+    oper init(Port port, byte channel) : port = port, channel = channel {}
+
+    void noteOn(byte note, byte velocity) {
+        port.send(NoteOn(0, channel, note, velocity));
+    }
+
+    void noteOff(byte note) {
+        port.send(NoteOff(0, channel, note, 0));
+    }
+
+    void programChange(byte program) {
+        port.send(ProgramChange(0, channel, program));
+    }
+
+    void pitchBend(int value) {
+        port.send(PitchWheel(0, channel, value));
+    }
+
+    void stop() {
+        throw AssertionError('need to implement stop for MidiInstrument');
+    }
+}
+
+class FluidSynthInstrument : Object @implements Instrument {
+    FluidSynth synth;
+    byte channel;
+
+    oper init(FluidSynth synth, byte channel) :
+        synth = synth,
+        channel = channel {
+    }
+
+    void noteOn(byte note, byte velocity) {
+        synth.noteOn(channel, note, velocity);
+    }
+
+    void noteOff(byte note) {
+        synth.noteOff(channel, note);
+    }
+
+    void programChange(byte program) {
+        synth.programChange(channel, program);
+    }
+
+    void pitchBend(int value) {
+        synth.pitchBend(channel, value);
+    }
+
+    void stop() {
+        synth.allNotesOff(channel);
+    }
+}
+
