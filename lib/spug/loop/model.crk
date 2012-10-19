@@ -5,13 +5,13 @@
 import crack.cont.array Array;
 import crack.fs cwd;
 import crack.io cout, FStr;
-import crack.midi.event ChannelEvent, Event, MidiWriter, ProgramChange,
+import crack.midi.event ChannelEvent, EndTrack, Event, MidiWriter, ProgramChange,
     SeekableEventSource, Track;
 import spug.loop.instrument Instrument;
 import crack.midi.alsa Sequencer;
 import crack.time Time;
 
-@import crack.ann interface;
+@import crack.ann assert, interface;
 
 ## This is a "section" of the piece.  A section consists of a group of tracks
 ## that are played in parallel.  A section consists of one or more "measures"
@@ -23,6 +23,9 @@ class Section {
     ## are no tracks.
     uint measure;
 
+    ## The time span of the section in pulses.
+    uint span;
+
     ## The set of all tracks in the section.
     Array[Track] tracks = {};
 
@@ -31,9 +34,21 @@ class Section {
 
     ## Records the "end of track" time.  This is a no-op if there is more than
     ## one track, if there is only one track it sets the measure time.
-    @final void markEnding(uint time) {
-        if (tracks.count() == 1)
-            measure = time;
+    @final void markEnding(Track lastTrack, uint time) {
+
+        if (!span) {
+            span = measure = time;
+        # verify that the time is an even multiple of the current span
+        } else {
+            if (time > span) {
+                cout `increasing span: $time / $span\n`;
+                multiple := (time - 1) / span + 1;
+                span *= multiple;
+            }
+            time = span;
+        }
+
+        lastTrack.add(EndTrack(time));
     }
 }
 
@@ -74,6 +89,52 @@ class ChannelMap {
     ];
 }
 
+class LoopCursor {
+    Track track;
+    int index;
+
+    # time of the current position and span of the entire track.
+    uint time, span;
+    oper init(Track track) : track = track {
+        time = track[0].time;
+
+        # make sure our last event is an EndTrack and there is at least one
+        # other event in the track.
+        EndTrack.cast(track[-1]);
+        @assert(track.count() > 1);
+        span = track[-1].time;
+    }
+
+    Event next() {
+        cur := track[index];
+        ++index;
+        if (index == track.count() - 1) {
+            # make sure we are at an end event.
+            EndTrack.cast(track[index]);
+            index = 0;
+        }
+        time = track[index].time;
+        return cur;
+    }
+
+    bool immediatelyFollows(uint pos) {
+        if (index == 0) {
+            # the last event is the end track marker, check to see that pos is
+            # either greater than the /next to last/ event or less than the
+            # current one.
+            return pos >= track[-2].time || pos < time;
+        } else {
+            # if this isn't the first track, we just need to verify that pos
+            # is between the last event and the current one.
+            return pos < time && pos >= track[index - 1].time;
+        }
+    }
+
+    void setPos(uint pos) {
+        while (!immediatelyFollows(pos)) next();
+    }
+}
+
 ## The event manager deals with all of the scheduling and event dispatching.
 class EventManager {
     Controller controller;
@@ -84,12 +145,11 @@ class EventManager {
     # initialize to default project.
     Project project = {};
 
-    Section currentSection = {};
+    Section curSection = {};
     Track recordTrack;
-    Array[SeekableEventSource] trackCursors;
+    Array[LoopCursor] trackCursors;
 
     int mode;
-    uint offset;
 
     Time t = {};
 
@@ -105,7 +165,7 @@ class EventManager {
         sequencer = sequencer,
         channelMap = channelMap {
 
-        project.sections.append(currentSection);
+        project.sections.append(curSection);
 
         # set up the programs for the synthesizer
         byte i;
@@ -127,11 +187,14 @@ class EventManager {
     }
 
     void endRecord() {
-        currentSection.tracks.append(recordTrack);
-        basename := FStr() `track$(currentSection.nextTrackNumber++).mtrk`;
+        curSection.markEnding(recordTrack, getRelTime());
+        curSection.tracks.append(recordTrack);
+        basename := FStr() `track$(curSection.nextTrackNumber++).mtrk`;
         MidiWriter writer = {(cwd/basename).writer()};
         recordTrack.writeTo(writer);
+        cout `stored track with span $(recordTrack[-1].time)\n`;
         trackCursors = null;
+        recordTrack = null;
     }
 
     void doRecord() {
@@ -141,9 +204,8 @@ class EventManager {
         cout `record\n`;
 
         # if we're coming in from "latched" mode, adjust the start time
-        if (mode == LATCHED_RECORD && startTime) {
-            startTime += offset;
-            offset = 0;
+        if (mode == LATCHED_RECORD && startTime && curSection.span) {
+            startTime += (getRelTime() / curSection.span) * curSection.span;
         } else {
             # otherwise, just reset it.
             startTime = getAbsTime();
@@ -178,12 +240,11 @@ class EventManager {
     ## Sets our current position within the section.
     void setPos(uint ticks) {
         startTime = getAbsTime();
-        offset = 0;
         setTrackCursors(ticks);
     }
 
     void doPlay() {
-        if (!currentSection.tracks && mode != RECORD) {
+        if (!curSection.tracks && mode != RECORD) {
             cout `No tracks to play!\n`;
             return;
         }
@@ -191,20 +252,15 @@ class EventManager {
         cout `play\n`;
         controller.changeState(mode, PLAY);
 
-        if (mode == RECORD) {
+        if (mode == RECORD)
             endRecord();
-            currentSection.markEnding(getRelTime());
-        }
         mode = PLAY;
         setPos(0);
     }
 
     void doStop() {
-        if (mode == RECORD) {
-            relTime := getRelTime();
-            currentSection.markEnding(getRelTime());
+        if (mode == RECORD)
             endRecord();
-        }
 
         mode = IDLE;
     }
@@ -222,10 +278,9 @@ class EventManager {
         recordTrack = null;
         mode = IDLE;
         startTime = 0;
-        offset = 0;
         project = Project();
-        currentSection = Section();
-        project.sections.append(currentSection);
+        curSection = Section();
+        project.sections.append(curSection);
     }
 
 
@@ -242,15 +297,15 @@ class EventManager {
             recordTrack.append(event);
     }
 
+    void __playPendingEvents(LoopCursor cur, uint pos) {
+        while (!cur.immediatelyFollows(pos)) {
+            instrument.onEvent(e := cur.next());
+            cout `played event $e at time $(e.time)/$(cur.span) for pos $pos\n`;
+        }
+    }
 
     void runOneCycle() {
         relTime := getRelTime();
-        if (currentSection.measure &&
-            relTime > offset + currentSection.measure
-            ) {
-            offset += currentSection.measure;
-            setTrackCursors(0);
-        }
 
         # Check for an incoming event on the sequencer, play it and store it
         # if we're recording.
@@ -265,22 +320,22 @@ class EventManager {
         if (mode == RECORD || mode == PLAY || mode == LATCHED_RECORD) {
 
             # if we don't currently have a set of cursors, generate them now.
-            if (!trackCursors && currentSection.tracks) {
+            if (!trackCursors && curSection.tracks) {
                 trackCursors =
-                    Array[SeekableEventSource](currentSection.tracks.count());
-                for (track :in currentSection.tracks)
-                    trackCursors.append(SeekableEventSource.cast(track.iter()));
+                    Array[LoopCursor](curSection.tracks.count());
+                for (track :in curSection.tracks)
+                    trackCursors.append(LoopCursor(track));
             }
 
             if (trackCursors) {
                 # play all of the events in all of the tracks that are due to
                 # be played.
                 for (cur :in trackCursors) {
-                    while (cur && relTime >= (event := cur.elem()).time + offset) {
-                        cout `playing event $(event.time):$event\n`;
-                        instrument.onEvent(event);
-                        cur.next();
-                    }
+                    # calculate the point we're at in this track.
+                    trackPos := relTime % cur.span;
+
+                    # play all events up to that point
+                    __playPendingEvents(cur, trackPos);
                 }
             }
         }
