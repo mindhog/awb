@@ -582,15 +582,16 @@ class TrackPanel : Widget {
     }
 
     ## Add a new track, creating a new track widget.
-    void addTrack(Track track, uint endTime) {
-        __elems.append(TrackWidget(Coord(pos.x + 3,
-                                         pos.y + 3 + count() * 14),
-                                   Coord(__size.x - 6, 10),
-                                   track,
-                                   endTime
-                                   )
+    TrackWidget addTrack(Track track, uint endTime) {
+        w := TrackWidget(Coord(pos.x + 3,
+                               pos.y + 3 + count() * 14),
+                         Coord(__size.x - 6, 10),
+                         track,
+                         endTime
                          );
+        __elems.append(w);
         __activeIndex = __elems.count() - 1;
+        return w;
     }
 
     void deleteActiveTrack(Surface surface) {
@@ -678,7 +679,6 @@ class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
         playBtn = {Coord(10, 10), 'play'},
         recBtn = {Coord(80, 10), 'record'};
     Panel panel;
-    TrackPanel trackWdgs;
 
     ChannelWidget channelWidget;
     TrackPanel trackPanel;
@@ -720,6 +720,13 @@ class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
         else if (newMode == PLAY)
             setPlayBtn(true);
 
+        app.flip();
+    }
+
+    void trackAdded() {
+        trackPanel.addTrack(eventManager.curSection.tracks[-1],
+                            eventManager.curSection.span
+                            ).draw(app.surface);
         app.flip();
     }
 
@@ -806,7 +813,7 @@ class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
                  );
         panel.draw(app.surface);
 
-        trackWdgs.draw(app.surface);
+        trackPanel.draw(app.surface);
         channelWidget.draw(app.surface);
 
         app.flip();
@@ -815,11 +822,11 @@ class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
     bool onResize(ResizeEvent event) {
         channelWidget.moveTo(Coord(0, app.height - 40));
         ypos := panel.getMinSize().y + 4;
-        trackWdgs.moveTo(Coord(0, ypos),
-                         Coord(app.width,
-                               app.height - 40 - ypos
-                               )
-                         );
+        trackPanel.moveTo(Coord(0, ypos),
+                          Coord(app.width,
+                                app.height - 40 - ypos
+                                )
+                          );
         repaint();
         return true;
     }
@@ -835,12 +842,12 @@ class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
         panel.append(recBtn);
 
         ypos := panel.getMinSize().y + 4;
-        trackWdgs = TrackPanel(Coord(0, ypos),
-                               Coord(app.width,
-                                     app.height - 40 - ypos
-                                     )
-                               );
-        panels.append(trackWdgs);
+        trackPanel = TrackPanel(Coord(0, ypos),
+                                Coord(app.width,
+                                      app.height - 40 - ypos
+                                      )
+                                );
+        panels.append(trackPanel);
 
         channelWidget = ChannelWidget(Coord(0, app.height - 40), channelMap);
         channelWidget.activate(app.surface, true);

@@ -65,6 +65,7 @@ class Project {
 
 @interface Controller {
     @abstract void changeState(int oldState, int newState);
+    @abstract void trackAdded();
 }
 
 class ChannelInfo {
@@ -189,6 +190,7 @@ class EventManager {
     void endRecord() {
         curSection.markEnding(recordTrack, getRelTime());
         curSection.tracks.append(recordTrack);
+        controller.trackAdded();
         basename := FStr() `track$(curSection.nextTrackNumber++).mtrk`;
         MidiWriter writer = {(cwd/basename).writer()};
         recordTrack.writeTo(writer);
