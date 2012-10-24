@@ -50,6 +50,20 @@ class Section {
 
         lastTrack.add(EndTrack(time));
     }
+
+    @final void deleteTrack(uint index) {
+        tracks.delete(index);
+
+        # recalculate the span
+        maxSpan := 0;
+        uint t;
+        for (track :in tracks) {
+            t = track[-1].time;
+            if (t > maxSpan)
+                maxSpan = t;
+        }
+        span = t;
+    }
 }
 
 ## Global play modes.
@@ -66,6 +80,7 @@ class Project {
 @interface Controller {
     @abstract void changeState(int oldState, int newState);
     @abstract void trackAdded();
+    @abstract void trackDeleted(uint index);
 }
 
 class ChannelInfo {
@@ -304,6 +319,15 @@ class EventManager {
             instrument.onEvent(e := cur.next());
             cout `played event $e at time $(e.time)/$(cur.span) for pos $pos\n`;
         }
+    }
+
+    void deleteTrack(uint index) {
+        curSection.deleteTrack(index);
+        if (trackCursors)
+            trackCursors.delete(index);
+
+        # tell the controller
+        controller.trackDeleted(index);
     }
 
     void runOneCycle() {
