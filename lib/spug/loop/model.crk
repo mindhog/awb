@@ -54,6 +54,12 @@ class Section {
     @final void deleteTrack(uint index) {
         tracks.delete(index);
 
+        # deal with deleting the last track.
+        if (!tracks.count()) {
+            span = measure = 0;
+            return;
+        }
+
         # recalculate the span
         maxSpan := 0;
         uint t;
@@ -322,6 +328,8 @@ class EventManager {
     }
 
     void deleteTrack(uint index) {
+        trackChannel := ChannelEvent.cast(curSection.tracks[index][0]).channel;
+        instrument.getChild(trackChannel).stop();
         curSection.deleteTrack(index);
         if (trackCursors)
             trackCursors.delete(index);

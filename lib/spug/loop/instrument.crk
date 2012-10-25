@@ -18,6 +18,11 @@ import crack.midi.fluidsynth FluidSynth;
     @abstract void programChange(byte program);
     @abstract void pitchBend(int value);
 
+    ## Returns the child instrument for a specific channel.
+    Instrument getChild(byte channel) {
+        return this;
+    }
+
     ## Stop playing all notes.
     @abstract void stop();
 
@@ -35,6 +40,8 @@ import crack.midi.fluidsynth FluidSynth;
 }
 
 class Orchestra : Object @implements Instrument {
+    # XXX I think Array may still be broken for interfaces, when I remove the
+    # Inst class, we get sequencer errors.
     class Inst { Instrument i; oper init(Instrument i) : i = i {} }
     Array[Inst] __instruments;
     oper init(uint size) : __instruments(size) {}
@@ -54,6 +61,10 @@ class Orchestra : Object @implements Instrument {
     void onEvent(Event event) {
         if (e := ChannelEvent.cast(event, null))
             __instruments[e.channel].i.onEvent(event);
+    }
+
+    Instrument getChild(byte channel) {
+        return __instruments[channel].i;
     }
 
     void stop() {

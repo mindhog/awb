@@ -608,7 +608,15 @@ class TrackPanel : Widget {
 
     void trackDeleted(Surface surface, uint index) {
         __elems.delete(index);
-        __activeIndex = (index + 1) % __elems.count();
+        if (__elems) {
+            __activeIndex = (index + 1) % __elems.count();
+
+            # reposition all subsequent tracks
+            for (i := index; i < __elems.count(); ++i)
+                __elems[i].pos.y = pos.y + 3 + i * 14;
+        } else {
+            __activeIndex = -1;
+        }
         draw(surface);
     }
 
