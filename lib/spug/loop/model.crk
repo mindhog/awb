@@ -32,14 +32,30 @@ class Section {
     ## The next track number that hasn't been used as part of a name.
     int nextTrackNumber;
 
-    ## Records the "end of track" time.  This is a no-op if there is more than
-    ## one track, if there is only one track it sets the measure time.
-    @final void markEnding(Track lastTrack, uint time) {
+    ## Records the "end of track" time.  If there is only one track it also
+    ## sets the measure time.
+    ## If 'snapToMeasure' is true, snap the end time and events to the nearest
+    ## measure boundary.  That is to say, it changes the end time to the end of the last
+    ## measure if that is closer than then end of the next measure and
+    ## moves all events past the end of the last measure back to align with
+    ## the ending.
+    @final void markEnding(Track lastTrack, uint time, bool snapToMeasure) {
 
         if (!span) {
             span = measure = time;
         # verify that the time is an even multiple of the current span
         } else {
+
+            # if the end time is closer to the beginning of the measure than
+            # to the end, trim all events to the end of the measure boundary.
+            timeInMeasure := time % measure;
+            if (timeInMeasure < measure - timeInMeasure) {
+                time -= timeInMeasure;
+                for (event :in lastTrack)
+                    if (event.time > time)
+                        event.time = time;
+            }
+
             if (time > span) {
                 cout `increasing span: $time / $span\n`;
                 multiple := (time - 1) / span + 1;
@@ -209,7 +225,7 @@ class EventManager {
     }
 
     void endRecord() {
-        curSection.markEnding(recordTrack, getRelTime());
+        curSection.markEnding(recordTrack, getRelTime(), true);
         curSection.tracks.append(recordTrack);
         controller.trackAdded();
         basename := FStr() `track$(curSection.nextTrackNumber++).mtrk`;
