@@ -103,6 +103,8 @@ class Project {
     @abstract void changeState(int oldState, int newState);
     @abstract void trackAdded();
     @abstract void trackDeleted(uint index);
+    @abstract void sectionCreated();
+    @abstract void sectionChanged();
 }
 
 Array[String] programNames = [
@@ -320,7 +322,7 @@ class EventManager {
     # initialize to default project.
     Project project = {};
 
-    Section curSection = {};
+    Section curSection = {}, nextSection;
     Track recordTrack;
     Array[LoopCursor] trackCursors;
 
@@ -330,6 +332,9 @@ class EventManager {
 
     # time that the current loop started.
     uint startTime;
+
+    # if nextSection is true, this is the next time to change the section
+    uint nextSectionStartTime;
 
     oper init(Controller controller, Instrument instrument,
               Sequencer sequencer,
@@ -491,8 +496,37 @@ class EventManager {
         controller.trackDeleted(index);
     }
 
+    void __changeSection() {
+        curSection = nextSection;
+        nextSection = null;
+        controller.sectionChanged();
+    }
+
+    ## Create a new section.  If we're in "play" mode, make the new section
+    ## the next section to play.
+    void createSection() {
+        nextSection = Section();
+        project.sections.append(nextSection);
+
+        # add the first track.
+        nextSection.tracks.append(curSection.tracks[0]);
+        controller.sectionCreated();
+
+        if (mode == IDLE)
+            __changeSection();
+        else {
+            relTime := getRelTime();
+            nextSectionStartTime =
+                (relTime / curSection.span + 1) * curSection.span;
+        }
+    }
+
     void runOneCycle() {
         relTime := getRelTime();
+
+        # see if we need to change sections.
+        if (nextSection && mode == PLAY && relTime > nextSectionStartTime)
+            __changeSection();
 
         # Check for an incoming event on the sequencer, play it and store it
         # if we're recording.

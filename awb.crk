@@ -10,8 +10,8 @@ import crack.sys argv, exit;
 import crack.time Time;
 import crack.cont.array Array;
 import crack.game.sdl fillRect, SDLApp = App, Coord, KeyboardEvent, KeyboardHandler,
-    ResizeEvent, ResizeHandler, Surface, SDLK_DELETE, SDLK_LEFT, SDLK_RIGHT,
-    SDLK_TAB, SDLK_UP, SDLK_DOWN;
+    ResizeEvent, ResizeHandler, Surface, SDLK_DELETE, SDLK_F5, SDLK_LEFT,
+    SDLK_RIGHT, SDLK_TAB, SDLK_UP, SDLK_DOWN;
 import crack.game.sdlgfx drawLine, drawRect, drawString, RED, BLACK, BLUE, GREEN,
     WHITE, YELLOW;
 import crack.io cout, cerr, FStr;
@@ -489,6 +489,12 @@ class TrackPanel : Widget {
         draw(surface);
     }
 
+    void sectionChanged() {
+        __elems.clear();
+        for (track :in em.curSection.tracks)
+            addTrack(track, track[-1].time);
+    }
+
     void __activate(Surface surface, int index) {
         this[__activeIndex].activate(surface, false);
         this[index].activate(surface, true);
@@ -620,6 +626,16 @@ class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
         app.flip();
     }
 
+    void sectionCreated() {
+        # XXX don't care about this until we've got a section panel.
+    }
+
+    void sectionChanged() {
+        trackPanel.sectionChanged();
+        trackPanel.draw(app.surface);
+        app.flip();
+    }
+
     bool onKeyDown(KeyboardEvent event) {
         sym := event.sym;
         for (p :in panels) {
@@ -677,6 +693,9 @@ class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
             next.activate(app.surface, true);
             app.flip();
             return true;
+        } else if (sym == SDLK_F5) {
+            # create new section
+            eventManager.createSection();
         }
 
         return true;
