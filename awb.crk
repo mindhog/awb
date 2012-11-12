@@ -448,7 +448,7 @@ class TrackPanel : Widget {
     bool isActive() { return __active; }
 
     void draw(Surface surface) {
-        fillRect(surface, pos, pos + __size, BLACK);
+        fillRect(surface, pos, __size, BLACK);
         activate(surface, __active);
         for (track :in this)
             track.draw(surface);
