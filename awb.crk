@@ -194,9 +194,9 @@ class Panel : Widget {
 }
 
 const uint32
-    TRACK_BACKGROUND = 0x202020,    # normal background is gray
-    TRACK_ACTIVE = 0x4000,          # active background adds green
-    TRACK_SELECTED = 0x40;          # selected background adds blue
+    TRACK_BACKGROUND = 0x20202000,    # normal background is gray
+    TRACK_ACTIVE = 0x400000,          # active background adds green
+    TRACK_SELECTED = 0x4000;          # selected background adds blue
 
 ## Track widgets display a graphical representation of a track and its events.
 class TrackWidget : Widget {
@@ -475,6 +475,16 @@ class TrackPanel : Widget {
         em.deleteTrack(__activeIndex);
     }
 
+    void selectActiveTrack(Surface surface) {
+        if (__activeIndex == -1) {
+            cerr `ERROR: no selected track\n`;
+            return;
+        }
+        cout `selecting $__activeIndex\n`;
+        __elems[__activeIndex].selected = !__elems[__activeIndex].selected;
+        __elems[__activeIndex].draw(surface);
+    }
+
     void trackDeleted(Surface surface, uint index) {
         __elems.delete(index);
         if (__elems) {
@@ -513,6 +523,8 @@ class TrackPanel : Widget {
             __activate(surface, __activeIndex - 1 < 0 ? count() - 1 : __activeIndex - 1);
         } else if (event.sym == SDLK_DELETE) {
             deleteActiveTrack();
+        } else if (event.sym == b't') {
+            selectActiveTrack(surface);
         } else {
             return false;
         }
