@@ -548,6 +548,15 @@ class TrackPanel : Widget {
 //        }
     }
 
+    Array[Track] getSelectedTracks() {
+        Array[Track] selected = {};
+        for (trackWidget :in __elems) {
+            if (trackWidget.selected)
+                selected.append(trackWidget.model);
+        }
+
+        return selected;
+    }
 }
 
 /*
@@ -707,7 +716,7 @@ class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
             return true;
         } else if (sym == SDLK_F5) {
             # create new section
-            eventManager.createSection();
+            eventManager.createSection(trackPanel.getSelectedTracks());
         }
 
         return true;

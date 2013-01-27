@@ -27,10 +27,13 @@ class Section {
     uint span;
 
     ## The set of all tracks in the section.
-    Array[Track] tracks = {};
+    Array[Track] tracks;
 
     ## The next track number that hasn't been used as part of a name.
     int nextTrackNumber;
+
+    oper init() : tracks() {}
+    oper init(Array[Track] tracks) : tracks = tracks {}
 
     ## Records the "end of track" time.  If there is only one track it also
     ## sets the measure time.
@@ -504,12 +507,11 @@ class EventManager {
 
     ## Create a new section.  If we're in "play" mode, make the new section
     ## the next section to play.
-    void createSection() {
-        nextSection = Section();
+    ## seedTracks: tracks to seed the new section with.
+    void createSection(Array[Track] seedTracks) {
+        nextSection = Section(seedTracks);
         project.sections.append(nextSection);
 
-        # add the first track.
-        nextSection.tracks.append(curSection.tracks[0]);
         controller.sectionCreated();
 
         if (mode == IDLE)
