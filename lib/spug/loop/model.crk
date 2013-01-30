@@ -325,7 +325,8 @@ class EventManager {
     # initialize to default project.
     Project project = {};
 
-    Section curSection = {}, nextSection;
+    Section curSection = {};
+    int curSectionIndex, nextSectionIndex;
     Track recordTrack;
     Array[LoopCursor] trackCursors;
 
@@ -336,7 +337,7 @@ class EventManager {
     # time that the current loop started.
     uint startTime;
 
-    # if nextSection is true, this is the next time to change the section
+    # if nextSectionIndex is true, this is the next time to change the section
     uint nextSectionStartTime;
 
     oper init(Controller controller, Instrument instrument,
@@ -364,7 +365,7 @@ class EventManager {
         return t.secs * 100 + t.nsecs / 10000000;
     }
 
-    ## Returns the time relative to the beginning of the loop (also in ticks).
+    ## Returns the time relative to when we started looping (also in ticks).
     uint getRelTime() {
         return getAbsTime() - startTime;
     }
@@ -500,20 +501,15 @@ class EventManager {
     }
 
     void __changeSection() {
-        curSection = nextSection;
-        nextSection = null;
+        curSectionIndex = nextSectionIndex;
+        curSection = project.sections[curSectionIndex];
+        trackCursors = null;
         controller.sectionChanged();
     }
 
-    ## Create a new section.  If we're in "play" mode, make the new section
-    ## the next section to play.
-    ## seedTracks: tracks to seed the new section with.
-    void createSection(Array[Track] seedTracks) {
-        nextSection = Section(seedTracks);
-        project.sections.append(nextSection);
-
-        controller.sectionCreated();
-
+    ## Change the section at the end of the next loop or immediately if we're
+    ## idle.
+    void __scheduleSectionChange() {
         if (mode == IDLE)
             __changeSection();
         else {
@@ -523,12 +519,35 @@ class EventManager {
         }
     }
 
+    ## Create a new section.  If we're in "play" mode, make the new section
+    ## the next section to play.
+    ## seedTracks: tracks to seed the new section with.
+    void createSection(Array[Track] seedTracks) {
+        nextSectionIndex = project.sections.count();
+        project.sections.append(Section(seedTracks));
+
+        controller.sectionCreated();
+        __scheduleSectionChange();
+    }
+
+    int getSectionCount() { return project.sections.count(); }
+    int getSectionIndex() { return curSectionIndex; }
+    void setNextSection(int index) {
+        nextSectionIndex = index;
+        __scheduleSectionChange();
+    }
+
     void runOneCycle() {
         relTime := getRelTime();
 
         # see if we need to change sections.
-        if (nextSection && mode == PLAY && relTime > nextSectionStartTime)
+        if ((nextSectionIndex != curSectionIndex) && mode == PLAY &&
+            relTime >= nextSectionStartTime
+            ) {
+            instrument.stop();
             __changeSection();
+            startTime = getAbsTime();
+        }
 
         # Check for an incoming event on the sequencer, play it and store it
         # if we're recording.
