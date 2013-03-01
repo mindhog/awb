@@ -196,13 +196,79 @@ class Panel : Widget {
 const uint32
     TRACK_BACKGROUND = 0x20202000,    # normal background is gray
     TRACK_ACTIVE = 0x400000,          # active background adds green
-    TRACK_SELECTED = 0x4000;          # selected background adds blue
+    TRACK_SELECTED = 0x4000,          # selected background adds blue
+    POS_LINE_COLOR = RED;             # position marker line
+
+const int CHAR_WIDTH = 8, TRACK_HEIGHT = 14;
+
+## This class bundles up all of the state information that is known by the
+## track panel so that individual tracks can draw themselves more easily.
+class TrackCanvas {
+
+    ## width of the label column to the left.
+    int labelColWidth;
+
+    ## Width of the event column to the right.
+    int eventColWidth;
+
+    ## end time of the section.
+    int endTime;
+
+    int curTime;
+
+    Coord pos, size;
+
+    Surface surface;
+
+    oper init(Surface surface, Coord pos, Coord size,
+              int labelColWidth,
+              int eventColWidth,
+              int curTime,
+              int endTime
+              ) :
+        surface = surface,
+        pos = pos,
+        size = size,
+        labelColWidth = labelColWidth,
+        eventColWidth = eventColWidth,
+        curTime = curTime,
+        endTime = endTime {
+    }
+
+    void fill(uint32 color) {
+        fillRect(surface, pos, size, color);
+    }
+
+    void drawLabel(String text) {
+        maxLabel := labelColWidth / CHAR_WIDTH;
+        drawString(surface, pos + Coord(0, (size.y - 8) / 2),
+                   CString((text.size > maxLabel) ?
+                            text.substr(0, maxLabel) :
+                            text
+                           ),
+                   WHITE
+                   );
+    }
+
+    uint16 __toX(uint t) {
+        return uint16(t * eventColWidth / endTime + labelColWidth);
+    }
+
+    void drawNote(int startTime, int endTime, float y) {
+        uint16 realY = uint16(pos.y + size.y - 1 - y * size.y);
+        Coord
+            a = {__toX(startTime), realY},
+            b = {__toX(endTime), realY};
+
+        drawLine(surface, a, b,
+                 (curTime >= startTime && curTime < endTime) ? GREEN : YELLOW
+                 );
+    }
+}
 
 ## Track widgets display a graphical representation of a track and its events.
-class TrackWidget : Widget {
-    Coord size;
+class TrackWidget {
     Track model;
-    uint endTime;
 
     ## True if the track is selected (multiple tracks can be selected)
     bool selected;
@@ -210,32 +276,15 @@ class TrackWidget : Widget {
     ## True if the track is active (only one track can be active)
     bool active;
 
-    # these are transient fields that only exist when we're drawing.
-    uint left, width;
-
-    oper init(Coord pos, Coord size, Track model, uint endTime) :
-        Widget(pos),
-        size = size,
-        model = model,
-        endTime = endTime {
+    oper init(Track model, uint endTime) :
+        model = model {
     }
 
-    uint16 __toX(uint t) {
-        return uint16(t * width / endTime + left);
-    }
-
-    void draw(Surface surface) {
-        fillRect(surface, pos, size,
-                 TRACK_BACKGROUND | (active ? TRACK_ACTIVE : 0) |
-                  (selected ? TRACK_SELECTED : 0)
-                 );
-        drawString(surface, pos + Coord(0, (size.y - 8) / 2),
-                   CString(model.name),
-                   WHITE
-                   );
-        textWidth := model.name.size * 8;
-        left = pos.x + textWidth;
-        width = size.x - textWidth;
+    void draw(TrackCanvas canvas) {
+        canvas.fill(TRACK_BACKGROUND | (active ? TRACK_ACTIVE : 0) |
+                     (selected ? TRACK_SELECTED : 0)
+                    );
+        canvas.drawLabel(model.name);
 
         # first determine high and low notes
         byte low = 0xff, high = 0;
@@ -253,27 +302,31 @@ class TrackWidget : Widget {
             if (high < 0xff) ++high;
         }
 
-        # now draw the events
-        Array[uint] startTime = {256};
-        for (int i; i < 256; ++i)
-            startTime.append(0);
-        for (event :in model) {
-            if (n := NoteOn.cast(event, null)) {
-                startTime[n.note] = n.time;
-            } else if (n := NoteOff.cast(event, null)) {
-                y := (n.note - low) * size.y / (high - low) + pos.y;
-                Coord
-                    a = {__toX(startTime[n.note]), y},
-                    b = {__toX(n.time), y};
-
-                drawLine(surface, a, b, YELLOW);
+        # now draw the events as many times as it takes to fill the section
+        # span
+        uint frameStart, trackSpan = model[-1].time;
+        while (frameStart < canvas.endTime) {
+            Array[uint] startTime = {256};
+            for (int i; i < 256; ++i)
+                startTime.append(0);
+            for (event :in model) {
+                if (n := NoteOn.cast(event, null)) {
+                    startTime[n.note] = n.time;
+                } else if (n := NoteOff.cast(event, null)) {
+                    canvas.drawNote(frameStart + startTime[n.note],
+                                    frameStart + n.time,
+                                    float(n.note - low) / (high - low)
+                                    );
+                }
             }
+
+            frameStart += trackSpan;
         }
     }
 
-    void activate(Surface surface, bool active) {
+    void activate(TrackCanvas canvas, bool active) {
         this.active = active;
-        draw(surface);
+        draw(canvas);
     }
 }
 
@@ -426,11 +479,16 @@ class TrackPanel : Widget {
     int __activeIndex = -1;
     Coord __size;
     Array[TrackWidget] __elems = {};
+
+    # Width of the label column.
+    int __labelColWidth;
+
     EventManager em;
 
     oper init(EventManager em, Coord pos, Coord size) :
         Widget(pos),
         __size = size,
+        __labelColWidth = CHAR_WIDTH * 12,
         em = em {
     }
 
@@ -447,23 +505,41 @@ class TrackPanel : Widget {
 
     bool isActive() { return __active; }
 
+    TrackCanvas __makeTrackCanvas(Surface surface, Coord trackSize,
+                                  int index
+                                  ) {
+        Coord trackPos = {pos.x, pos.y + index * TRACK_HEIGHT};
+        return TrackCanvas(surface, trackPos,
+                           trackSize ? trackSize :
+                                       Coord(__size.x, TRACK_HEIGHT),
+                           __labelColWidth,
+                           trackSize.x - __labelColWidth,
+                           em.lastTime % em.curSection.span,
+                           em.curSection.span
+                           );
+    }
+
     void draw(Surface surface) {
         fillRect(surface, pos, __size, BLACK);
         activate(surface, __active);
-        for (track :in this)
-            track.draw(surface);
+        int index;
+        Coord trackSize = {__size.x, TRACK_HEIGHT};
+        for (track :in this) {
+            track.draw(__makeTrackCanvas(surface, trackSize, index));
+            ++index;
+        }
     }
 
     ## Add a new track, creating a new track widget.
-    TrackWidget addTrack(Track track, uint endTime) {
-        w := TrackWidget(Coord(pos.x + 3,
-                               pos.y + 3 + count() * 14),
-                         Coord(__size.x - 6, 10),
-                         track,
+    ## If 'surface is not null, draws the track.
+    TrackWidget addTrack(Track track, uint endTime, Surface surface) {
+        w := TrackWidget(track,
                          endTime
                          );
         __elems.append(w);
         __activeIndex = __elems.count() - 1;
+        if (!(surface is null))
+            w.draw(__makeTrackCanvas(surface, null, __activeIndex));
         return w;
     }
 
@@ -482,40 +558,50 @@ class TrackPanel : Widget {
         }
         cout `selecting $__activeIndex\n`;
         __elems[__activeIndex].selected = !__elems[__activeIndex].selected;
-        __elems[__activeIndex].draw(surface);
+        __elems[__activeIndex].draw(__makeTrackCanvas(surface, null,
+                                                      __activeIndex
+                                                      )
+                                    );
     }
 
     void trackDeleted(Surface surface, uint index) {
         __elems.delete(index);
-        if (__elems) {
+        if (__elems)
             __activeIndex = (index + 1) % __elems.count();
-
-            # reposition all subsequent tracks
-            for (i := index; i < __elems.count(); ++i)
-                __elems[i].pos.y = pos.y + 3 + i * 14;
-        } else {
+        else
             __activeIndex = -1;
-        }
         draw(surface);
     }
 
     void sectionChanged() {
         __elems.clear();
         for (track :in em.curSection.tracks)
-            addTrack(track, track[-1].time);
+            addTrack(track, track[-1].time, null);
+    }
+
+    void drawPosition(Surface surface) {
+        # find the absolute line position.
+        x := __labelColWidth +
+             em.getTimeFraction() * (__size.x - __labelColWidth) + pos.x;
+        drawLine(surface, Coord(x, pos.y), Coord(x, pos.y + __size.y - 1),
+                 POS_LINE_COLOR
+                 );
     }
 
     void __activate(Surface surface, int index) {
-        this[__activeIndex].activate(surface, false);
-        this[index].activate(surface, true);
+        Coord trackSize = {__size.x, TRACK_HEIGHT};
+        this[__activeIndex].activate(__makeTrackCanvas(surface, trackSize,
+                                                       index
+                                                       ),
+                                     false
+                                     );
+        this[index].activate(__makeTrackCanvas(surface, trackSize, index),
+                             true
+                             );
         __activeIndex = index;
     }
 
     bool onKeyPress(Surface surface, KeyboardEvent event) {
-
-        # delegate to the active track
-        if (__activeIndex != -1 && this[__activeIndex].onKeyPress(surface, event))
-            return true;
 
         if (event.sym == SDLK_DOWN) {
             __activate(surface, __activeIndex + 1 >= count() ? 0 : __activeIndex + 1);
@@ -637,8 +723,9 @@ class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
 
     void trackAdded() {
         trackPanel.addTrack(eventManager.curSection.tracks[-1],
-                            eventManager.curSection.span
-                            ).draw(app.surface);
+                            eventManager.curSection.span,
+                            null
+                            );
         app.flip();
     }
 
@@ -814,6 +901,11 @@ class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
         while (app.isActive()) {
             app.runOneCycle();
             eventManager.runOneCycle();
+            if (eventManager.playingExistingTracks()) {
+                trackPanel.draw(app.surface);
+                trackPanel.drawPosition(app.surface);
+                app.flip();
+            }
         }
     }
 }

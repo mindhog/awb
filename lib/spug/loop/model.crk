@@ -337,6 +337,9 @@ class EventManager {
     # time that the current loop started.
     uint startTime;
 
+    # last time that we acted upon.
+    float lastTime;
+
     # if nextSectionIndex is true, this is the next time to change the section
     uint nextSectionStartTime;
 
@@ -581,5 +584,20 @@ class EventManager {
                 }
             }
         }
+
+        lastTime = relTime;
+    }
+
+    ## Returns the fraction of time position / section span as of the last
+    ## runOneCycle().
+    float getTimeFraction() {
+        return (lastTime % curSection.span) / curSection.span;
+    }
+
+    ## Returns true if we're playing existing tracks (either as play or
+    ## record).
+    @final bool playingExistingTracks() {
+        return mode == PLAY ||
+               (mode == RECORD || mode == LATCHED_RECORD) && curSection.tracks;
     }
 }
