@@ -508,12 +508,12 @@ class TrackPanel : Widget {
     TrackCanvas __makeTrackCanvas(Surface surface, Coord trackSize,
                                   int index
                                   ) {
-        Coord trackPos = {pos.x, pos.y + index * TRACK_HEIGHT};
+        ts := trackSize ? trackSize : Coord(__size.x - 1, TRACK_HEIGHT);
+        Coord trackPos = {pos.x + 1, pos.y + index * TRACK_HEIGHT + 1};
         return TrackCanvas(surface, trackPos,
-                           trackSize ? trackSize :
-                                       Coord(__size.x, TRACK_HEIGHT),
+                           ts,
                            __labelColWidth,
-                           trackSize.x - __labelColWidth,
+                           ts.x - __labelColWidth,
                            em.lastTime % em.curSection.span,
                            em.curSection.span
                            );
@@ -523,7 +523,7 @@ class TrackPanel : Widget {
         fillRect(surface, pos, __size, BLACK);
         activate(surface, __active);
         int index;
-        Coord trackSize = {__size.x, TRACK_HEIGHT};
+        Coord trackSize = {__size.x - 2, TRACK_HEIGHT};
         for (track :in this) {
             track.draw(__makeTrackCanvas(surface, trackSize, index));
             ++index;
@@ -556,7 +556,7 @@ class TrackPanel : Widget {
             cerr `ERROR: no selected track\n`;
             return;
         }
-        cout `selecting $__activeIndex\n`;
+        cout `selected track $__activeIndex\n`;
         __elems[__activeIndex].selected = !__elems[__activeIndex].selected;
         __elems[__activeIndex].draw(__makeTrackCanvas(surface, null,
                                                       __activeIndex
@@ -589,9 +589,9 @@ class TrackPanel : Widget {
     }
 
     void __activate(Surface surface, int index) {
-        Coord trackSize = {__size.x, TRACK_HEIGHT};
+        Coord trackSize = {__size.x - 1, TRACK_HEIGHT};
         this[__activeIndex].activate(__makeTrackCanvas(surface, trackSize,
-                                                       index
+                                                       __activeIndex
                                                        ),
                                      false
                                      );
