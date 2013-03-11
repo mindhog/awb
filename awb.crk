@@ -589,6 +589,11 @@ class TrackPanel : Widget {
     }
 
     void __activate(Surface surface, int index) {
+
+        # if there's no tracks, quit now.
+        if (!count())
+            return;
+
         Coord trackSize = {__size.x - 1, TRACK_HEIGHT};
         this[__activeIndex].activate(__makeTrackCanvas(surface, trackSize,
                                                        __activeIndex
@@ -604,9 +609,13 @@ class TrackPanel : Widget {
     bool onKeyPress(Surface surface, KeyboardEvent event) {
 
         if (event.sym == SDLK_DOWN) {
-            __activate(surface, __activeIndex + 1 >= count() ? 0 : __activeIndex + 1);
+            __activate(surface,
+                       __activeIndex + 1 >= count() ? 0 : __activeIndex + 1
+                       );
         } else if (event.sym == SDLK_UP) {
-            __activate(surface, __activeIndex - 1 < 0 ? count() - 1 : __activeIndex - 1);
+            __activate(surface,
+                       __activeIndex - 1 < 0 ? count() - 1 : __activeIndex - 1
+                       );
         } else if (event.sym == SDLK_DELETE) {
             deleteActiveTrack();
         } else if (event.sym == b't') {
