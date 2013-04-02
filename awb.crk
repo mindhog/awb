@@ -10,8 +10,8 @@ import crack.sys argv, exit;
 import crack.time Time;
 import crack.cont.array Array;
 import crack.game.sdl fillRect, SDLApp = App, Coord, KeyboardEvent, KeyboardHandler,
-    ResizeEvent, ResizeHandler, Surface, SDLK_DELETE, SDLK_F5, SDLK_F7,
-    SDLK_F8, SDLK_LEFT, SDLK_RIGHT, SDLK_TAB, SDLK_UP, SDLK_DOWN;
+    ResizeEvent, ResizeHandler, Surface, SDLK_DELETE, SDLK_F2, SDLK_F5,
+    SDLK_F7, SDLK_F8, SDLK_LEFT, SDLK_RIGHT, SDLK_TAB, SDLK_UP, SDLK_DOWN;
 import crack.game.sdlgfx drawLine, drawRect, drawString, RED, BLACK, BLUE, GREEN,
     WHITE, YELLOW;
 import crack.io cout, cerr, FStr;
@@ -42,8 +42,16 @@ import spug.loop.instrument FluidSynthInstrument, Instrument, Orchestra;
 #}
 #SDL_Quit();
 
-CmdOptions cl = [Option('port', 'p', 'Midi port (e.g. "20:0")', '', CMD_STR)];
-cl.parse(argv);
+CmdOptions cl = [
+    Option('port', 'p', 'Midi port (e.g. "20:0")', '', CMD_STR),
+];
+
+nonFlagArgs := cl.parse(argv);
+String filename;
+if (nonFlagArgs.count() > 1)
+    filename = nonFlagArgs[1];
+else
+    cout `args = $nonFlagArgs\n`;
 
 int clientNum, portNum;
 portName := cl['port'].value;
@@ -810,6 +818,8 @@ class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
             next.activate(app.surface, true);
             app.flip();
             return true;
+        } else if (sym == SDLK_F2) {
+            eventManager.save();
         } else if (sym == SDLK_F5) {
             # create new section
             eventManager.createSection(trackPanel.getSelectedTracks());
@@ -953,6 +963,8 @@ App app = {channelMap};
 cout `creating event manager\n`;
 EventManager em = {app, orch, s, channelMap};
 app.setEventManager(em);
+if (filename)
+    em.load(filename);
 cout `running\n`;
 app.run();
 

@@ -3,12 +3,14 @@
 # Spugloop model objects.
 
 import crack.cont.array Array;
-import crack.fs cwd;
-import crack.io cout, FStr;
-import crack.midi.event ChannelEvent, EndTrack, Event, MidiWriter, ProgramChange,
-    SeekableEventSource, Track;
+import crack.fs cwd, RealPath;
+import crack.io cout, FStr, StringReader, StringWriter;
+import crack.lang Exception;
+import crack.midi.event ChannelEvent, EndTrack, Event, MidiReader,
+    MidiWriter, ProgramChange, SeekableEventSource, Track;
 import spug.loop.instrument Instrument;
 import crack.midi.alsa Sequencer;
+import crack.serial SerialReader, SerialWriter;
 import crack.time Time;
 
 @import crack.ann assert, interface;
@@ -89,6 +91,39 @@ class Section {
         }
         span = t;
     }
+
+    void writeTo(SerialWriter out) {
+        out.write(measure);
+        out.write(span);
+        out.write(tracks.count());
+
+        for (track :in tracks) {
+
+            # write the track name
+            out.write(track.name);
+
+            # serialize the track, then write it out as a string since tracks
+            # are not delimited.
+            StringWriter temp = {};
+            MidiWriter mw = {temp};
+            track.writeTo(mw);
+            mw.flush();
+            out.write(temp.makeString());
+        }
+    }
+
+    void readFrom(SerialReader src) {
+        measure = src.readUInt();
+        span = src.readUInt();
+        trackCount := src.readUInt();
+
+        for (int i = 0; i < trackCount; ++i) {
+            trackName := src.readString();
+            MidiReader mr = {StringReader(src.readString())};
+            tracks.append(track := mr.readTrack(trackName));
+            cout `track $i:\n$track\n`;
+        }
+    }
 }
 
 ## Global play modes.
@@ -100,6 +135,29 @@ class Project {
 
     ## The next section number that hasn't been used as part of a section name.
     int nextSectionNumber;
+
+    ## Write the current project to a file.
+    void writeTo(SerialWriter out) {
+        # version number
+        out.write(1);
+
+        # write the section count, then each of the sections.
+        out.write(sections.count());
+        for (section :in sections)
+            section.writeTo(out);
+    }
+
+    void readFrom(SerialReader src) {
+        sections.clear();
+        if ((v := src.readUInt()) != 1)
+            throw Exception(FStr() `Invalid varsion number: $v`);
+        sectionCount := src.readUInt();
+        for (i := 0; i < sectionCount; ++i) {
+            section := Section();
+            section.readFrom(src);
+            sections.append(section);
+        }
+    }
 }
 
 @interface Controller {
@@ -330,6 +388,9 @@ class EventManager {
     Track recordTrack;
     Array[LoopCursor] trackCursors;
 
+    # Name of the project file.
+    String projectFileName = 'noname';
+
     int mode;
 
     Time t = {};
@@ -377,10 +438,6 @@ class EventManager {
         curSection.markEnding(recordTrack, getRelTime(), true);
         curSection.tracks.append(recordTrack);
         controller.trackAdded();
-        basename := FStr() `track$(curSection.nextTrackNumber++).mtrk`;
-        MidiWriter writer = {(cwd/basename).writer()};
-        recordTrack.writeTo(writer);
-        cout `stored track with span $(recordTrack[-1].time)\n`;
         trackCursors = null;
         recordTrack = null;
     }
@@ -488,7 +545,7 @@ class EventManager {
     void __playPendingEvents(LoopCursor cur, uint pos) {
         while (!cur.immediatelyFollows(pos)) {
             instrument.onEvent(e := cur.next());
-            cout `played event $e at time $(e.time)/$(cur.span) for pos $pos\n`;
+#            cout `played event $e at time $(e.time)/$(cur.span) for pos $pos\n`;
         }
     }
 
@@ -599,5 +656,23 @@ class EventManager {
     @final bool playingExistingTracks() {
         return mode == PLAY ||
                (mode == RECORD || mode == LATCHED_RECORD) && curSection.tracks;
+    }
+
+    ## Store the track to the current filename.
+    void save() {
+        project.writeTo(SerialWriter(RealPath(projectFileName).writer()));
+    }
+
+    ## Load the track and set the filename.  Does nothing if the file doesn't
+    ## exist.
+    void load(String filename) {
+        projectFileName = filename;
+        path := RealPath(filename);
+        if (path.exists()) {
+            project.readFrom(SerialReader(path.reader()));
+            curSection = project.sections[0];
+            cout `tracks in cur section: $(curSection.tracks.count())\n`;
+            controller.sectionChanged();
+        }
     }
 }
