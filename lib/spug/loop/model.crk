@@ -31,11 +31,12 @@ class Section {
     ## The set of all tracks in the section.
     Array[Track] tracks;
 
-    ## The next track number that hasn't been used as part of a name.
-    int nextTrackNumber;
-
     oper init() : tracks() {}
-    oper init(Array[Track] tracks) : tracks = tracks {}
+    oper init(Array[Track] tracks, uint measure, uint span) :
+        tracks = tracks,
+        measure = measure,
+        span = span {
+    }
 
     ## Records the "end of track" time.  If there is only one track it also
     ## sets the measure time.
@@ -584,7 +585,24 @@ class EventManager {
     ## seedTracks: tracks to seed the new section with.
     void createSection(Array[Track] seedTracks) {
         nextSectionIndex = project.sections.count();
-        project.sections.append(Section(seedTracks));
+
+        # if there are seed tracks, use the current section's measure and
+        # obtain the span from the seed track.  Otherwise just create an empty
+        # section.
+        Section newSection;
+        if (seedTracks) {
+            uint span;
+            for (track :in seedTracks) {
+                t := track[-1].time;
+                if (t > span)
+                    span = t;
+            }
+            newSection = Section(seedTracks, curSection.measure, span);
+        } else {
+            newSection = Section();
+        }
+
+        project.sections.append(newSection);
 
         controller.sectionCreated();
         __scheduleSectionChange();
