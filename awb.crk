@@ -636,19 +636,8 @@ class TrackPanel : Widget {
     }
 
     void moveTo(Coord coord, Coord size) {
-//        pos = coord;
-//        __size = size;
-//        for (tw :in __elems) { # xxx finish
-//        uint xoff = 3, yoff = 3, index;
-//        for (btn :in channelButtons) {
-//            btn.pos = Coord(pos.x + xoff, pos.y + yoff);
-//            if (++index % 4) {
-//                xoff += textWidth * 8;
-//            } else {
-//                yoff += btn.getMinSize().y;
-//                xoff = 3;
-//            }
-//        }
+        pos = coord;
+        __size = size;
     }
 
     Array[Track] getSelectedTracks() {
@@ -659,6 +648,45 @@ class TrackPanel : Widget {
         }
 
         return selected;
+    }
+}
+
+class TextWidget : Widget {
+    Coord size;
+    CString text;
+
+    Coord __bl;
+    Coord __getBottomLeft() {
+        if (!__bl)
+            __bl = Coord(pos.x + size.x - 1,
+                         pos.y + size.y - 1
+                         );
+        return __bl;
+    }
+
+    oper init(Coord pos, Coord size, CString text) :
+        Widget(pos),
+        size = size,
+        text = text {
+    }
+
+    void setText(String text) {
+        this.text = CString(text);
+    }
+
+    void setText(CString text) {
+        this.text = text;
+    }
+
+    void draw(Surface surface) {
+        drawRect(surface, pos, __getBottomLeft(), BLACK);
+        drawString(surface, pos + Coord(1, 1), text, WHITE);
+    }
+
+    void moveTo(Coord pos, Coord size) {
+        this.pos = pos;
+        this.size = size;
+        __bl = null;
     }
 }
 
@@ -696,6 +724,7 @@ class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
     Panel panel;
 
     ChannelWidget channelWidget;
+    TextWidget statusBar;
     TrackPanel trackPanel;
     Array[Widget] panels = {};
 
@@ -861,18 +890,22 @@ class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
 
         trackPanel.draw(app.surface);
         channelWidget.draw(app.surface);
+        statusBar.draw(app.surface);
 
         app.flip();
     }
 
     bool onResize(ResizeEvent event) {
-        channelWidget.moveTo(Coord(0, app.height - 40));
+        channelWidget.moveTo(Coord(0, app.height - 48));
         ypos := panel.getMinSize().y + 4;
         trackPanel.moveTo(Coord(0, ypos),
                           Coord(app.width,
-                                app.height - 40 - ypos
+                                app.height - 48 - ypos
                                 )
                           );
+        statusBar.moveTo(Coord(0, app.height - 8),
+                         Coord(app.width, 8)
+                         );
         repaint();
         return true;
     }
@@ -891,14 +924,22 @@ class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
         trackPanel = TrackPanel(null,
                                 Coord(0, ypos),
                                 Coord(app.width,
-                                      app.height - 40 - ypos
+                                      app.height - 48 - ypos
                                       )
                                 );
         panels.append(trackPanel);
 
-        channelWidget = ChannelWidget(Coord(0, app.height - 40), channelMap);
+        channelWidget = ChannelWidget(Coord(0, app.height - 48), channelMap);
         channelWidget.activate(app.surface, true);
         panels.append(channelWidget);
+
+        # we don't add the status bar to the panels because we don't want to
+        # tab through it.
+        statusBar = TextWidget(Coord(0, app.height - 8),
+                               Coord(app.width, 8),
+                               'AWB'
+                               );
+        statusBar.activate(app.surface, true);
 
         repaint();
 
