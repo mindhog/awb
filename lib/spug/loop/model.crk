@@ -627,9 +627,9 @@ class EventManager {
             startTime = getAbsTime();
         }
 
-        # Check for an incoming event on the sequencer, play it and store it
+        # Check for a incoming events on the sequencer, play it and store it
         # if we're recording.
-        if (sequencer.hasEvent()) {
+        while (sequencer.hasEvent()) {
             event := sequencer.getEvent();
             if (event)
                 onInputEvent(event);
