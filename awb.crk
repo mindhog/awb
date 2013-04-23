@@ -854,12 +854,12 @@ class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
             eventManager.createSection(trackPanel.getSelectedTracks());
         } else if (sym == SDLK_F7) {
             # previous section
-            int index = eventManager.getSectionIndex();
+            int index = eventManager.getNextSectionIndex();
             int count = eventManager.getSectionCount();
             eventManager.setNextSection((count + index - 1) % count);
         } else if (sym == SDLK_F8) {
             # next section
-            int index = eventManager.getSectionIndex();
+            int index = eventManager.getNextSectionIndex();
             int count = eventManager.getSectionCount();
             eventManager.setNextSection((index + 1) % count);
         }

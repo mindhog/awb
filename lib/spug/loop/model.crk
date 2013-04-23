@@ -610,6 +610,7 @@ class EventManager {
 
     int getSectionCount() { return project.sections.count(); }
     int getSectionIndex() { return curSectionIndex; }
+    int getNextSectionIndex() { return nextSectionIndex; }
     void setNextSection(int index) {
         nextSectionIndex = index;
         __scheduleSectionChange();
