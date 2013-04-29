@@ -131,14 +131,30 @@ class ChordPlayer {
 class Widget {
 
     Coord pos;
+    Coord size;
+    Coord __bl;
 
-    oper init(Coord pos) : pos = pos {}
+    oper init(Coord pos, Coord size) : pos = pos, size = size {}
+
+    Coord getBottomLeft() {
+        if (!__bl)
+            __bl = Coord(pos.x + size.x - 1,
+                         pos.y + size.y - 1
+                         );
+        return __bl;
+    }
 
     Coord getMinSize() { return Coord(0, 0); }
 
     void draw(Surface surface) {}
 
     void setPos(Coord newPos) { pos = newPos; }
+
+    void moveTo(Coord pos, Coord size) {
+        this.pos = pos;
+        this.size = size;
+        __bl = null;
+    }
 
     bool isActive() { return false; }
     void activate(Surface surface, bool newActive) { }
@@ -148,13 +164,11 @@ class Widget {
 
 class Button : Widget {
     CString text;
-    Coord size;
 
     uint32 background = 0x202020FF, foreground = WHITE;
     oper init(Coord pos, CString text) :
-        Widget(pos),
-        text = text,
-        size(text.size * 8 + 2, 10) {
+        Widget(pos, Coord(text.size * 8 + 2, 10)),
+        text = text {
     }
 
     Coord getMinSize() { return size; }
@@ -169,8 +183,8 @@ class Panel : Widget {
     Array[Widget] widgets = {};
     Coord minSize;
 
-    oper init(Coord pos) : Widget(pos) {}
-    oper init(uint size) : Widget(null), widgets(size) {}
+    oper init(Coord pos, Coord size) : Widget(pos, size) {}
+    oper init(uint size) : Widget(null, null), widgets(size) {}
 
     void append(Widget widget) { widgets.append(widget); minSize = null; }
 
@@ -353,7 +367,9 @@ class ChannelWidget : Widget {
 
     Array[Button] channelButtons = {16};
 
-    oper init(Coord pos, ChannelMap model) : Widget(pos), model = model {
+    oper init(Coord pos, Coord size, ChannelMap model) :
+        Widget(pos, size),
+        model = model {
 
         # find the maximum width needed for any program name
         for (channel :in model.programs) {
@@ -397,8 +413,8 @@ class ChannelWidget : Widget {
 
     Coord getMinSize() { return __size; }
 
-    void moveTo(Coord coord) {
-        pos = coord;
+    void moveTo(Coord coord, Coord size) {
+        Widget.moveTo(coord, size);
         uint xoff = 3, yoff = 3, index;
         for (btn :in channelButtons) {
             btn.pos = Coord(pos.x + xoff, pos.y + yoff);
@@ -485,7 +501,6 @@ class TrackPanel : Widget {
 
     bool __active;
     int __activeIndex = -1;
-    Coord __size;
     Array[TrackWidget] __elems = {};
 
     # Width of the label column.
@@ -494,8 +509,7 @@ class TrackPanel : Widget {
     EventManager em;
 
     oper init(EventManager em, Coord pos, Coord size) :
-        Widget(pos),
-        __size = size,
+        Widget(pos, size),
         __labelColWidth = CHAR_WIDTH * 12,
         em = em {
     }
@@ -508,7 +522,7 @@ class TrackPanel : Widget {
 
     void activate(Surface surface, bool newActive) {
         __active = newActive;
-        drawRect(surface, pos, pos + __size, __active ? YELLOW : BLACK);
+        drawRect(surface, pos, getBottomLeft(), __active ? YELLOW : BLACK);
     }
 
     bool isActive() { return __active; }
@@ -516,7 +530,7 @@ class TrackPanel : Widget {
     TrackCanvas __makeTrackCanvas(Surface surface, Coord trackSize,
                                   int index
                                   ) {
-        ts := trackSize ? trackSize : Coord(__size.x - 1, TRACK_HEIGHT);
+        ts := trackSize ? trackSize : Coord(size.x - 1, TRACK_HEIGHT);
         Coord trackPos = {pos.x + 1, pos.y + index * TRACK_HEIGHT + 1};
         return TrackCanvas(surface, trackPos,
                            ts,
@@ -528,10 +542,10 @@ class TrackPanel : Widget {
     }
 
     void draw(Surface surface) {
-        fillRect(surface, pos, __size, BLACK);
+        fillRect(surface, pos, size, BLACK);
         activate(surface, __active);
         int index;
-        Coord trackSize = {__size.x - 2, TRACK_HEIGHT};
+        Coord trackSize = {size.x - 2, TRACK_HEIGHT};
         for (track :in this) {
             track.draw(__makeTrackCanvas(surface, trackSize, index));
             ++index;
@@ -590,8 +604,8 @@ class TrackPanel : Widget {
     void drawPosition(Surface surface) {
         # find the absolute line position.
         x := __labelColWidth +
-             em.getTimeFraction() * (__size.x - __labelColWidth) + pos.x;
-        drawLine(surface, Coord(x, pos.y), Coord(x, pos.y + __size.y - 1),
+             em.getTimeFraction() * (size.x - __labelColWidth) + pos.x;
+        drawLine(surface, Coord(x, pos.y), Coord(x, pos.y + size.y - 1),
                  POS_LINE_COLOR
                  );
     }
@@ -602,7 +616,7 @@ class TrackPanel : Widget {
         if (!count())
             return;
 
-        Coord trackSize = {__size.x - 1, TRACK_HEIGHT};
+        Coord trackSize = {size.x - 1, TRACK_HEIGHT};
         this[__activeIndex].activate(__makeTrackCanvas(surface, trackSize,
                                                        __activeIndex
                                                        ),
@@ -635,11 +649,6 @@ class TrackPanel : Widget {
         return true;
     }
 
-    void moveTo(Coord coord, Coord size) {
-        pos = coord;
-        __size = size;
-    }
-
     Array[Track] getSelectedTracks() {
         Array[Track] selected = {};
         for (trackWidget :in __elems) {
@@ -652,21 +661,10 @@ class TrackPanel : Widget {
 }
 
 class TextWidget : Widget {
-    Coord size;
     CString text;
 
-    Coord __bl;
-    Coord __getBottomLeft() {
-        if (!__bl)
-            __bl = Coord(pos.x + size.x - 1,
-                         pos.y + size.y - 1
-                         );
-        return __bl;
-    }
-
     oper init(Coord pos, Coord size, CString text) :
-        Widget(pos),
-        size = size,
+        Widget(pos, size),
         text = text {
     }
 
@@ -679,14 +677,8 @@ class TextWidget : Widget {
     }
 
     void draw(Surface surface) {
-        drawRect(surface, pos, __getBottomLeft(), BLACK);
+        drawRect(surface, pos, getBottomLeft(), BLACK);
         drawString(surface, pos + Coord(1, 1), text, WHITE);
-    }
-
-    void moveTo(Coord pos, Coord size) {
-        this.pos = pos;
-        this.size = size;
-        __bl = null;
     }
 }
 
@@ -896,7 +888,9 @@ class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
     }
 
     bool onResize(ResizeEvent event) {
-        channelWidget.moveTo(Coord(0, app.height - 48));
+        channelWidget.moveTo(Coord(0, app.height - 48),
+                             Coord(app.width, 40)
+                             );
         ypos := panel.getMinSize().y + 4;
         trackPanel.moveTo(Coord(0, ypos),
                           Coord(app.width,
@@ -916,7 +910,7 @@ class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
         app.initialize();
         app.addKeyboardHandler(this);
 
-        panel = Panel(Coord(0, 0));
+        panel = Panel(Coord(0, 0), Coord(app.width, 8));
         panel.append(playBtn);
         panel.append(recBtn);
 
@@ -929,7 +923,10 @@ class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
                                 );
         panels.append(trackPanel);
 
-        channelWidget = ChannelWidget(Coord(0, app.height - 48), channelMap);
+        channelWidget = ChannelWidget(Coord(0, app.height - 48),
+                                      Coord(app.width, 40),
+                                      channelMap
+                                      );
         channelWidget.activate(app.surface, true);
         panels.append(channelWidget);
 
