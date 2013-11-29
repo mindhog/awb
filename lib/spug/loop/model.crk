@@ -3,7 +3,7 @@
 # Spugloop model objects.
 
 import crack.cont.array Array;
-import crack.fs cwd, RealPath;
+import crack.fs cwd, makePath;
 import crack.io cout, FStr, StringReader, StringWriter;
 import crack.lang Exception;
 import crack.midi.event ChannelEvent, EndTrack, Event, MidiReader,
@@ -679,14 +679,14 @@ class EventManager {
 
     ## Store the track to the current filename.
     void save() {
-        project.writeTo(SerialWriter(RealPath(projectFileName).writer()));
+        project.writeTo(SerialWriter(makePath(projectFileName).writer()));
     }
 
     ## Load the track and set the filename.  Does nothing if the file doesn't
     ## exist.
     void load(String filename) {
         projectFileName = filename;
-        path := RealPath(filename);
+        path := makePath(filename);
         if (path.exists()) {
             project.readFrom(SerialReader(path.reader()));
             curSection = project.sections[0];
