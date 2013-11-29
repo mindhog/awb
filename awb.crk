@@ -9,8 +9,9 @@ import crack.cmdline CmdOptions, Option, CMD_STR;
 import crack.sys argv, exit;
 import crack.time Time;
 import crack.cont.array Array;
+import crack.ext._sdl Surface = SDL_Surface;
 import crack.game.sdl fillRect, SDLApp = App, Coord, KeyboardEvent, KeyboardHandler,
-    ResizeEvent, ResizeHandler, Surface, SDLK_DELETE, SDLK_F2, SDLK_F5,
+    ResizeEvent, ResizeHandler, SDLK_DELETE, SDLK_F2, SDLK_F5,
     SDLK_F7, SDLK_F8, SDLK_LEFT, SDLK_RIGHT, SDLK_TAB, SDLK_UP, SDLK_DOWN;
 import crack.game.sdlgfx drawLine, drawRect, drawString, RED, BLACK, BLUE, GREEN,
     WHITE, YELLOW;
@@ -23,6 +24,7 @@ import crack.process Process, ProcessHandlerImpl;
 import crack.strutil StringArray;
 #import crack.ccl CCLInterpreter;
 
+import spug.loop.tel telEventManager = eventManager, InterpWrapper;
 import spug.loop.model programNames, ChannelMap, EventManager, Project,
     Section, Controller, IDLE, LATCHED_RECORD, PLAY, RECORD;
 import spug.loop.instrument FluidSynthInstrument, Instrument, Orchestra;
@@ -701,6 +703,7 @@ class TextWidget : Widget {
 class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
     SDLApp app = {640, 480};
     EventManager eventManager;
+    InterpWrapper interp = {};
 
     # the cursor that points to the next event in the merged track.  This
     # should get reset whenever we reset the start time
@@ -958,6 +961,7 @@ class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
         while (app.isActive()) {
             app.runOneCycle();
             eventManager.runOneCycle();
+            interp.checkForInput();
             if (eventManager.playingExistingTracks()) {
                 trackPanel.draw(app.surface);
                 trackPanel.drawPosition(app.surface);
@@ -1000,6 +1004,7 @@ channelMap := ChannelMap();
 App app = {channelMap};
 cout `creating event manager\n`;
 EventManager em = {app, orch, s, channelMap};
+telEventManager = em;
 app.setEventManager(em);
 if (filename)
     em.load(filename);

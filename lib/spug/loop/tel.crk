@@ -1,0 +1,49 @@
+## TEL (Tiny Embedded Language) wrappers for AWB.
+
+import crack.cont.array Array;
+import crack.lang Exception;
+import crack.net Poller, POLLIN, POLLERR, POLLOUT;
+import crack.io cin, cout, FStr;
+import crack.time TimeDelta;
+import spug.loop.model EventManager;
+import tel.ast BuiltinTypes, EvalContext, Expr, IntObj, Operation, Type;
+import tel.cmd_syn CmdParserFactory;
+import tel.facade Interp;
+import tel.prim ExtFuncOp, TypeParmCommand;
+import tel.synlib Def, ParseError;
+
+@import tel.ann function;
+
+EventManager eventManager;
+
+@function IntObj play() {
+    eventManager.togglePlay();
+    return IntObj(0);
+}
+
+class InterpWrapper {
+
+    Interp __interp = {CmdParserFactory()};
+    Poller __poller = {};
+
+    oper init() {
+        __interp.init();
+        __poller.add(cin, POLLIN | POLLERR);
+
+        __interp.addDef('play', play.makeFactory());
+    }
+
+    void checkForInput() {
+        if (__poller.wait(TimeDelta(0, 0))) {
+            data := cin.read(1024);
+            try {
+                result := __interp.evalString(data);
+                cout `$result`;
+            } catch (Exception ex) {
+                cout `got error: $ex\n`;
+            }
+            cout `>> `;
+        }
+    }
+
+}
