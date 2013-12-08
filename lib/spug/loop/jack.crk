@@ -1,0 +1,144 @@
+## Jack audio manager.
+
+import crack.audio.wavfile readWave, WaveBuffer;
+import crack.cont.array Array;
+import crack.ext._jack JackClient, JackPort, JackClient_open,
+    Jack_getDefaultAudioType, JACK_PORT_IS_OUTPUT;
+import crack.fs makePath;
+import crack.functor Function1, Functor1;
+import crack.io cout;
+import crack.math max, abs;
+import crack.runtime free;
+
+@import crack.ann implements;
+
+int jackCallback(uint32 nframes, voidptr arg);
+
+class JackWrapper {
+
+    JackClient __client;
+    JackPort left, right;
+
+    ## The left and right buffers and the number of frames in each of them.
+    ## These are only valid during a processor callback.
+    uint32 frameCount;
+    array[float] lbuf, rbuf;
+
+    Array[Functor1[void, JackWrapper]] __processors = {};
+
+    void init() {
+        array[int] status = {0};
+        __client = JackClient_open('awb'.buffer, 0, status);
+        __client.setProcessCallback(jackCallback, this);
+        left = __client.portRegister('left'.buffer, Jack_getDefaultAudioType(),
+                                     JACK_PORT_IS_OUTPUT,
+                                     4096
+                                     );
+        right = __client.portRegister('right'.buffer,
+                                      Jack_getDefaultAudioType(),
+                                      JACK_PORT_IS_OUTPUT,
+                                      4096
+                                      );
+        cout `client is $__client\n`;
+        free(status);
+    }
+
+    void addProcessor(Functor1[void, JackWrapper] processor) {
+        __processors.append(processor);
+    }
+
+    @final void process(uint32 nframes) {
+        lbuf = left.getBuffer(nframes);
+        rbuf = right.getBuffer(nframes);
+        frameCount = nframes;
+        count := __processors.count();
+        for (int i = 0; i < count; ++i)
+            __processors[i](this);
+    }
+
+    @final void activate() {
+        cout `client is $__client\n`;
+        __client.activate();
+        __client.connect(left.getName(), 'jack_mixer:b L'.buffer);
+        __client.connect(right.getName(), 'jack_mixer:b R'.buffer);
+    }
+
+    @final void deactivate() {
+        __client.deactivate();
+    }
+}
+
+## This is the jack callback.
+int jackCallback(uint32 nframes, voidptr arg) {
+    jack := JackWrapper.unsafeCast(arg);
+    jack.process(nframes);
+    return 0;
+}
+
+@abstract class WaveModel {
+
+    ## Number of frames per chunk.  This must be constant for the entire model.
+    int framesPerChunk;
+
+    @abstract WaveBuffer getChunk(uint index);
+}
+
+## Jack callback processor that plays a WaveModel.
+class WaveAdapter : Object @implements Functor1[void, JackWrapper] {
+
+    uint pos;
+    WaveModel model;
+
+    oper init(WaveModel model) : model = model {}
+
+    void oper call(JackWrapper wrapper) {
+        lbuf := wrapper.lbuf;
+        rbuf := wrapper.rbuf;
+        curChunk := pos / model.framesPerChunk;
+        chunk := model.getChunk(curChunk);
+        start := pos;
+        end := pos + wrapper.frameCount;
+        float maxLeft, maxRight;
+        for (; pos < end; ++pos) {
+            newChunk := pos / model.framesPerChunk;
+            if (newChunk != curChunk) {
+                curChunk = newChunk;
+                chunk = model.getChunk(curChunk);
+            }
+            lbuf[pos - start] =
+                chunk.buffer[pos % model.framesPerChunk * 2] / 32768.0;
+            rbuf[pos - start] =
+                chunk.buffer[pos % model.framesPerChunk * 2 + 1] / 32768.0;
+        }
+    }
+}
+
+## A wave model that simply stores all of its backing buffers in memory.
+class SimpleWaveModel : WaveModel {
+    Array[WaveBuffer] buffers = {};
+    WaveBuffer getChunk(uint index) {
+        return buffers[index % buffers.count()];
+    }
+}
+
+class WaveManager : JackWrapper {
+    WaveAdapter waveAdapter = {null};
+
+    oper init() {
+        addProcessor(waveAdapter);
+    }
+
+    void addFile(String fileName) {
+        src := makePath(fileName).reader();
+        wd := readWave(src);
+        wave := SimpleWaveModel();
+        wave.framesPerChunk = 2048;
+        buf := WaveBuffer(4096);
+        while (wd.read(src, buf)) {
+            wave.buffers.append(buf);
+            buf = WaveBuffer(4096);
+        }
+
+        waveAdapter.model = wave;
+    }
+}

@@ -9,6 +9,7 @@ import crack.lang Exception;
 import crack.midi.event ChannelEvent, EndTrack, Event, MidiReader,
     MidiWriter, ProgramChange, SeekableEventSource, Track;
 import spug.loop.instrument Instrument;
+import spug.loop.jack WaveManager;
 import crack.midi.alsa Sequencer;
 import crack.serial SerialReader, SerialWriter;
 import crack.time Time;
@@ -392,6 +393,9 @@ class EventManager {
     # Name of the project file.
     String projectFileName = 'noname';
 
+    # The wave manager.  Manages the direct PCM wave system.
+    WaveManager waveMan;
+
     int mode;
 
     Time t = {};
@@ -474,6 +478,8 @@ class EventManager {
         controller.changeState(PLAY, IDLE);
         mode = IDLE;
         trackCursors = null;
+        if (waveMan)
+            waveMan.deactivate();
     }
 
     void setTrackCursors(uint ticks) {
@@ -490,7 +496,7 @@ class EventManager {
     }
 
     void doPlay() {
-        if (!curSection.tracks && mode != RECORD) {
+        if (!curSection.tracks && mode != RECORD && !waveMan) {
             cout `No tracks to play!\n`;
             return;
         }
@@ -502,6 +508,8 @@ class EventManager {
             endRecord();
         mode = PLAY;
         setPos(0);
+        if (waveMan)
+            waveMan.activate();
     }
 
     void doStop() {
@@ -509,6 +517,8 @@ class EventManager {
             endRecord();
 
         mode = IDLE;
+        if (waveMan)
+            waveMan.deactivate();
     }
 
     void togglePlay() {
