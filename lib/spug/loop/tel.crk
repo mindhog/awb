@@ -4,6 +4,7 @@ import crack.cont.array Array;
 import crack.lang Exception;
 import crack.net Poller, POLLIN, POLLERR, POLLOUT;
 import crack.io cin, cout, FStr;
+import crack.midi.event NoteOn, NoteOff, Track;
 import crack.time TimeDelta;
 import spug.loop.model EventManager;
 import tel.ast BuiltinTypes, EvalContext, Expr, IntObj, Operation, Type;
@@ -16,9 +17,35 @@ import tel.synlib Def, ParseError;
 
 EventManager eventManager;
 
+const ZERO := IntObj(0);
+
 @function IntObj play() {
     eventManager.togglePlay();
-    return IntObj(0);
+    return ZERO;
+}
+
+@function IntObj get_tempo() {
+    return IntObj(eventManager.tempo);
+}
+
+@function IntObj set_tempo(int tempo) {
+    eventManager.tempo = tempo;
+    return ZERO;
+}
+
+@function IntObj metro(int beats) {
+    metroTrack := Track('Metronome');
+    metroTrack.append(NoteOn(0, 9, 31, 127));
+    metroTrack.append(NoteOff(1, 9, 31, 0));
+
+    int i;
+    for (i = 1; i < beats; ++i) {
+        metroTrack.append(NoteOn(i * eventManager.ppb, 9, 33, 127));
+        metroTrack.append(NoteOff(i * eventManager.ppb + 1, 9, 33, 127));
+    }
+
+    eventManager.addTrack(metroTrack, i * eventManager.ppb);
+    return ZERO;
 }
 
 class InterpWrapper {
@@ -31,6 +58,9 @@ class InterpWrapper {
         __poller.add(cin, POLLIN | POLLERR);
 
         __interp.addDef('play', play.makeFactory());
+        __interp.addDef('get_tempo', get_tempo.makeFactory());
+        __interp.addDef('set_tempo', set_tempo.makeFactory());
+        __interp.addDef('metro', metro.makeFactory());
     }
 
     void checkForInput() {

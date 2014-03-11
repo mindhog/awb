@@ -374,6 +374,9 @@ class LoopCursor {
     }
 }
 
+const MILLION := 1000000;
+const BILLION := MILLION * 1000;
+
 ## The event manager deals with all of the scheduling and event dispatching.
 class EventManager {
     Controller controller;
@@ -394,16 +397,25 @@ class EventManager {
 
     int mode;
 
-    Time t = {};
-
-    # time that the current loop started.
-    uint startTime;
+    # time that the current loop started and a holder for the current time.
+    Time startTime = {}, t = {};
 
     # last time that we acted upon.
     float lastTime;
 
     # if nextSectionIndex is true, this is the next time to change the section
     uint nextSectionStartTime;
+
+    # Both Tempo and PPB should be defined per section.  Per-section tempo
+    # should be defined relative to the project tempo, tempo should be in the
+    # project, what we have here should probably be either a scaling factor or
+    # an override of the project level value.
+
+    ## Global tempo in BPM.
+    uint tempo = 120;
+
+    ## Global pulses-per-beat.
+    uint ppb = 96;
 
     oper init(Controller controller, Instrument instrument,
               Sequencer sequencer,
@@ -424,21 +436,51 @@ class EventManager {
         }
     }
 
-    ## Return the absolute time in "ticks since the epoch."
-    uint getAbsTime() {
-        t.setToNow(null);
-        return t.secs * 100 + t.nsecs / 10000000;
+    ## Returns the number of midi clock ticks (aka "pulses") for the specified
+    ## number of microseconds.
+    @final int usecsToTicks(int64 usecs) {
+        # This is a bit convoluted because we're trying to do it with integer
+        # math without truncating anything signficant.  What we're trying to say
+        # is: seconds * pulsesPerSecond
+        # where: pulsesPerSecond = (BPM / 60) * PPB
+        #        seconds = usecs / MILLION
+        # so: (usecs / MILLION) * ((BPM / 60) * PPB)
+        #     (usecs / MILLION) * ((BPM * PPB) / 60)
+        #     (usecs * BPM * PPB) / (60 * MILLION)
+        return (usecs * int64(tempo) * int64(ppb)) / int64(60 * MILLION);
+    }
+
+    int64 ticksToUSecs(int ticks) {
+        # This just inverts the math above:
+        #   ticks = (nsecs * BPM * PPB) / (60 * MILLION)
+        # so:
+        #   (ticks * 60 * MILLION) / (BPM * PPB) = nsecs
+        return (60 * MILLION * ticks) / (tempo * ppb);
+    }
+
+    ## Record the current time as the start time.
+    void markStartTime() {
+        startTime.setToNow(null);
     }
 
     ## Returns the time relative to when we started looping (also in ticks).
     uint getRelTime() {
-        return getAbsTime() - startTime;
+        t.setToNow(null);
+        int64 usecs = int64(t.secs - startTime.secs) * MILLION +
+                      (t.nsecs - startTime.nsecs) / 1000;
+        result := usecsToTicks(usecs);
+        return result;
+    }
+
+    ## Adds a track to the current section, notifies the controller.
+    void addTrack(Track track, uint endTime) {
+        curSection.markEnding(track, endTime, true);
+        curSection.tracks.append(track);
+        controller.trackAdded();
     }
 
     void endRecord() {
-        curSection.markEnding(recordTrack, getRelTime(), true);
-        curSection.tracks.append(recordTrack);
-        controller.trackAdded();
+        addTrack(recordTrack, getRelTime());
         trackCursors = null;
         recordTrack = null;
     }
@@ -450,11 +492,15 @@ class EventManager {
         cout `record\n`;
 
         # if we're coming in from "latched" mode, adjust the start time
-        if (mode == LATCHED_RECORD && startTime && curSection.span) {
-            startTime += (getRelTime() / curSection.span) * curSection.span;
+        if (mode == LATCHED_RECORD && startTime.secs && curSection.span) {
+            usecs := ticksToUSecs((getRelTime() / curSection.span) *
+                                  curSection.span);
+            startTime.nsecs += int32((usecs % MILLION) * 1000);
+            startTime.secs += int32(usecs / MILLION +
+                                    startTime.nsecs / BILLION);
         } else {
             # otherwise, just reset it.
-            startTime = getAbsTime();
+            markStartTime();
         }
         mode = RECORD;
         recordTrack = Track(channelMap.getCurrentChannel().getProgramName());
@@ -485,7 +531,7 @@ class EventManager {
 
     ## Sets our current position within the section.
     void setPos(uint ticks) {
-        startTime = getAbsTime();
+        markStartTime();
         setTrackCursors(ticks);
     }
 
@@ -523,7 +569,7 @@ class EventManager {
         cout `clearing state\n`;
         recordTrack = null;
         mode = IDLE;
-        startTime = 0;
+        startTime.secs = startTime.nsecs = 0;
         project = Project();
         curSection = Section();
         project.sections.append(curSection);
@@ -625,7 +671,7 @@ class EventManager {
             ) {
             instrument.stop();
             __changeSection();
-            startTime = getAbsTime();
+            markStartTime();
         }
 
         # Check for a incoming events on the sequencer, play it and store it
@@ -634,7 +680,6 @@ class EventManager {
             event := sequencer.getEvent();
             if (event)
                 onInputEvent(event);
-            cout `event is $event\n`;
         }
 
         # if we're recording, get the next event.
@@ -652,6 +697,10 @@ class EventManager {
                 # play all of the events in all of the tracks that are due to
                 # be played.
                 for (cur :in trackCursors) {
+                    # safety check
+                    if (!cur.span)
+                        continue;
+
                     # calculate the point we're at in this track.
                     trackPos := relTime % cur.span;
 
