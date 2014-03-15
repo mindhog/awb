@@ -7,6 +7,7 @@ import crack.io cin, cout, FStr;
 import crack.midi.event NoteOn, NoteOff, Track;
 import crack.time TimeDelta;
 import spug.loop.model EventManager;
+import spug.loop.jack WaveManager;
 import tel.ast BuiltinTypes, EvalContext, Expr, IntObj, Operation, Type;
 import tel.cmd_syn CmdParserFactory;
 import tel.facade Interp;
@@ -48,6 +49,15 @@ const ZERO := IntObj(0);
     return ZERO;
 }
 
+@function IntObj loadWave(String filename) {
+    if (!eventManager.waveMan) {
+        eventManager.waveMan = WaveManager();
+        eventManager.waveMan.init();
+    }
+    eventManager.waveMan.addFile(filename);
+    return IntObj(0);
+}
+
 class InterpWrapper {
 
     Interp __interp = {CmdParserFactory()};
@@ -60,6 +70,7 @@ class InterpWrapper {
         __interp.addDef('play', play.makeFactory());
         __interp.addDef('get_tempo', get_tempo.makeFactory());
         __interp.addDef('set_tempo', set_tempo.makeFactory());
+        __interp.addDef('loadWave', loadWave.makeFactory());
         __interp.addDef('metro', metro.makeFactory());
     }
 
