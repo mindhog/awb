@@ -459,7 +459,7 @@ class EventManager {
         #   ticks = (nsecs * BPM * PPB) / (60 * MILLION)
         # so:
         #   (ticks * 60 * MILLION) / (BPM * PPB) = nsecs
-        return (60 * MILLION * ticks) / (tempo * ppb);
+        return (60 * MILLION * int64(ticks)) / (int64(tempo) * int64(ppb));
     }
 
     ## Record the current time as the start time.
