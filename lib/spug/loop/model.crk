@@ -3,18 +3,40 @@
 # Spugloop model objects.
 
 import crack.cont.array Array;
+import crack.cont.treemap TreeMap;
 import crack.fs cwd, makePath;
 import crack.io cout, FStr, StringReader, StringWriter;
 import crack.lang Exception;
 import crack.midi.event ChannelEvent, EndTrack, Event, MidiReader,
     MidiWriter, ProgramChange, SeekableEventSource, Track;
-import spug.loop.instrument Instrument;
+import crack.protobuf Field, ProtoReader, ProtoWriter;
+import spug.loop.instrument Instrument, Orchestra;
 import spug.loop.jack WaveManager;
 import crack.midi.alsa Sequencer;
 import crack.serial SerialReader, SerialWriter;
 import crack.time Time;
 
-@import crack.ann assert, interface;
+@import crack.ann assert, implements, interface;
+
+## Defines a midi bank.  This can be applied to an Orchestra object to change
+## the instrument configuration for a given channel.
+@interface Bank {
+    @abstract void configure(Orchestra orchestra, uint channel);
+
+    @final bool oper >=(Bank other) {
+        return uintz(this) >= uintz(other);
+    }
+
+    @final bool oper <=(Bank other) {
+        return uintz(this) <= uintz(other);
+    }
+}
+
+class WavePlayerBank : Object @implements Bank {
+    void configure(Orchestra orchestra, uint channel) {
+
+    }
+}
 
 ## This is a "section" of the piece.  A section consists of a group of tracks
 ## that are played in parallel.  A section consists of one or more "measures"
@@ -28,6 +50,9 @@ class Section {
 
     ## The time span of the section in pulses.
     uint span;
+
+    ## Optional data (currently ignored but preserved).
+    String optionalData;
 
     ## The set of all tracks in the section.
     Array[Track] tracks;
@@ -111,7 +136,17 @@ class Section {
             track.writeTo(mw);
             mw.flush();
             out.write(temp.makeString());
+
+            # Write the track's optional data (we don't currently preserve
+            # this).
+            out.write(0);
         }
+
+        # Write the section's optional data.
+        if (optionalData)
+            out.write(optionalData);
+        else
+            out.write(0);
     }
 
     void readFrom(SerialReader src) {
@@ -123,13 +158,25 @@ class Section {
             trackName := src.readString();
             MidiReader mr = {StringReader(src.readString())};
             tracks.append(track := mr.readTrack(trackName));
+
+            # Read and discard the optional track data.
+            src.readString();
+
             cout `track $i:\n$track\n`;
         }
+
+        # Read the optional data.
+        optionalData = src.readString();
     }
 }
 
 ## Global play modes.
 const int IDLE = 0, RECORD = 1, PLAY = 2, LATCHED_RECORD = 3;
+
+# message ProjectOptional {
+#   repeated string wavefile = 1;
+# }
+const PROJ_WAVEFILE := 1;
 
 ## This is the main class representing a project.
 class Project {
@@ -138,10 +185,28 @@ class Project {
     ## The next section number that hasn't been used as part of a section name.
     int nextSectionNumber;
 
+    ## The set of all wave files known to the project.
+    Array[String] waveFiles = {};
+
+    ## Unknown fields, preserved so we can write them back.
+    Array[Field] __unknownFields = {};
+
+    # Special midi banks.
+    TreeMap[uint16, Bank] __banks;
+
     ## Write the current project to a file.
     void writeTo(SerialWriter out) {
         # version number
         out.write(1);
+
+        # Write the optional project data.
+        StringWriter outBack;
+        opt := ProtoWriter(outBack);
+        for (waveFile :in waveFiles)
+            opt.write(1, waveFile);
+        for (unknown :in __unknownFields)
+            opt.write(unknown);
+        out.write(outBack.string());
 
         # write the section count, then each of the sections.
         out.write(sections.count());
@@ -153,6 +218,17 @@ class Project {
         sections.clear();
         if ((v := src.readUInt()) != 1)
             throw Exception(FStr() `Invalid varsion number: $v`);
+
+        # Read optional data.
+        optionalData := src.readString();
+        opt := ProtoReader(StringReader(optionalData));
+        while (field := opt.readField()) {
+            if (field.id == PROJ_WAVEFILE)
+                waveFiles.append(field.getString());
+            else
+                __unknownFields.append(field);
+        }
+
         sectionCount := src.readUInt();
         for (i := 0; i < sectionCount; ++i) {
             section := Section();
