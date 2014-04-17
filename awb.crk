@@ -4,7 +4,7 @@
 #    SDL_RESIZABLE;
 import crack.ascii parseInt;
 import crack.fs cwd;
-import crack.lang CString, AssertionError;
+import crack.lang AssertionError, CString, Exception;
 import crack.cmdline CmdOptions, Option, CMD_STR;
 import crack.sys argv, exit;
 import crack.time Time;
@@ -959,13 +959,17 @@ class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
         Event lastPlayed;
 
         while (app.isActive()) {
-            app.runOneCycle();
-            eventManager.runOneCycle();
-            interp.checkForInput();
-            if (eventManager.playingExistingTracks()) {
-                trackPanel.draw(app.surface);
-                trackPanel.drawPosition(app.surface);
-                app.flip();
+            try {
+                app.runOneCycle();
+                eventManager.runOneCycle();
+                interp.checkForInput();
+                if (eventManager.playingExistingTracks()) {
+                    trackPanel.draw(app.surface);
+                    trackPanel.drawPosition(app.surface);
+                    app.flip();
+                }
+            } catch (Exception ex) {
+                cerr `Got Exception:\n$ex\n`;
             }
         }
     }
