@@ -6,13 +6,13 @@ import crack.cont.array Array;
 import crack.cont.treemap TreeMap;
 import crack.fs cwd, makePath;
 import crack.io cout, FStr, StringReader, StringWriter;
-import crack.lang Exception;
+import crack.lang CString, Exception;
 import crack.midi.event ChannelEvent, EndTrack, Event, MidiReader,
     MidiWriter, ProgramChange, SeekableEventSource, Track;
 import crack.protobuf Field, ProtoReader, ProtoWriter;
 import spug.loop.instrument Instrument, Orchestra;
 import spug.loop.jack WaveManager;
-import crack.midi.alsa Sequencer;
+import crack.midi.alsa Port, Sequencer;
 import crack.serial SerialReader, SerialWriter;
 import crack.time Time;
 
@@ -200,7 +200,7 @@ class Project {
         out.write(1);
 
         # Write the optional project data.
-        StringWriter outBack;
+        StringWriter outBack = {};
         opt := ProtoWriter(outBack);
         for (waveFile :in waveFiles)
             opt.write(1, waveFile);
@@ -457,7 +457,7 @@ const BILLION := MILLION * 1000;
 ## The event manager deals with all of the scheduling and event dispatching.
 class EventManager {
     Controller controller;
-    Instrument instrument;
+    Orchestra instrument;
     Sequencer sequencer;
     ChannelMap channelMap;
 
@@ -468,6 +468,7 @@ class EventManager {
     int curSectionIndex, nextSectionIndex;
     Track recordTrack;
     Array[LoopCursor] trackCursors;
+    TreeMap[int, Port] __portCache = {};
 
     # Name of the project file.
     String projectFileName = 'noname';
@@ -497,7 +498,7 @@ class EventManager {
     ## Global pulses-per-beat.
     uint ppb = 96;
 
-    oper init(Controller controller, Instrument instrument,
+    oper init(Controller controller, Orchestra instrument,
               Sequencer sequencer,
               ChannelMap channelMap
               ) :
@@ -829,4 +830,17 @@ class EventManager {
             controller.sectionChanged();
         }
     }
+
+    Port getOutPort(int client, int portNum) {
+        port := __portCache.get(client << 16 | portNum);
+        if (!port) {
+            port = sequencer.makeWritePort(
+                CString(FStr() `crack-$client:$portNum`)
+            );
+            __portCache[client << 16 | portNum] = port;
+        }
+        port.connectTo(client, portNum);
+        return port;
+    }
+
 }

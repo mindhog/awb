@@ -7,6 +7,7 @@ import crack.io cin, cout, FStr;
 import crack.midi.event NoteOn, NoteOff, Track;
 import crack.time TimeDelta;
 import spug.loop.model EventManager;
+import spug.loop.instrument MidiInstrument;
 import spug.loop.jack WaveManager;
 import tel.ast BuiltinTypes, EvalContext, Expr, IntObj, Operation, Type;
 import tel.cmd_syn CmdParserFactory;
@@ -55,7 +56,13 @@ const ZERO := IntObj(0);
         eventManager.waveMan.init();
     }
     eventManager.waveMan.addFile(filename);
-    return IntObj(0);
+    return ZERO;
+}
+
+@function IntObj channelConnect(int channel, int client, int port) {
+    inst := MidiInstrument(eventManager.getOutPort(client, port), byte(channel));
+    eventManager.instrument[channel] = inst;
+    return ZERO;
 }
 
 class InterpWrapper {
@@ -72,6 +79,7 @@ class InterpWrapper {
         __interp.addDef('set_tempo', set_tempo.makeFactory());
         __interp.addDef('loadWave', loadWave.makeFactory());
         __interp.addDef('metro', metro.makeFactory());
+        __interp.addDef('channel_connect', channelConnect.makeFactory());
     }
 
     void checkForInput() {
