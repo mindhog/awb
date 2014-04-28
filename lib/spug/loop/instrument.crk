@@ -6,7 +6,7 @@
 import crack.cont.array Array;
 import crack.lang AssertionError;
 import crack.midi.alsa Port;
-import crack.midi.event ChannelEvent, Event, NoteOn, NoteOff,
+import crack.midi.event ChannelEvent, ControlChange, Event, NoteOn, NoteOff,
     PitchWheel, ProgramChange;
 import crack.midi.fluidsynth FluidSynth;
 
@@ -46,6 +46,9 @@ class Orchestra : Object @implements Instrument {
     Array[Inst] __instruments;
     oper init(uint size) : __instruments(size) {}
     void append(Instrument instrument) { __instruments.append(Inst(instrument)); }
+    void oper []=(uint index, Instrument instrument) {
+        __instruments[index] = Inst(instrument);
+    }
     void noteOn(byte note, byte velocity) {
         __instruments[0].i.noteOn(note, velocity);
     }
@@ -73,7 +76,7 @@ class Orchestra : Object @implements Instrument {
     }
 }
 
-
+## An instrument that outputs its events directly to a midi port.
 class MidiInstrument : Object @implements Instrument {
     Port port;
     byte channel;
@@ -96,10 +99,12 @@ class MidiInstrument : Object @implements Instrument {
     }
 
     void stop() {
-        throw AssertionError('need to implement stop for MidiInstrument');
+        # 123 - all notes off.
+        port.send(ControlChange(0, channel, 123, 0));
     }
 }
 
+## An instrument that outputs its events to FluidSynth.
 class FluidSynthInstrument : Object @implements Instrument {
     FluidSynth synth;
     byte channel;
@@ -130,3 +135,21 @@ class FluidSynthInstrument : Object @implements Instrument {
     }
 }
 
+#class WavePlayerInstrument : Object @implements Instrument {
+#
+#    array[byte] __velocities;
+#
+#    Array[uint]
+#    Array[byte]
+#
+#    oper init() {}
+#
+#    void noteOn(byte note, byte velocity) {
+#
+#    }
+#
+#    void noteOff(byte note) {}
+#    void programChange(byte program) {}
+#    void pitchBend(int value) {}
+#    void stop() {}
+#}
