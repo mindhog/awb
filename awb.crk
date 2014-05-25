@@ -10,9 +10,10 @@ import crack.sys argv, exit;
 import crack.time Time;
 import crack.cont.array Array;
 import crack.ext._sdl Surface = SDL_Surface;
-import crack.game.sdl fillRect, SDLApp = App, Coord, KeyboardEvent, KeyboardHandler,
-    ResizeEvent, ResizeHandler, SDLK_DELETE, SDLK_F2, SDLK_F5,
-    SDLK_F7, SDLK_F8, SDLK_LEFT, SDLK_RIGHT, SDLK_TAB, SDLK_UP, SDLK_DOWN;
+import crack.game.sdl fillRect, SDLApp = App, Coord, KeyboardEvent,
+    KeyboardHandler, MouseButtonEvent, MouseButtonHandler, ResizeEvent,
+    ResizeHandler, SDLK_DELETE, SDLK_F2, SDLK_F5, SDLK_F7, SDLK_F8,
+    SDLK_LEFT, SDLK_RIGHT, SDLK_TAB, SDLK_UP, SDLK_DOWN;
 import crack.game.sdlgfx drawLine, drawRect, drawString, RED, BLACK, BLUE, GREEN,
     WHITE, YELLOW;
 import crack.io cout, cerr, FStr;
@@ -28,6 +29,7 @@ import spug.loop.tel telEventManager = eventManager, InterpWrapper;
 import spug.loop.model programNames, ChannelMap, EventManager, Project,
     Section, Controller, IDLE, LATCHED_RECORD, PLAY, RECORD;
 import spug.loop.instrument FluidSynthInstrument, Instrument, Orchestra;
+import spug.ui.base Widget;
 
 @import crack.ann implements, interface;
 
@@ -128,40 +130,6 @@ class ChordPlayer {
     void run() {
         app.mainloop();
     }
-}
-
-class Widget {
-
-    Coord pos;
-    Coord size;
-    Coord __bl;
-
-    oper init(Coord pos, Coord size) : pos = pos, size = size {}
-
-    Coord getBottomLeft() {
-        if (!__bl)
-            __bl = Coord(pos.x + size.x - 1,
-                         pos.y + size.y - 1
-                         );
-        return __bl;
-    }
-
-    Coord getMinSize() { return Coord(0, 0); }
-
-    void draw(Surface surface) {}
-
-    void setPos(Coord newPos) { pos = newPos; }
-
-    void moveTo(Coord pos, Coord size) {
-        this.pos = pos;
-        this.size = size;
-        __bl = null;
-    }
-
-    bool isActive() { return false; }
-    void activate(Surface surface, bool newActive) { }
-
-    bool onKeyPress(Surface surface, KeyboardEvent event) { return false; }
 }
 
 class Button : Widget {
@@ -700,7 +668,8 @@ class TextWidget : Widget {
 */
 
 ## The main application class.
-class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
+class App : Object @implements KeyboardHandler, MouseButtonHandler,
+            ResizeHandler, Controller {
     SDLApp app = {640, 480};
     EventManager eventManager;
     InterpWrapper interp = {};
@@ -877,6 +846,16 @@ class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
         return true;
     }
 
+    bool onMouseButtonDown(MouseButtonEvent event) {
+        cout `down $(event.button), $(event.state), $(event.x), $(event.y)\n`;
+        return true;
+    }
+
+    bool onMouseButtonUp(MouseButtonEvent event) {
+        cout `up $(event.button), $(event.state), $(event.x), $(event.y)\n`;
+        return true;
+    }
+
     void repaint() {
         fillRect(app.surface, Coord(0, 0), Coord(app.width, app.height),
                  BLACK
@@ -912,6 +891,7 @@ class App : Object @implements KeyboardHandler, ResizeHandler, Controller {
         app.resizable = true;
         app.initialize();
         app.addKeyboardHandler(this);
+        app.addMouseButtonHandler(this);
 
         panel = Panel(Coord(0, 0), Coord(app.width, 8));
         panel.append(playBtn);

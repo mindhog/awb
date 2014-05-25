@@ -1,0 +1,45 @@
+## Basic User interface classes.
+
+import crack.ext._sdl Surface = SDL_Surface;
+import crack.game.sdl Coord, KeyboardEvent, MouseButtonEvent;
+
+class Widget {
+
+    Coord pos;
+    Coord size;
+    Coord __bl;
+
+    oper init(Coord pos, Coord size) : pos = pos, size = size {}
+
+    Coord getBottomLeft() {
+        if (!__bl)
+            __bl = Coord(pos.x + size.x - 1,
+                         pos.y + size.y - 1
+                         );
+        return __bl;
+    }
+
+    Coord getMinSize() { return Coord(0, 0); }
+
+    void draw(Surface surface) {}
+
+    void setPos(Coord newPos) { pos = newPos; }
+
+    void moveTo(Coord pos, Coord size) {
+        this.pos = pos;
+        this.size = size;
+        __bl = null;
+    }
+
+    bool isActive() { return false; }
+    void activate(Surface surface, bool newActive) { }
+
+    bool onKeyPress(Surface surface, KeyboardEvent event) { return false; }
+    bool onMouseButtonDown(Surface surface, MouseButtonEvent event) {
+        return false;
+    }
+    bool onMouseButtonUp(Surface surface, MouseButtonEvent event) {
+        return false;
+    }
+}
+
