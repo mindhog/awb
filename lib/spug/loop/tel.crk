@@ -55,7 +55,7 @@ const ZERO := IntObj(0);
         eventManager.waveMan = WaveManager();
         eventManager.waveMan.init();
     }
-    eventManager.waveMan.addFile(filename);
+    eventManager.addWaveFile(filename);
     return ZERO;
 }
 

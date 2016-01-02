@@ -57,10 +57,12 @@ class JackWrapper {
     }
 
     @final void activate() {
-        cout `client is $__client\n`;
+        cout `jack client is $__client\n`;
         __client.activate();
-        __client.connect(left.getName(), 'jack_mixer:b L'.buffer);
-        __client.connect(right.getName(), 'jack_mixer:b R'.buffer);
+#        __client.connect(left.getName(), 'jack_mixer:b L'.buffer);
+#        __client.connect(right.getName(), 'jack_mixer:b R'.buffer);
+        __client.connect(left.getName(), 'system:playback_1'.buffer);
+        __client.connect(right.getName(), 'system:playback_2'.buffer);
     }
 
     @final void deactivate() {
@@ -81,6 +83,12 @@ int jackCallback(uint32 nframes, voidptr arg) {
     int framesPerChunk;
 
     @abstract WaveBuffer getChunk(uint index);
+
+    ## Returns the total number of frames in the wave.
+    @abstract int getNumFrames();
+
+    ## Returns the total number of channels in the wave.
+    @abstract int getNumChannels();
 }
 
 ## Jack callback processor that plays a WaveModel.
@@ -116,8 +124,19 @@ class WaveAdapter : Object @implements Functor1[void, JackWrapper] {
 ## A wave model that simply stores all of its backing buffers in memory.
 class SimpleWaveModel : WaveModel {
     Array[WaveBuffer] buffers = {};
+    int numFrames;
+    int numChannels;
+
     WaveBuffer getChunk(uint index) {
         return buffers[index % buffers.count()];
+    }
+
+    int getNumFrames() {
+        return numFrames;
+    }
+
+    int getNumChannels() {
+        return numChannels;
     }
 }
 
@@ -128,17 +147,20 @@ class WaveManager : JackWrapper {
         addProcessor(waveAdapter);
     }
 
-    void addFile(String fileName) {
+    WaveModel addFile(String fileName) {
         src := makePath(fileName).reader();
         wd := readWave(src);
         wave := SimpleWaveModel();
         wave.framesPerChunk = 2048;
+        wave.numChannels = wd.channels;
         buf := WaveBuffer(4096);
-        while (wd.read(src, buf)) {
+        while (numSamples := wd.read(src, buf)) {
             wave.buffers.append(buf);
+            wave.numFrames += numSamples;
             buf = WaveBuffer(4096);
         }
 
         waveAdapter.model = wave;
+        return wave;
     }
 }

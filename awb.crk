@@ -12,8 +12,8 @@ import crack.cont.array Array;
 import crack.ext._sdl Surface = SDL_Surface;
 import crack.game.sdl fillRect, SDLApp = App, Coord, KeyboardEvent,
     KeyboardHandler, MouseButtonEvent, MouseButtonHandler, ResizeEvent,
-    ResizeHandler, SDLK_DELETE, SDLK_F2, SDLK_F5, SDLK_F7, SDLK_F8,
-    SDLK_LEFT, SDLK_RIGHT, SDLK_TAB, SDLK_UP, SDLK_DOWN;
+    ResizeHandler, SDLK_DELETE, SDLK_ESCAPE, SDLK_F2, SDLK_F5, SDLK_F7, SDLK_F8,
+    SDLK_LEFT, SDLK_RETURN, SDLK_RIGHT, SDLK_TAB, SDLK_UP, SDLK_DOWN;
 import crack.game.sdlgfx drawLine, drawRect, drawString, RED, BLACK, BLUE, GREEN,
     WHITE, YELLOW;
 import crack.io cout, cerr, FStr;
@@ -25,11 +25,13 @@ import crack.process Process, ProcessHandlerImpl;
 import crack.strutil StringArray;
 #import crack.ccl CCLInterpreter;
 
+import spug.loop.jack WaveModel;
 import spug.loop.tel telEventManager = eventManager, InterpWrapper;
 import spug.loop.model programNames, ChannelMap, EventManager, Project,
-    Section, Controller, IDLE, LATCHED_RECORD, PLAY, RECORD;
+    Section, Controller, WaveTrack, IDLE, LATCHED_RECORD, PLAY, RECORD;
 import spug.loop.instrument FluidSynthInstrument, Instrument, Orchestra;
 import spug.ui.base Widget;
+import spug.ui.piano Piano;
 
 @import crack.ann implements, interface;
 
@@ -80,6 +82,15 @@ Array[byte] MAJ_CHORD = [0, 4, 7];
 
 Array[byte] CHORD_PRIMARIES = [57, 59, 60, 62, 64, 65, 67];
 const DRUM := 9;
+
+### Starts the piano roll window.
+#class StartPianoRollEvent {
+#    Track track;
+#    oper init(Track track) : track = track {}
+#}
+
+## User event queue.
+#Array[StartPianoRollEvent] userQueue = {};
 
 class ChordPlayer {
     SDLApp app = {640, 480};
@@ -256,17 +267,40 @@ class TrackCanvas {
                  (curTime >= startTime && curTime < endTime) ? GREEN : YELLOW
                  );
     }
+
+    ## Draw a vertical line representing the low and high values for a range of
+    ## samples.
+    void drawSampleLine(int x, int low, int high) {
+        x += labelColWidth;
+        lowY := uint16(pos.y + size.y - 1 -
+                        float(low + 32768) / 65536.0 * size.y
+                       );
+        highY := uint16(pos.y + size.y - 1 -
+                         float(high + 32768) / 65536.0 * size.y
+                        );
+        drawLine(surface, Coord(x, lowY), Coord(x, highY), GREEN);
+    }
 }
 
-## Track widgets display a graphical representation of a track and its events.
-class TrackWidget {
-    Track model;
-
+## Track widgets display a graphical representation of a track and its contents.
+@abstract class TrackWidget {
     ## True if the track is selected (multiple tracks can be selected)
     bool selected;
 
     ## True if the track is active (only one track can be active)
     bool active;
+
+    @abstract void draw(TrackCanvas canvas);
+
+    void activate(TrackCanvas canvas, bool active) {
+        this.active = active;
+        draw(canvas);
+    }
+}
+
+## Widget to display a midi track.
+class MIDITrackWidget : TrackWidget {
+    Track model;
 
     oper init(Track model, uint endTime) :
         model = model {
@@ -316,9 +350,62 @@ class TrackWidget {
         }
     }
 
-    void activate(TrackCanvas canvas, bool active) {
-        this.active = active;
-        draw(canvas);
+}
+
+class WaveTrackWidget : TrackWidget {
+    WaveTrack track;
+    String name;
+
+    ## This is a map of twice the size of the area where we display the wave
+    ## in the canvas.  It contains alternating low/high values for each x
+    ## coordinate in the canvas.  It must be recalculated when the canvas size
+    ## changes or the portion of the wave that we are displaying changes.
+    Array[int] sampleMap;
+
+    oper init(WaveTrack track, String name) : track = track, name = name {}
+
+    void draw(TrackCanvas canvas) {
+        canvas.fill(TRACK_BACKGROUND | (active ? TRACK_ACTIVE : 0) |
+                     (selected ? TRACK_SELECTED : 0)
+                    );
+        canvas.drawLabel(name);
+
+        # Recalculate the sample map if necessary.
+        width := canvas.size.x - canvas.labelColWidth;
+        if (!sampleMap ||
+             sampleMap.count() / 2 != width
+            ) {
+            cout `recalculating, width = $width, sample map = $sampleMap\n`;
+            nframes := track.model.getNumFrames();
+            interval := nframes / width;
+            sampleMap = Array[int]();
+            int max, min;
+            for (int i = 0; i < width; ++i) {
+                for (int j = 0; j < interval; ++j) {
+                    absPos := i * interval + j;
+                    buf := track.model.getChunk(
+                        absPos / track.model.framesPerChunk
+                    );
+                    val := buf.buffer[(absPos % interval) * 2 + track.channel];
+                    val = int16(int(val) - 32768);
+#                    if (val > max)
+#                        max = val;
+#                    if (val < min)
+#                        min = val;
+                    if (val > 0)
+                        max = (max * j + val) / (j + 1);
+                    else
+                        min = (min * j + val) / (j + 1);
+                }
+                cout `sample is $min-$max\n`;
+                sampleMap.append(min);
+                sampleMap.append(max);
+            }
+        }
+
+        # Draw the sample map.
+        for (int i = 0; i < width; ++i)
+            canvas.drawSampleLine(i, sampleMap[i * 2], sampleMap[i * 2 + 1]);
     }
 }
 
@@ -522,16 +609,26 @@ class TrackPanel : Widget {
         }
     }
 
-    ## Add a new track, creating a new track widget.
-    ## If 'surface is not null, draws the track.
-    TrackWidget addTrack(Track track, uint endTime, Surface surface) {
-        w := TrackWidget(track,
-                         endTime
-                         );
+    void __addTrackWidget(TrackWidget w, Surface surface) {
         __elems.append(w);
         __activeIndex = __elems.count() - 1;
         if (!(surface is null))
             w.draw(__makeTrackCanvas(surface, null, __activeIndex));
+    }
+
+    ## Add a new track, creating a new track widget.
+    ## If 'surface is not null, draws the track.
+    TrackWidget addTrack(Track track, uint endTime, Surface surface) {
+        w := MIDITrackWidget(track, endTime);
+        __addTrackWidget(w, surface);
+        return w;
+    }
+
+    ## Adds a wave track, creating a new track widget.  If 'surface' is not
+    ## null, draws the track.
+    TrackWidget addTrack(WaveTrack track, uint endTime, Surface surface) {
+        w := WaveTrackWidget(track, track.getName());
+        __addTrackWidget(w, surface);
         return w;
     }
 
@@ -612,6 +709,8 @@ class TrackPanel : Widget {
             deleteActiveTrack();
         } else if (event.sym == b't') {
             selectActiveTrack(surface);
+//        } else if (event.sym == SDLK_RETURN) {
+//            userQueue.append(StartPianoRollEvent(this[__activeIndex].model));
         } else {
             return false;
         }
@@ -622,8 +721,10 @@ class TrackPanel : Widget {
     Array[Track] getSelectedTracks() {
         Array[Track] selected = {};
         for (trackWidget :in __elems) {
-            if (trackWidget.selected)
-                selected.append(trackWidget.model);
+            if (trackWidget.selected &&
+                 (widg := MIDITrackWidget.cast(trackWidget, null))
+                )
+                selected.append(widg.model);
         }
 
         return selected;
@@ -692,6 +793,9 @@ class App : Object @implements KeyboardHandler, MouseButtonHandler,
     TrackPanel trackPanel;
     Array[Widget] panels = {};
 
+#    Piano piano;
+    Object piano;
+
     void setPlayBtn(bool enabled) {
         if (enabled) {
             playBtn.background = GREEN;
@@ -739,6 +843,13 @@ class App : Object @implements KeyboardHandler, MouseButtonHandler,
         app.flip();
     }
 
+    void waveAdded() {
+        trackPanel.addTrack(eventManager.curSection.waves[-1],
+                            eventManager.curSection.span,
+                            null
+                            );
+    }
+
     void trackDeleted(uint index) {
         trackPanel.trackDeleted(app.surface, index);
         app.flip();
@@ -751,6 +862,23 @@ class App : Object @implements KeyboardHandler, MouseButtonHandler,
     void sectionChanged() {
         trackPanel.sectionChanged();
         trackPanel.draw(app.surface);
+        app.flip();
+    }
+
+    void repaint() {
+        fillRect(app.surface, Coord(0, 0), Coord(app.width, app.height),
+                 BLACK
+                 );
+        panel.draw(app.surface);
+
+        if (piano) {
+#            piano.draw(app.surface);
+        } else {
+            trackPanel.draw(app.surface);
+            channelWidget.draw(app.surface);
+        }
+        statusBar.draw(app.surface);
+
         app.flip();
     }
 
@@ -787,14 +915,13 @@ class App : Object @implements KeyboardHandler, MouseButtonHandler,
             inputOffset += 10;
         } else if (sym == b'-') {
             inputOffset -= 10;
-        } else if (sym == SDLK_TAB) {
+        } else if (sym == SDLK_TAB && !piano) {
 
             # find the active widget.
             int i;
             Widget p;
             for (p in panels) {
                 if (p.isActive()) {
-                    cout `active panel is $i\n`;
                     break;
                 }
                 ++i;
@@ -826,6 +953,11 @@ class App : Object @implements KeyboardHandler, MouseButtonHandler,
             int index = eventManager.getNextSectionIndex();
             int count = eventManager.getSectionCount();
             eventManager.setNextSection((index + 1) % count);
+        } else if (sym == SDLK_ESCAPE && piano) {
+            panels.delete(-1);
+            panels[0].activate(app.surface, true);
+            piano = null;
+            repaint();
         }
 
         return true;
@@ -856,19 +988,6 @@ class App : Object @implements KeyboardHandler, MouseButtonHandler,
         return true;
     }
 
-    void repaint() {
-        fillRect(app.surface, Coord(0, 0), Coord(app.width, app.height),
-                 BLACK
-                 );
-        panel.draw(app.surface);
-
-        trackPanel.draw(app.surface);
-        channelWidget.draw(app.surface);
-        statusBar.draw(app.surface);
-
-        app.flip();
-    }
-
     bool onResize(ResizeEvent event) {
         channelWidget.moveTo(Coord(0, app.height - 48),
                              Coord(app.width, 40)
@@ -882,6 +1001,8 @@ class App : Object @implements KeyboardHandler, MouseButtonHandler,
         statusBar.moveTo(Coord(0, app.height - 8),
                          Coord(app.width, 8)
                          );
+#        if (piano)
+#            piano.moveTo(Coord(0, 8), Coord(0, app.height - 16));
         repaint();
         return true;
     }
@@ -943,6 +1064,30 @@ class App : Object @implements KeyboardHandler, MouseButtonHandler,
                 app.runOneCycle();
                 eventManager.runOneCycle();
                 interp.checkForInput();
+#                while (userQueue) {
+#                    StartPianoRollEvent event = userQueue.pop();
+#
+#                    # Put the piano roll over where the track panel and
+#                    # chanel widget are.
+#                    piano = Piano(Coord(0, 8),
+#                                  Coord(app.width, app.height - 16),
+#                                  event.track
+#                                  );
+#                    panels.append(piano);
+#
+#                    # Deactivate the currently active panel.
+#                    for (p :in panels) {
+#                        if (p.isActive()) {
+#                            p.activate(app.surface, false);
+#                            break;
+#                        }
+#                    }
+#
+#                    # Activate and draw the piano.
+#                    piano.activate(app.surface, true);
+#                    piano.draw(app.surface);
+#                    app.flip();
+#                }
                 if (eventManager.playingExistingTracks()) {
                     trackPanel.draw(app.surface);
                     trackPanel.drawPosition(app.surface);
