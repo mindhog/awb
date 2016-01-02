@@ -372,11 +372,12 @@ class WaveTrackWidget : TrackWidget {
         canvas.drawLabel(name);
 
         # Recalculate the sample map if necessary.
+        # This is a costly operation that should really be done in a
+        # background thread.
         width := canvas.size.x - canvas.labelColWidth;
         if (!sampleMap ||
              sampleMap.count() / 2 != width
             ) {
-            cout `recalculating, width = $width, sample map = $sampleMap\n`;
             nframes := track.model.getNumFrames();
             interval := nframes / width;
             sampleMap = Array[int]();
@@ -398,7 +399,6 @@ class WaveTrackWidget : TrackWidget {
                     else
                         min = (min * j + val) / (j + 1);
                 }
-                cout `sample is $min-$max\n`;
                 sampleMap.append(min);
                 sampleMap.append(max);
             }
@@ -588,7 +588,7 @@ class TrackPanel : Widget {
     TrackCanvas __makeTrackCanvas(Surface surface, Coord trackSize,
                                   int index
                                   ) {
-        ts := trackSize ? trackSize : Coord(size.x - 1, TRACK_HEIGHT);
+        ts := trackSize ? trackSize : Coord(size.x - 2, TRACK_HEIGHT);
         Coord trackPos = {pos.x + 1, pos.y + index * TRACK_HEIGHT + 1};
         return TrackCanvas(surface, trackPos,
                            ts,
@@ -684,7 +684,7 @@ class TrackPanel : Widget {
         if (!count())
             return;
 
-        Coord trackSize = {size.x - 1, TRACK_HEIGHT};
+        Coord trackSize = {size.x - 2, TRACK_HEIGHT};
         this[__activeIndex].activate(__makeTrackCanvas(surface, trackSize,
                                                        __activeIndex
                                                        ),
