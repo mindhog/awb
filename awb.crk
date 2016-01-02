@@ -50,6 +50,7 @@ import spug.ui.piano Piano;
 
 CmdOptions cl = [
     Option('port', 'p', 'Midi port (e.g. "20:0")', '', CMD_STR),
+    Option('exec', 'x', '"TEL" script file to execute.', '', CMD_STR),
 ];
 
 nonFlagArgs := cl.parse(argv);
@@ -1135,6 +1136,11 @@ cout `creating event manager\n`;
 EventManager em = {app, orch, s, channelMap};
 telEventManager = em;
 app.setEventManager(em);
+
+script := cl['exec'].value;
+if (script)
+    app.interp.runScript(script);
+
 if (filename)
     em.load(filename);
 cout `running\n`;

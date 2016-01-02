@@ -3,6 +3,7 @@
 import crack.cont.array Array;
 import crack.lang Exception;
 import crack.net Poller, POLLIN, POLLERR, POLLOUT;
+import crack.fs makePath;
 import crack.io cin, cout, FStr;
 import crack.midi.event NoteOn, NoteOff, Track;
 import crack.time TimeDelta;
@@ -95,4 +96,8 @@ class InterpWrapper {
         }
     }
 
+    ## Run the specified script.  Discard the result.
+    void runScript(String filename) {
+        __interp.evalString(makePath(filename).readAll());
+    }
 }
