@@ -3,7 +3,7 @@
 import crack.audio.wavfile readWave, WaveBuffer;
 import crack.cont.array Array;
 import crack.ext._jack JackClient, JackPort, JackClient_open,
-    Jack_getDefaultAudioType, JACK_PORT_IS_OUTPUT;
+    Jack_getDefaultAudioType, JACK_PORT_IS_OUTPUT, JACK_PORT_IS_INPUT;
 import crack.fs makePath;
 import crack.functor Function1, Functor1;
 import crack.io cout;
@@ -17,12 +17,13 @@ int jackCallback(uint32 nframes, voidptr arg);
 class JackWrapper {
 
     JackClient __client;
-    JackPort left, right;
+    JackPort left, right, left_in, right_in;
 
     ## The left and right buffers and the number of frames in each of them.
     ## These are only valid during a processor callback.
     uint32 frameCount;
     array[float] lbuf, rbuf;
+    bool __paused;
 
     Array[Functor1[void, JackWrapper]] __processors = {};
 
@@ -39,6 +40,16 @@ class JackWrapper {
                                       JACK_PORT_IS_OUTPUT,
                                       4096
                                       );
+        left_in = __client.portRegister('left_in'.buffer,
+                                        Jack_getDefaultAudioType(),
+                                        JACK_PORT_IS_INPUT,
+                                        4096
+                                        );
+        right_in = __client.portRegister('right_in'.buffer,
+                                         Jack_getDefaultAudioType(),
+                                         JACK_PORT_IS_INPUT,
+                                         4096
+                                         );
         cout `client is $__client\n`;
         free(status);
     }
@@ -50,6 +61,14 @@ class JackWrapper {
     @final void process(uint32 nframes) {
         lbuf = left.getBuffer(nframes);
         rbuf = right.getBuffer(nframes);
+        if (__paused) {
+            # Clear both buffers and return.
+            for (int i; i < nframes; ++i) {
+                lbuf[i] = 0;
+                rbuf[i] = 0;
+            }
+            return;
+        }
         frameCount = nframes;
         count := __processors.count();
         for (int i = 0; i < count; ++i)
@@ -65,6 +84,18 @@ class JackWrapper {
 
     @final void deactivate() {
         __client.deactivate();
+    }
+
+    ## Pause playback/record.  Deactivate has the undesirable consequence of
+    ## disconnecting all connected jack ports.  Pause just turns off
+    ## processing from within the callback, so ports remain connected but they
+    ## don't play or record.
+    @final void pause() {
+        __paused = true;
+    }
+
+    @final void unpause() {
+        __paused = false;
     }
 }
 
