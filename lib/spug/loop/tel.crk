@@ -11,10 +11,11 @@ import spug.loop.model EventManager;
 import spug.loop.instrument MidiInstrument;
 import spug.loop.jack WaveManager;
 import tel.ast BuiltinTypes, EvalContext, Expr, IntObj, Operation, Type;
+import tel.builtins ConstRefOp;
 import tel.cmd_syn CmdParserFactory;
 import tel.facade Interp;
-import tel.prim ExtFuncOp, TypeParmCommand;
-import tel.synlib Def, ParseError;
+import tel.prim getRegisteredType, ExtFuncOp, TypeParmCommand;
+import tel.synlib Def, ParseError, ParseContext;
 
 @import tel.ann function;
 
