@@ -1,42 +1,39 @@
-## TEL (Tiny Embedded Language) wrappers for AWB.
+## Crash interface for AWB.  This is named "tel" for historical reasons - it
+## used to provide the interface to the "TEL" language, an early predecessor
+## to Crash.
 
 import crack.cont.array Array;
-import crack.lang Exception;
+import crack.lang CString, Exception;
 import crack.net Poller, POLLIN, POLLERR, POLLOUT;
 import crack.io cin, cout, FStr;
 import crack.midi.event NoteOn, NoteOff, Track;
 import crack.time TimeDelta;
 import spug.loop.model EventManager;
 import spug.loop.instrument MidiInstrument;
-import spug.loop.jack WaveManager;
-import tel.ast BuiltinTypes, EvalContext, Expr, IntObj, Operation, Type;
-import tel.builtins ConstRefOp;
-import tel.cmd_syn CmdParserFactory;
-import tel.facade Interp;
-import tel.prim getRegisteredType, ExtFuncOp, TypeParmCommand;
-import tel.synlib Def, ParseError, ParseContext;
+import spug.loop.jack jackCallback, WaveManager;
 
-@import tel.ann function;
+import crash createRootContext, eval, Builtin, EvalContext;
+import types IntObj;
+
+@import ann function;
 
 EventManager eventManager;
 
-const ZERO := IntObj(0);
-
-@function IntObj play() {
+@function int play() {
     eventManager.togglePlay();
-    return ZERO;
+    return 0;
 }
 
-@function IntObj get_tempo() {
-    return IntObj(eventManager.tempo);
+@function int get_tempo() {
+    return eventManager.tempo;
 }
 
-@function IntObj set_tempo(int tempo) {
+@function int set_tempo(int tempo) {
     eventManager.tempo = tempo;
-    return ZERO;
+    return 0;
 }
 
-@function IntObj metro(int beats) {
+@function int metro(int beats) {
     metroTrack := Track('Metronome');
     metroTrack.append(NoteOn(0, 9, 31, 127));
     metroTrack.append(NoteOff(1, 9, 31, 0));
@@ -48,47 +45,61 @@ const ZERO := IntObj(0);
     }
 
     eventManager.addTrack(metroTrack, i * eventManager.ppb);
-    return ZERO;
+    return 0;
 }
 
-@function IntObj loadWave(String filename) {
+@function int loadWave(String filename) {
     if (!eventManager.waveMan) {
         eventManager.waveMan = WaveManager();
         eventManager.waveMan.init();
+
+        # This is a hack that forces the callback and all processing
+        # functions to be JITted before we activate the event loop.  If we
+        # don't do this, and we're running in JIT mode, they'll get JITted
+        # during the first invocation of the callback, which will exceed the
+        # jack timeout and cause jack to write off this client as a zombie.
+        jackCallback(0, eventManager.waveMan);
+
     }
     eventManager.waveMan.addFile(filename);
-    return ZERO;
+    return 0;
 }
 
-@function IntObj channelConnect(int channel, int client, int port) {
+@function int channelConnect(int channel, int client, int port) {
     inst := MidiInstrument(eventManager.getOutPort(client, port), byte(channel));
     eventManager.instrument[channel] = inst;
-    return ZERO;
+    return 0;
+}
+
+@function int connect(String source, String dest) {
+    if (eventManager.waveMan)
+        eventManager.waveMan.connect(CString(source), CString(dest));
+    return 0;
 }
 
 class InterpWrapper {
 
-    Interp __interp = {CmdParserFactory()};
+    EvalContext __rootCtx = createRootContext();
     Poller __poller = {};
 
     oper init() {
-        __interp.init();
         __poller.add(cin, POLLIN | POLLERR);
 
-        __interp.addDef('play', play.makeFactory());
-        __interp.addDef('get_tempo', get_tempo.makeFactory());
-        __interp.addDef('set_tempo', set_tempo.makeFactory());
-        __interp.addDef('loadWave', loadWave.makeFactory());
-        __interp.addDef('metro', metro.makeFactory());
-        __interp.addDef('channel_connect', channelConnect.makeFactory());
+        __rootCtx.define('play', play());
+        __rootCtx.define('get_tempo', get_tempo());
+        __rootCtx.define('set_tempo', set_tempo());
+        __rootCtx.define('loadWave', loadWave());
+        __rootCtx.define('metro', metro());
+        __rootCtx.define('channel_connect', channelConnect());
+        __rootCtx.define('connect', connect());
     }
 
     void checkForInput() {
         if (__poller.wait(TimeDelta(0, 0))) {
             data := cin.read(1024);
             try {
-                result := __interp.evalString(data);
-                cout `$result`;
+                result := eval(data, __rootCtx);
+                cout `$result\n`;
             } catch (Exception ex) {
                 cout `got error: $ex\n`;
             }
