@@ -1,14 +1,17 @@
 ## Jack audio manager.
 
-import crack.audio.wavfile readWave, WaveBuffer;
+import crack.audio.wavfile readWave, ManagedWaveBuffer, WaveBuffer, WaveDef;
 import crack.cont.array Array;
 import crack.ext._jack JackClient, JackPort, JackClient_open,
     Jack_getDefaultAudioType, JACK_PORT_IS_OUTPUT, JACK_PORT_IS_INPUT;
 import crack.fs makePath;
 import crack.functor Function1, Functor1;
-import crack.io cout;
+import crack.io cout, cerr, SeekableReader, SEEK_SET;
+import crack.lang CString;
 import crack.math max, abs;
-import crack.runtime free;
+import crack.runtime free, sleep;
+import crack.threads Thread;
+import crack.time Time;
 
 @import crack.ann implements;
 
@@ -78,12 +81,20 @@ class JackWrapper {
     @final void activate() {
         cout `client is $__client\n`;
         __client.activate();
-        __client.connect(left.getName(), 'jack_mixer:b L'.buffer);
-        __client.connect(right.getName(), 'jack_mixer:b R'.buffer);
     }
 
     @final void deactivate() {
         __client.deactivate();
+    }
+
+    ## Connect a source jack port to a destination jack port.
+    ## Note that our client name is "awb" and our port names are:
+    ##  left - left channel output
+    ##  right - right channel output
+    ##  left_in - left channel input
+    ##  right_in - right channel input
+    @final void connect(CString source, CString dest) {
+        __client.connect(source.buffer, dest.buffer);
     }
 
     ## Pause playback/record.  Deactivate has the undesirable consequence of
@@ -152,24 +163,232 @@ class SimpleWaveModel : WaveModel {
     }
 }
 
+const BYTES_PER_SAMPLE := 2;
+
+## WindowBuffer is a ring buffer for moving data from the file reader thread
+## to the callbacks in the jack processing thread.
+## This code isn't completely righteous with respect to threads: we can't
+## block on a mutex in the jack process handler because of the risk of
+## introducing latency, so we just read from the buffer and hope that our view
+## of memory is mostly the same as that of the writer thread.  The only
+## synchronization mechanism we use is for the two indexes (playPos and
+## readPos) which are both atomic_int.
+##
+## The ring buffer typically maps to up to two pages of the sample sequence in
+## the file:
+##
+##                  p  r
+##                  |  |
+##  --------------------------------------------------- absolute file pos
+##             |          |          |                  ring buffer mappings
+##              --------|x
+##              ring buffer
+##
+## In the diagram, 'p' is playPos and 'r' is readPos.  Everything less than
+## r % S (where 'S' is the size of the ring buffer) in the ring buffer maps to
+## an absolute file position starting at B(r), where B(r) = (r // S) * S.  The
+## rest of the buffer should generally map to the file position starting at
+## B(r - S) (the previous frame), although this can vary after seeking to a
+## new frame number.
+class WindowBuffer {
+
+    atomic_int
+        ## The play position in samples.
+        playPos,
+
+        ## The read position.  Everything in the ring buffer with an index
+        ## less than
+        readPos;
+
+    ## The ring buffer.
+    ManagedWaveBuffer ringBuf = {1024 * 1024};
+
+    ## Start of the data in the file.
+    uint dataStart;
+
+    ## Number of tracks in the underlying file.
+    int numTracks;
+
+    WaveDef waveDef;
+    SeekableReader src;
+
+    ## Number of frames to read during a refresh.
+    uint frames = 4096;
+
+    oper init(WaveDef waveDef, SeekableReader src) :
+        waveDef = waveDef,
+        src = src,
+        dataStart = src.tell(),
+        numTracks = waveDef.channels {
+    }
+
+    ## Get the next chunk of data from the file into the ring buffer.
+    ## Returns true if a refresh was done, false if no refresh was needed.
+    bool refresh() {
+        intz leading = readPos - playPos;
+        if (leading > ringBuf.cap / 2 && leading <= ringBuf.cap)
+            # XXX Also need to deal with the case where we're out of data in
+            # the file somehow.
+            return false;
+        rp := uintz(readPos);
+        pp := uintz(playPos);
+        if (leading < 0) {
+            # We're already behind.  Start reading from the play position.
+            cerr `fell behind by $leading samples\n`;
+            rp = pp;
+            src.seek(int64(rp), SEEK_SET);
+        }
+
+        # We're more than a buffer-length ahead, back the read position up to
+        # the play position.
+        if (leading > ringBuf.cap) {
+            cerr `backing up\n`;
+            rp = pp;
+            src.seek(int64(rp), SEEK_SET);
+        }
+
+        # Figure out how much to read.  Read the next chunk or up to the end
+        # of the ring buffer.
+        uint samplesToRead = frames * numTracks;
+        samplesRemaining := (ringBuf.cap - rp % ringBuf.cap);
+        if (samplesToRead > samplesRemaining)
+            samplesToRead = samplesRemaining;
+
+        cerr `reading $samplesToRead samples into $(rp % ringBuf.cap)\n`;
+        WaveBuffer waveBuf = {samplesToRead, ringBuf.buffer + rp % ringBuf.cap};
+        readPos += amtRead := waveDef.read(src, waveBuf);
+
+        return amtRead;
+    }
+
+    void seek(uint frame) {
+        playPos -= playPos + frame * numTracks;
+    }
+}
+
+## This thread refreshes the WindowBuffers from their disk files.
+class RefreshThread : Thread {
+    Array[WindowBuffer] buffers = {};
+
+    void run() {
+        while (true) {
+            bool refreshed = false;
+            for (buf :in buffers)
+                refreshed = refreshed || buf.refresh();
+
+            # All buffers are filled.
+            if (!refreshed)
+                sleep(1);
+        }
+    }
+}
+
+class WindowBufferAdapter : Object @implements Functor1[void, JackWrapper] {
+
+    WindowBuffer buf;
+    float volume;
+
+    ## Array of pan values, one per track.  Pan values range from -1 (totally
+    ## left) to +1 (totally right).
+    array[float] pan;
+
+    oper init(WindowBuffer buf) :
+        buf = buf,
+        pan = array[float](buf.numTracks),
+        volume = 1.0 {
+
+        for (int i; i < buf.numTracks; ++i)
+            pan[i] = 0.0;
+        if (buf.numTracks == 2) {
+            pan[0] = -1;
+            pan[1] = 1;
+        }
+    }
+
+    oper del() {
+        free(pan);
+    }
+
+    void oper call(JackWrapper wrapper) {
+        for (int i; i < wrapper.frameCount; ++i) {
+            absPos := buf.playPos + i * buf.numTracks;
+            for (int j; j < buf.numTracks; ++j) {
+                sample := buf.ringBuf[(absPos + j) % buf.ringBuf.cap] / 32768.0;
+                wrapper.lbuf[i] = wrapper.lbuf[i] +
+                                  sample * volume * ((1 - pan[j]) / 2);
+                wrapper.rbuf[i] = wrapper.rbuf[i] +
+                                  sample * volume * ((1 + pan[j]) / 2);
+            }
+        }
+
+        buf.playPos += wrapper.frameCount * buf.numTracks;
+    }
+
+    void seek(uint frame) {
+        buf.seek(frame);
+    }
+}
+
+## Clears the output buffers in the Jack wrapper.
+void clearOutputBuffers(JackWrapper wrapper) {
+    for (int i = 0; i < wrapper.frameCount; ++i) {
+        wrapper.lbuf[i] = 0;
+        wrapper.rbuf[i] = 0;
+    }
+}
+
 class WaveManager : JackWrapper {
-    WaveAdapter waveAdapter = {null};
+
+    Array[WindowBufferAdapter] wbas = {};
 
     oper init() {
+        # Add a processor to clear the output buffers.
+        # This has a special side-effect in that it allows us to force the
+        # processor code to be jitted before a callback.
+        addProcessor(Function1[void, JackWrapper](clearOutputBuffers));
+    }
+
+    void addMemFile(String fileName) {
+        src := makePath(fileName).reader();
+        wd := readWave(src);
+        wave := SimpleWaveModel();
+        wave.framesPerChunk = 2048;
+        buf := ManagedWaveBuffer(4096);
+        while (wd.read(src, buf)) {
+            wave.buffers.append(buf);
+            buf = ManagedWaveBuffer(4096);
+        }
+
+        WaveAdapter waveAdapter = {null};
+        waveAdapter.model = wave;
         addProcessor(waveAdapter);
     }
 
     void addFile(String fileName) {
         src := makePath(fileName).reader();
         wd := readWave(src);
-        wave := SimpleWaveModel();
-        wave.framesPerChunk = 2048;
-        buf := WaveBuffer(4096);
-        while (wd.read(src, buf)) {
-            wave.buffers.append(buf);
-            buf = WaveBuffer(4096);
-        }
+        buf := WindowBuffer(wd, src);
 
-        waveAdapter.model = wave;
+        # Fill the buffer.
+        while (buf.refresh()) ;
+
+        # Start a background thread to keep the buffer filled.
+        thread := RefreshThread();
+        thread.buffers.append(buf);
+        thread.start();
+
+        adapter := WindowBufferAdapter(buf);
+        frameCount = 1;
+        lbuf = array[float](1);
+        rbuf = lbuf;
+        # Another hack to force precompilation of WindowBufferAdapter.
+        adapter(this);
+        addProcessor(adapter);
+        wbas.append(adapter);
+    }
+
+    void seek(uintz frame) {
+        for (adapter :in wbas)
+            adapter.seek(frame);
     }
 }
