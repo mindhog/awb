@@ -49,18 +49,8 @@ EventManager eventManager;
 }
 
 @function int loadWave(String filename) {
-    if (!eventManager.waveMan) {
-        eventManager.waveMan = WaveManager();
-        eventManager.waveMan.init();
-
-        # This is a hack that forces the callback and all processing
-        # functions to be JITted before we activate the event loop.  If we
-        # don't do this, and we're running in JIT mode, they'll get JITted
-        # during the first invocation of the callback, which will exceed the
-        # jack timeout and cause jack to write off this client as a zombie.
-        jackCallback(0, eventManager.waveMan);
-
-    }
+    if (!eventManager.waveMan)
+        eventManager.waveMan = WaveManager.create();
     eventManager.waveMan.addFile(filename);
     return 0;
 }

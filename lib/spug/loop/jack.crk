@@ -79,8 +79,12 @@ class JackWrapper {
     }
 
     @final void activate() {
-        cout `client is $__client\n`;
+        cout `activating, client is $__client\n`;
         __client.activate();
+    }
+
+    @final void _showClient() {
+        cout `showClient: client is $__client\n`;
     }
 
     @final void deactivate() {
@@ -346,6 +350,30 @@ class WaveManager : JackWrapper {
         # This has a special side-effect in that it allows us to force the
         # processor code to be jitted before a callback.
         addProcessor(Function1[void, JackWrapper](clearOutputBuffers));
+    }
+
+    @static WaveManager create() {
+        # XXX If I move this into the constructor, I get seg faults.  This
+        # appears to be a crack bug.
+
+        # Basic initialization stuff.  This is all very order-sensitive due to
+        # issues with jitting and jack callback latency - be careful.
+
+        wm := WaveManager();
+        wm.init();
+
+        # This is a hack that forces the callback and all processing
+        # functions to be JITted before we activate the event loop.  If we
+        # don't do this, and we're running in JIT mode, they'll get JITted
+        # during the first invocation of the callback, which will exceed the
+        # jack timeout and cause jack to write off this client as a zombie.
+        jackCallback(0, wm);
+
+        wm.pause();
+        wm._showClient();
+        wm.activate();
+        wm._showClient();
+        return wm;
     }
 
     void addMemFile(String fileName) {
