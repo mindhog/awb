@@ -473,7 +473,8 @@ class EventManager {
     # Name of the project file.
     String projectFileName = 'noname';
 
-    # The wave manager.  Manages the direct PCM wave system.
+    # The wave manager.  Manages the direct PCM wave system and interface to
+    # jack.
     WaveManager waveMan;
 
     int mode;
@@ -602,7 +603,7 @@ class EventManager {
         mode = IDLE;
         trackCursors = null;
         if (waveMan)
-            waveMan.deactivate();
+            waveMan.pause();
     }
 
     void setTrackCursors(uint ticks) {
@@ -632,7 +633,7 @@ class EventManager {
         mode = PLAY;
         setPos(0);
         if (waveMan)
-            waveMan.activate();
+            waveMan.unpause();
     }
 
     void doStop() {
@@ -641,7 +642,7 @@ class EventManager {
 
         mode = IDLE;
         if (waveMan)
-            waveMan.deactivate();
+            waveMan.unpause();
     }
 
     void togglePlay() {
