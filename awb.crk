@@ -1052,10 +1052,26 @@ EventManager em = {app, orch, s, channelMap};
 em.waveMan = waveMan;
 telEventManager = em;
 app.setEventManager(em);
-if (filename)
-    em.load(filename);
+
+String projectFile;
+for (arg :in nonFlagArgs) {
+    if (arg.endsWith('.awb')) {
+        cout `loading awb project $arg\n`;
+        if (projectFile)
+            cout `WARNING: Overwriting existing project from $projectFile\n`;
+        projectFile = arg;
+        em.load(arg);
+    } else if (arg.endsWith('.crash')) {
+        cout `running script $arg\n`;
+        app.interp.evalScript(arg);
+    } else {
+        cout `ERROR: file with unknown extension: $arg\n`;
+    }
+}
+
 cout `running\n`;
 app.run();
+
 waveMan.deactivate();
 
 #Sequencer s = {SND_SEQ_OPEN_OUTPUT, 0};
