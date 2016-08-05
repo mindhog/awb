@@ -3,18 +3,21 @@
 ## to Crash.
 
 import crack.cont.array Array;
+import crack.fs makePath;
+import crack.functor Functor1;
 import crack.lang CString, Exception;
 import crack.net Poller, POLLIN, POLLERR, POLLOUT;
 import crack.io cin, cout, FStr;
-import crack.midi.event NoteOn, NoteOff, Track;
+import crack.midi.event ControlChange, Event, NoteOn, NoteOff, Track;
 import crack.time TimeDelta;
 import spug.loop.model EventManager;
 import spug.loop.instrument MidiInstrument;
-import spug.loop.jack jackCallback, WaveManager;
+import spug.loop.jack jackCallback, WaveManager, WindowBufferAdapter;
 
 import crash createRootContext, eval, Builtin, EvalContext;
 import types IntObj;
 
+@import crack.ann impl;
 @import ann function;
 
 EventManager eventManager;
@@ -48,11 +51,10 @@ EventManager eventManager;
     return 0;
 }
 
-@function int loadWave(String filename) {
+@function WindowBufferAdapter load(String filename) {
     if (!eventManager.waveMan)
         eventManager.waveMan = WaveManager.create();
-    eventManager.waveMan.addFile(filename);
-    return 0;
+    return eventManager.waveMan.addFile(filename);
 }
 
 @function int channelConnect(int channel, int client, int port) {
@@ -67,6 +69,35 @@ EventManager eventManager;
     return 0;
 }
 
+alias EventProcessor = Functor1[void, Event];
+
+class VolumeControl @impl EventProcessor {
+    WindowBufferAdapter adapter;
+
+    oper init(WindowBufferAdapter adapter) : adapter = adapter {}
+    oper del() {
+        throw Exception('volume control deleted\n');
+    }
+
+    void oper call(Event event) {
+        cout `changing volume of $adapter to $(adapter.volume)\n`;
+        adapter.volume = ControlChange.cast(event).value / 127.0;
+    }
+}
+
+@function EventProcessor volumeControl(WindowBufferAdapter adapter) {
+    result := VolumeControl(adapter);
+#    result.oper bind();
+    return result;
+}
+
+@function int addEventProcessor(int eventSelector, EventProcessor processor) {
+    Object o = processor;
+    eventManager.eventProcessors[eventSelector] = processor;
+    cout `event processor's ref count is $(o.refCount)\n`;
+    return 0;
+}
+
 class InterpWrapper {
 
     EvalContext __rootCtx = createRootContext();
@@ -78,10 +109,12 @@ class InterpWrapper {
         __rootCtx.define('play', play());
         __rootCtx.define('get_tempo', get_tempo());
         __rootCtx.define('set_tempo', set_tempo());
-        __rootCtx.define('loadWave', loadWave());
+        __rootCtx.define('load', load());
         __rootCtx.define('metro', metro());
         __rootCtx.define('channel_connect', channelConnect());
         __rootCtx.define('connect', connect());
+        __rootCtx.define('volumeControl', volumeControl());
+        __rootCtx.define('addEventProcessor', addEventProcessor());
     }
 
     void checkForInput() {
@@ -97,4 +130,7 @@ class InterpWrapper {
         }
     }
 
+    void evalScript(String filename) {
+        eval(makePath(filename).readAll(), __rootCtx);
+    }
 }

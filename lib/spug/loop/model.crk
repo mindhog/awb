@@ -3,12 +3,14 @@
 # Spugloop model objects.
 
 import crack.cont.array Array;
+import crack.cont.hashmap HashMap;
 import crack.cont.treemap TreeMap;
 import crack.fs cwd, makePath;
+import crack.functor Functor1;
 import crack.io cout, FStr, StringReader, StringWriter;
 import crack.lang CString, Exception;
-import crack.midi.event ChannelEvent, EndTrack, Event, MidiReader,
-    MidiWriter, ProgramChange, SeekableEventSource, Track;
+import crack.midi.event ChannelEvent, ControlChange, EndTrack, Event,
+    MidiReader, MidiWriter, ProgramChange, SeekableEventSource, Track;
 import crack.protobuf Field, ProtoReader, ProtoWriter;
 import spug.loop.instrument Instrument, Orchestra;
 import spug.loop.jack WaveManager;
@@ -477,6 +479,11 @@ class EventManager {
     # jack.
     WaveManager waveMan;
 
+    # Mapping from event byte values to special processing functions for those
+    # events.  Currently only control changes are supported and these are
+    # represented by an integer of form (channel << 8 | controller).
+    HashMap[uint, Functor1[void, Event]] eventProcessors = {};
+
     int mode;
 
     # time that the current loop started and a holder for the current time.
@@ -669,9 +676,21 @@ class EventManager {
             doRecord();
 
         event.time = getRelTime();
+        cout `got event $event\n`;
+
+        # Divert bound events to the correct event processor.
+        if ((cc := ControlChange.cast(event, null)) &&
+            (proc :=
+                eventProcessors.get((uint(cc.channel) << 8) | cc.controller)
+             )
+            ) {
+            proc(cc);
+            return;
+        }
+
         if (chev := ChannelEvent.cast(event, null))
             chev.channel = channelMap.currentChannel;
-        cout `adding event with time $(event.time): $event\n`;
+
         instrument.onEvent(event);
         if (mode == RECORD)
             recordTrack.append(event);

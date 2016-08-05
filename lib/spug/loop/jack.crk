@@ -392,7 +392,7 @@ class WaveManager : JackWrapper {
         addProcessor(waveAdapter);
     }
 
-    void addFile(String fileName) {
+    WindowBufferAdapter addFile(String fileName) {
         src := makePath(fileName).reader();
         wd := readWave(src);
         buf := WindowBuffer(wd, src);
@@ -413,6 +413,8 @@ class WaveManager : JackWrapper {
         adapter(this);
         addProcessor(adapter);
         wbas.append(adapter);
+
+        return adapter;
     }
 
     void seek(uintz frame) {
