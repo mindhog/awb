@@ -268,6 +268,16 @@ class WindowBuffer {
     void seek(uint frame) {
         playPos -= playPos + frame * numTracks;
     }
+
+    ## Returns the frame count.
+    @final uint getFrameCount() {
+        return waveDef.frameCount;
+    }
+
+    ## Returns the rate (frmes per second).
+    @final uint getRate() {
+        return waveDef.rate;
+    }
 }
 
 ## This thread refreshes the WindowBuffers from their disk files.
@@ -330,6 +340,16 @@ class WindowBufferAdapter : Object @implements Functor1[void, JackWrapper] {
 
     void seek(uint frame) {
         buf.seek(frame);
+    }
+
+    ## Returns the number of frames in the wave.
+    @final uint getFrameCount() {
+        return buf.getFrameCount();
+    }
+
+    ## Returns the track rate in frames per second.
+    @final uint getRate() {
+        return buf.getRate();
     }
 }
 
