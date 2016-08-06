@@ -75,20 +75,31 @@ class VolumeControl @impl EventProcessor {
     WindowBufferAdapter adapter;
 
     oper init(WindowBufferAdapter adapter) : adapter = adapter {}
-    oper del() {
-        throw Exception('volume control deleted\n');
-    }
 
     void oper call(Event event) {
+        adapter.volume = ControlChange.cast(event).value / 128.0;
         cout `changing volume of $adapter to $(adapter.volume)\n`;
-        adapter.volume = ControlChange.cast(event).value / 127.0;
     }
 }
 
 @function EventProcessor volumeControl(WindowBufferAdapter adapter) {
-    result := VolumeControl(adapter);
-#    result.oper bind();
-    return result;
+    return VolumeControl(adapter);
+}
+
+class PanControl @impl EventProcessor {
+    WindowBufferAdapter adapter;
+
+    oper init(WindowBufferAdapter adapter) : adapter = adapter {}
+
+    void oper call(Event event) {
+        pan := ControlChange.cast(event).value / 64.0 - 1.0;
+        adapter.setPan(pan);
+        cout `changing panning of $adapter to $pan\n`;
+    }
+}
+
+@function EventProcessor panControl(WindowBufferAdapter adapter) {
+    return PanControl(adapter);
 }
 
 @function int addEventProcessor(int eventSelector, EventProcessor processor) {
@@ -114,6 +125,7 @@ class InterpWrapper {
         __rootCtx.define('channel_connect', channelConnect());
         __rootCtx.define('connect', connect());
         __rootCtx.define('volumeControl', volumeControl());
+        __rootCtx.define('panControl', panControl());
         __rootCtx.define('addEventProcessor', addEventProcessor());
     }
 

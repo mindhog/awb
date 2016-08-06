@@ -351,6 +351,12 @@ class WindowBufferAdapter : Object @implements Functor1[void, JackWrapper] {
     @final uint getRate() {
         return buf.getRate();
     }
+
+    @final void setPan(float pan) {
+        # TODO: support panning ranges.
+        for (int i; i < buf.numTracks; ++i)
+            this.pan[i] = pan;
+    }
 }
 
 ## Clears the output buffers in the Jack wrapper.
