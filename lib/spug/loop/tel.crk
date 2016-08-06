@@ -54,7 +54,7 @@ EventManager eventManager;
 @function WindowBufferAdapter load(String filename) {
     if (!eventManager.waveMan)
         eventManager.waveMan = WaveManager.create();
-    return eventManager.waveMan.addFile(filename);
+    return eventManager.mapWaveFile(filename);
 }
 
 @function int channelConnect(int channel, int client, int port) {

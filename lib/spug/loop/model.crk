@@ -13,7 +13,7 @@ import crack.midi.event ChannelEvent, ControlChange, EndTrack, Event,
     MidiReader, MidiWriter, ProgramChange, SeekableEventSource, Track;
 import crack.protobuf Field, ProtoReader, ProtoWriter;
 import spug.loop.instrument Instrument, Orchestra;
-import spug.loop.jack WaveManager;
+import spug.loop.jack WaveManager, WindowBufferAdapter;
 import crack.midi.alsa Port, Sequencer;
 import crack.serial SerialReader, SerialWriter;
 import crack.time Time;
@@ -416,10 +416,8 @@ class LoopCursor {
     oper init(Track track) : track = track {
         time = track[0].time;
 
-        # make sure our last event is an EndTrack and there is at least one
-        # other event in the track.
+        # make sure our last event is an EndTrack.
         EndTrack.cast(track[-1]);
-        @assert(track.count() > 1);
         span = track[-1].time;
     }
 
@@ -437,12 +435,14 @@ class LoopCursor {
 
     bool immediatelyFollows(uint pos) {
         if (index == 0) {
+            if (track.count() == 1)
+                return false;
             # the last event is the end track marker, check to see that pos is
             # either greater than the /next to last/ event or less than the
             # current one.
             return pos >= track[-2].time || pos < time;
         } else {
-            # if this isn't the first track, we just need to verify that pos
+            # if this isn't the first event, we just need to verify that pos
             # is between the last event and the current one.
             return pos < time && pos >= track[index - 1].time;
         }
@@ -849,6 +849,23 @@ class EventManager {
             cout `tracks in cur section: $(curSection.tracks.count())\n`;
             controller.sectionChanged();
         }
+    }
+
+    ## Map a wave file to the current section.
+    ## The wave manager must have been defined.
+    WindowBufferAdapter mapWaveFile(String filename) {
+        @assert(waveMan);
+        result := waveMan.addFile(filename);
+
+        # Calculate end time in microseconds.
+        endTime := int64(result.getFrameCount()) * 1000000 /
+                   int64(result.getRate());
+
+        curSection.tracks.append(
+            Track( filename, Array[Event]![EndTrack(usecsToTicks(endTime))] )
+        );
+        controller.trackAdded();
+        return result;
     }
 
     Port getOutPort(int client, int portNum) {
