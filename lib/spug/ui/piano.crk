@@ -1,0 +1,93 @@
+
+import crack.ext._sdl Surface = SDL_Surface;
+import crack.midi.event NoteOff, NoteOn;
+import crack.cont.array Array;
+import crack.game.sdl fillRect, Coord, KeyboardEvent, MouseButtonEvent;
+import crack.game.sdlgfx drawLine, BLACK;
+import crack.lang Exception;
+import spug.ui.base Widget;
+import crack.midi.event Track;
+
+uint32 background = BLACK;
+uint32 gridColor = 0xAAAAAAFF;
+uint32 noteColor = 0x0000FFFF;
+
+class Piano : Widget {
+
+    Track __track;
+
+    # Start time (of the leftmost pos in the window) in ticks.
+    uint __startTime;
+
+    # Number of ticks that the window displays.
+    uint __timeWindow = 1000;
+
+    # Bottom midi note.
+    uint __bottom;
+
+    # Height of a single note on the grid.
+    uint __noteHeight = 10;
+
+    bool __active = false;
+
+    oper init(Coord pos, Coord size, Track track) :
+        Widget(pos, size),
+        __track = track {
+    }
+
+    void __drawNote(Surface surface, int note, uint startTime, uint endTime) {
+        x1 := (startTime - __startTime) * size.x / __timeWindow + pos.x;
+        x2 := (endTime - __startTime) * size.x / __timeWindow + pos.x;
+        y := (note - __bottom) * __noteHeight + pos.y;
+        fillRect(surface, Coord(x1, y), Coord(x2, y + __noteHeight),
+                 noteColor
+                 );
+    }
+
+    void draw(Surface surface) {
+        fillRect(surface, pos, size, background);
+
+        # Draw the piano keyboard to the left.
+        for (uint i = __bottom; i * __noteHeight < size.y - 2; ++i) {
+            uint y = pos.y + __noteHeight * i;
+            drawLine(surface, Coord(pos.x, y),
+                     Coord(pos.x + size.x, y),
+                     gridColor
+                     );
+        }
+
+        Array[NoteOn] state = {128};
+        for (int i = 0; i < 128; ++i)
+            state.append(null);
+        cur := __track.iter();
+        # I commented out everything below because I didn't have what it needed.
+        cur.setPos(__startTime);
+        while (cur && (event := cur.elem()) &&
+                event.time < __startTime + __timeWindow
+               ) {
+
+            # For NoteOn, store it in the array.
+            if (n := NoteOn.cast(event, null)) {
+                state[n.note] = n;
+
+            # For NoteOff, find the matching NoteOn, draw the entire note and
+            # remove it.
+            } else if (n := NoteOff.cast(event, null)) {
+                if (starter := state[n.note]) {
+                    __drawNote(surface, n.note, starter.time, n.time);
+                    state[n.note] = null;
+                }
+            }
+
+            cur.next();
+        }
+    }
+
+    void activate(Surface surface, bool newActive) {
+        __active = newActive;
+    }
+
+    bool isActive() { return __active; }
+}
+
+
