@@ -1,0 +1,79 @@
+## Tools for working with LV2 plugins.
+
+import crack.cont.array Array;
+import spug.loop.lilv LilvWorld_new, LilvPlugin, LilvPlugins, LilvPort,
+    LilvWorld;
+
+class Port {
+    LilvPlugin __plugin;
+    LilvPort __port;
+
+    oper init(LilvPlugin plugin, LilvPort port) :
+        __plugin = plugin,
+        __port = port {
+    }
+
+    String getName() {
+        return String(__plugin.getPortName(__port).asString());
+    }
+}
+
+class Plugin {
+    LilvPlugin __rep;
+
+    class PortIter {
+        LilvPlugin __plugin;
+        uint32 __i, __numPorts;
+
+        oper init(LilvPlugin plugin) :
+            __plugin = plugin,
+            __numPorts = plugin.getNumPorts() {
+        }
+
+        void next() { ++__i }
+        bool isTrue() { return __i < __numPorts }
+        Port elem() { return Port(__plugin, __plugin.getPortByIndex(__i)) }
+        PortIter iter() { return this }
+    }
+
+    oper init(LilvPlugin rep) : __rep = rep {}
+
+    String getName() {
+        return String(__rep.getName().asString());
+    }
+
+    PortIter iterPorts() {
+        return PortIter(__rep);
+    }
+}
+
+## The set of all plugins.
+class PluginLibrary {
+
+    LilvWorld __world;
+    Array[Plugin] __plugins = {};
+
+    alias Iter = Array[Plugin].ArrayIter;
+
+#    LilvNode
+#        INPUT_PORT,
+
+    oper init() {
+        __world = LilvWorld_new();
+        __world.loadAll();
+        plugins := __world.getAllPlugins();
+        iter := plugins.begin();
+        while (!plugins.isEnd(iter)) {
+            __plugins.append(Plugin(plugins.get(iter)));
+            iter = plugins.next(iter);
+        }
+    }
+
+    Iter iter() {
+        return __plugins.iter();
+    }
+}
+
+
+
+

@@ -1,0 +1,197 @@
+# LV2 API Extension.  Lets us work with LV2 plugins.
+
+@import crack.extgen generateExtension;
+
+@generateExtension spug.loop.lilv {
+    @filename 'lilv.cc'
+
+    @inject '#include <lilv-0/lilv/lilv.h>\n'
+    @inject 'typedef struct LilvWorldImpl {} LilvWorld;\n'
+    @inject 'typedef struct LilvPluginImpl {} LilvPlugin;\n'
+    @inject 'typedef struct LilvNodeImpl {} LilvNode;\n'
+    @inject 'typedef struct LilvPortImpl {} LilvPort;\n'
+    @inject 'typedef struct {} Opaque;\n'
+    @inject '
+        LilvNode *makeAudioPortClass(LilvWorld *world) {
+            return lilv_new_uri(world, LILV_URI_AUDIO_PORT);
+        }
+        LilvNode *makeControlPortClass(LilvWorld *world) {
+            return lilv_new_uri(world, LILV_URI_CONTROL_PORT);
+        }
+        LilvNode *makeOutputPortClass(LilvWorld *world) {
+            return lilv_new_uri(world, LILV_URI_OUTPUT_PORT);
+        }
+        LilvNode *makeInputPortClass(LilvWorld *world) {
+            return lilv_new_uri(world, LILV_URI_INPUT_PORT);
+        }
+        LilvNode *makeEventPortClass(LilvWorld *world) {
+            return lilv_new_uri(world, LILV_URI_EVENT_PORT);
+        }
+        LilvNode *makeMidiEventClass(LilvWorld *world) {
+            return lilv_new_uri(world, LILV_URI_MIDI_EVENT);
+        }
+        '
+
+
+    @cname Opaque
+    class LilvIter {}
+
+    class LilvNode {
+        @cname lilv_node_is_string
+        bool isString();
+
+        @cname lilv_node_as_string
+        byteptr asString();
+    }
+
+    class LilvPort {
+        @cname lilv_port_get_name
+        LilvNode getName();
+    }
+
+    class LilvPlugin {
+        @cname lilv_plugin_get_uri
+        LilvNode getURI();
+
+        @cname lilv_plugin_get_name
+        LilvNode getName();
+
+        @cname lilv_plugin_get_num_ports
+        uint32 getNumPorts();
+
+        @cname lilv_plugin_get_port_by_index
+        LilvPort getPortByIndex(uint32 index);
+
+        @cname lilv_port_get_name
+        LilvNode getPortName(LilvPort port);
+
+        @cname lilv_port_is_a
+        bool portIsA(LilvPort port, LilvNode cls);
+
+        # LilvInstance instantiate(float64 sampleRate, voidptr features);
+    }
+
+    @cname Opaque
+    class LilvPlugins {
+        @cname lilv_plugins_begin
+        LilvIter begin();
+
+        @cname lilv_plugins_next
+        LilvIter next(LilvIter iter);
+
+        @cname lilv_plugins_is_end
+        bool isEnd(LilvIter iter);
+
+        @cname lilv_plugins_get
+        LilvPlugin get(LilvIter iter);
+    }
+
+    class LilvWorld {
+
+        @cname lilv_world_new
+        oper new();
+
+        @cname lilv_world_load_all
+        void loadAll();
+
+        @cname lilv_world_get_all_plugins
+        LilvPlugins getAllPlugins();
+    }
+
+    @cname lilv_world_new
+    LilvWorld LilvWorld_new();
+
+    @cname lilv_new_uri
+    LilvNode LilvNode_newURI(LilvWorld world, byteptr uri);
+
+    LilvNode makeAudioPortClass(LilvWorld world);
+    LilvNode makeControlPortClass(LilvWorld world);
+    LilvNode makeEventPortClass(LilvWorld world);
+    LilvNode makeInputPortClass(LilvWorld world);
+    LilvNode makeMidiEventClass(LilvWorld world);
+    LilvNode makeOutputPortClass(LilvWorld world);
+
+//    @inject '#include <jack/jack.h>\n'
+//    @inject 'typedef jack_client_t JackClient;\n'
+//    @inject 'struct _jack_client { int x; };\n'
+//    @inject I'const char *Jack_getDefaultAudioType() {
+//                  return JACK_DEFAULT_AUDIO_TYPE;
+//              }
+//
+//              typedef jack_port_t JackPort;
+//              struct _jack_port { int x; };
+//              ';
+//
+//    # options
+//    const int JACK_NULL_OPTION = 'JackNullOption',
+//              JACK_NO_START_SERVER = 'JackNoStartServer',
+//              JACK_USE_EXACT_NAME = 'JackUseExactName',
+//              JACK_SERVER_NAME = 'JackServerName',
+//              JACK_LOAD_NAME = 'JackLoadName',
+//              JACK_LOAD_INIT = 'JackLoadInit',
+//              JACK_SESSION_ID = 'JackSessionID';
+//
+//    const int JACK_PORT_IS_INPUT = 'JackPortIsInput',
+//              JACK_PORT_IS_OUTPUT = 'JackPortIsOutput',
+//              JACK_PORT_IS_PHYSICAL = 'JackPortIsPhysical',
+//              JACK_PORT_CAN_MONITOR = 'JackPortCanMonitor',
+//              JACK_PORT_IS_TERMINAL = 'JackPortIsTerminal';
+//
+//
+//    byteptr Jack_getDefaultAudioType();
+//
+//    class JackPort {
+//        @cname jack_port_get_buffer
+//        array[float] getBuffer(uint32 frames);
+//
+//        @cname jack_port_name
+//        byteptr getName();
+//    }
+//
+//    class JackClient {
+//        @cname jack_set_process_callback
+//        int setProcessCallback(function[int, uint32, voidptr] callback,
+//                               voidptr arg
+//                               );
+//
+//        @cname jack_port_register
+//        JackPort portRegister(byteptr port_name, byteptr port_type,
+//                              uint flags,
+//                              uint buffer_size
+//                              );
+//
+//        @cname jack_port_by_name
+//        JackPort portByName(byteptr name);
+//
+//        @cname jack_get_sample_rate
+//        uint32 getSampleRate();
+//
+//        @cname jack_connect
+//        int connect(byteptr port1, byteptr port2);
+//
+//        @cname jack_activate
+//        int activate();
+//
+//        @cname jack_deactivate
+//        int deactivate();
+//
+//        @cname jack_get_ports
+//        array[byteptr] getPorts(byteptr port_name_pattern,
+//                                byteptr type_name_pattern,
+//                                uint64 flags
+//                                );
+//    }
+//
+//    @cname jack_client_open
+//    JackClient JackClient_open(byteptr name, int options,
+//                               array[int] status
+//                               );
+//
+//    @cname jack_free
+//    void Jack_free(voidptr ptr);
+}
+
+
+
+
+

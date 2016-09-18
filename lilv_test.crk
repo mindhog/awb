@@ -1,0 +1,51 @@
+# Script to exercise spug.loop.lilv extension and spug.loop.plugins wrapper.
+
+import crack.io cerr, cout;
+import spug.loop.lilv LilvNode, LilvWorld, LilvWorld_new, makeAudioPortClass,
+    makeInputPortClass, makeOutputPortClass;
+
+import spug.loop.plugins PluginLibrary;
+
+if (false) {
+    world := LilvWorld_new();
+    world.loadAll();
+    plugins := world.getAllPlugins();
+    iter := plugins.begin();
+
+
+    const LilvNode
+        INPUT_PORT = makeInputPortClass(world),
+        OUTPUT_PORT = makeOutputPortClass(world),
+        AUDIO_PORT = makeAudioPortClass(world);
+
+    while (!plugins.isEnd(iter)) {
+        plugin := plugins.get(iter);
+        cerr `name: $(plugin.getName().asString())\n`;
+        cerr `uri: $(plugin.getURI().asString())\n`;
+
+        numPorts := plugin.getNumPorts();
+        for (int i = 0; i < numPorts; ++i) {
+            port := plugin.getPortByIndex(uint32(i));
+            cerr `  port: $(plugin.getPortName(port).asString())\n`;
+            if (plugin.portIsA(port, OUTPUT_PORT))
+                cerr `      output\n`;
+            if (plugin.portIsA(port, INPUT_PORT))
+                cerr `      input\n`;
+            if (plugin.portIsA(port, AUDIO_PORT))
+                cerr `      audio\n`;
+        }
+
+        iter = plugins.next(iter);
+    }
+} else {
+    lib := PluginLibrary();
+    for (p :in lib) {
+        cout `$(p.getName())\n`;
+        for (port :in p.iterPorts())
+            cout `  $(port.getName())\n`;
+    }
+}
+
+
+
+
