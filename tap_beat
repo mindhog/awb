@@ -1,0 +1,58 @@
+#!/usr/local/bin/crack
+## Module to help figure out tempos.  Just run it with no args, tap a rhythm
+## on the keyboard and see the tempo.
+
+import crack.io FStr;
+import crack.time Time, TimeDelta;
+import crack.exp.termui Event, KeyEvent, TermApp, KEY_ESC;
+
+int msecs(TimeDelta delta) {
+    return delta.nsecs / 1000000 + delta.secs * 1000;
+}
+
+## Returns the number of beats per minute for the time difference between beats.
+int bpm(TimeDelta delta) {
+    ms := msecs(delta);
+    return 60000 / ms;
+}
+
+class MyApp : TermApp {
+
+    Time startTime = Time.now(), lastTime = Time.now();
+    int beats;
+
+    void onEvent(Event evt) {
+        if (ke := KeyEvent.cast(evt, null)) {
+            if (ke.key == KEY_ESC) {
+                terminate();
+            } else {
+                t := Time.now();
+
+                int avgBPM;
+                if (!startTime)
+                    startTime = t;
+
+                if (beats) {
+                    total := msecs(t - startTime);
+                    avgBPM = 60000 / (total / beats);
+                }
+
+                message := FStr() I`bpm: $(bpm(t - lastTime)) avg: $avgBPM`;
+                write(0, 1, 3, message);
+                lastTime = t;
+
+                ++beats;
+
+                flush();
+            }
+        }
+    }
+}
+
+app := MyApp();
+app.start();
+app.showCursor(false);
+app.write(0, 0, 7, 'Hit Esc to quit.');
+app.run();
+app.showCursor(true);
+app.stop();
