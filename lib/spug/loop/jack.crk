@@ -10,7 +10,7 @@ import crack.io cout, cerr, SeekableReader, SEEK_SET;
 import crack.lang CString;
 import crack.math max, abs;
 import crack.runtime free, sleep;
-import crack.threads Thread;
+import crack.threads Mutex, MutexLock, Thread;
 import crack.time Time;
 
 @import crack.ann implements;
@@ -200,8 +200,7 @@ class WindowBuffer {
         ## The play position in samples.
         playPos,
 
-        ## The read position.  Everything in the ring buffer with an index
-        ## less than
+        ## The absolute read position in samples.
         readPos;
 
     ## The ring buffer.
@@ -240,15 +239,20 @@ class WindowBuffer {
             # We're already behind.  Start reading from the play position.
             cerr `fell behind by $leading samples\n`;
             rp = pp;
-            src.seek(int64(rp), SEEK_SET);
+            src.seek(int64(rp *  BYTES_PER_SAMPLE), SEEK_SET);
+            readPos -= leading;
         }
 
         # We're more than a buffer-length ahead, back the read position up to
         # the play position.
         if (leading > ringBuf.cap) {
-            cerr `backing up\n`;
+            cerr `backing up (rp = $rp, leading = $leading)\n`;
             rp = pp;
-            src.seek(int64(rp), SEEK_SET);
+            src.seek(int64(rp * BYTES_PER_SAMPLE), SEEK_SET);
+
+            # We can't currently set an atomic integer, so we adjust readPos
+            # to be playPos by adding the negative difference.
+            readPos += leading;
         }
 
         # Figure out how much to read.  Read the next chunk or up to the end
@@ -261,6 +265,7 @@ class WindowBuffer {
         cerr `reading $samplesToRead samples into $(rp % ringBuf.cap)\n`;
         WaveBuffer waveBuf = {samplesToRead, ringBuf.buffer + rp % ringBuf.cap};
         readPos += amtRead := waveDef.read(src, waveBuf);
+        cerr `  got $amtRead samples.  readPos is $readPos\n`;
 
         return amtRead;
     }
@@ -283,17 +288,34 @@ class WindowBuffer {
 ## This thread refreshes the WindowBuffers from their disk files.
 class RefreshThread : Thread {
     Array[WindowBuffer] buffers = {};
+    Mutex __mtx = {};
 
     void run() {
         while (true) {
+            # Copy the window buffers from the mutex-protected 'buffers' array
+            # before doing the time-consuming buffer refreshes.
+            Array[WindowBuffer] curBufs;
+            if (true) {
+                t := Time.now();
+                MutexLock lock = {__mtx};
+                curBufs = buffers.clone();
+                cerr `refresh thread got lock: $(Time.now() - t)\n`;
+            }
             bool refreshed = false;
-            for (buf :in buffers)
+            for (buf :in curBufs)
                 refreshed = refreshed || buf.refresh();
 
             # All buffers are filled.
             if (!refreshed)
                 sleep(1);
         }
+    }
+
+    void addBuffer(WindowBuffer buffer) {
+        t := Time.now();
+        MutexLock lock = {__mtx};
+        cerr `addBuffer() got lock: $(Time.now() - t)\n`;
+        buffers.append(buffer);
     }
 }
 
@@ -370,6 +392,7 @@ void clearOutputBuffers(JackWrapper wrapper) {
 class WaveManager : JackWrapper {
 
     Array[WindowBufferAdapter] wbas = {};
+    RefreshThread refreshThread;
 
     oper init() {
         # Add a processor to clear the output buffers.
@@ -426,10 +449,14 @@ class WaveManager : JackWrapper {
         # Fill the buffer.
         while (buf.refresh()) ;
 
-        # Start a background thread to keep the buffer filled.
-        thread := RefreshThread();
-        thread.buffers.append(buf);
-        thread.start();
+        if (!refreshThread) {
+            # Start a background thread to keep the buffer filled.
+            refreshThread = RefreshThread();
+            refreshThread.buffers.append(buf);
+            refreshThread.start();
+        } else {
+            refreshThread.addBuffer(buf);
+        }
 
         adapter := WindowBufferAdapter(buf);
         frameCount = 1;
