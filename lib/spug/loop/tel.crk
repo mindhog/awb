@@ -109,6 +109,14 @@ class PanControl @impl EventProcessor {
     return 0;
 }
 
+@function int seek(int pos) {
+    if (!eventManager.waveMan)
+        return -1;
+
+    eventManager.waveMan.seek(pos);
+    return 0;
+}
+
 class InterpWrapper {
 
     EvalContext __rootCtx = createRootContext();
@@ -127,6 +135,7 @@ class InterpWrapper {
         __rootCtx.define('volumeControl', volumeControl());
         __rootCtx.define('panControl', panControl());
         __rootCtx.define('addEventProcessor', addEventProcessor());
+        __rootCtx.define('seek', seek());
     }
 
     void checkForInput() {
