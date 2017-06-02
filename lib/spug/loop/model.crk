@@ -8,17 +8,19 @@ import crack.cont.treemap TreeMap;
 import crack.fs cwd, makePath;
 import crack.functor Functor1;
 import crack.io cout, FStr, StringReader, StringWriter;
-import crack.lang CString, Exception;
+import crack.lang cmp, makeHashVal, CString, Exception;
 import crack.midi.event ChannelEvent, ControlChange, EndTrack, Event,
     MidiReader, MidiWriter, ProgramChange, SeekableEventSource, Track;
 import crack.protobuf Field, ProtoReader, ProtoWriter;
 import spug.loop.instrument Instrument, Orchestra;
 import spug.loop.jack WaveManager, WindowBufferAdapter;
 import crack.midi.alsa Port, Sequencer;
+import crack.protobuf Message;
 import crack.serial SerialReader, SerialWriter;
 import crack.time Time;
 
-@import crack.ann assert, implements, interface;
+@import crack.ann assert, impl, implements, interface;
+@import crack.protobuf.ann protobuf;
 
 ## Defines a midi bank.  This can be applied to an Orchestra object to change
 ## the instrument configuration for a given channel.
@@ -40,6 +42,24 @@ class WavePlayerBank : Object @implements Bank {
     }
 }
 
+@protobuf {
+
+    ## A "mark" is a stored position in the section, measured in frames since
+    ## the beginning of the section at 44.1k.
+    message Mark {
+
+        ## Position in frames.
+        optional int32 pos = 1;
+
+        ## Mark name.
+        optional string name = 2;
+    }
+
+    message SectionOptionalData {
+        repeated Mark marks = 1;
+    }
+}
+
 ## This is a "section" of the piece.  A section consists of a group of tracks
 ## that are played in parallel.  A section consists of one or more "measures"
 ## which should normally be the size of the shortest track.  Every track
@@ -53,8 +73,8 @@ class Section {
     ## The time span of the section in pulses.
     uint span;
 
-    ## Optional data (currently ignored but preserved).
-    String optionalData;
+    ## Optional data.
+    SectionOptionalData optionalData;
 
     ## The set of all tracks in the section.
     Array[Track] tracks;
@@ -146,7 +166,7 @@ class Section {
 
         # Write the section's optional data.
         if (optionalData)
-            out.write(optionalData);
+            optionalData.serialize(ProtoWriter(out));
         else
             out.write(0);
     }
@@ -168,7 +188,8 @@ class Section {
         }
 
         # Read the optional data.
-        optionalData = src.readString();
+        optionalData = SectionOptionalData();
+        optionalData.deserialize(ProtoReader(src));
     }
 }
 
