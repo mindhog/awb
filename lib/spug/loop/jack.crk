@@ -271,7 +271,11 @@ class WindowBuffer {
     }
 
     void seek(uint frame) {
-        playPos -= playPos + frame * numTracks;
+        playPos -= playPos - frame * numTracks;
+    }
+
+    uint tell() {
+        return playPos / numTracks;
     }
 
     ## Returns the frame count.
@@ -319,6 +323,8 @@ class RefreshThread : Thread {
     }
 }
 
+## Allows a WindowBuffer (which maintains a ring of buffers and reads them
+## from a wave file) to be used as a Jack processor.
 class WindowBufferAdapter : Object @implements Functor1[void, JackWrapper] {
 
     WindowBuffer buf;
@@ -379,6 +385,12 @@ class WindowBufferAdapter : Object @implements Functor1[void, JackWrapper] {
         for (int i; i < buf.numTracks; ++i)
             this.pan[i] = pan;
     }
+
+    ## Returns current "play position" (the number of frames since the wave
+    ## file origin).  This is always aligned to the beginning of a jack
+    ## buffer, but it should otherwise be fairly accurate WRT what is
+    ## currently being played.
+    @final intz getPos() { return buf.tell() }
 }
 
 ## Clears the output buffers in the Jack wrapper.
@@ -473,5 +485,9 @@ class WaveManager : JackWrapper {
     void seek(uintz frame) {
         for (adapter :in wbas)
             adapter.seek(frame);
+    }
+
+    uintz tell() {
+        return wbas ?  wbas[0].getPos() : 0;
     }
 }

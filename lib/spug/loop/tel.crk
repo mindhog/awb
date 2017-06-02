@@ -117,6 +117,10 @@ class PanControl @impl EventProcessor {
     return 0;
 }
 
+@function int tell() {
+    return eventManager.waveMan.tell();
+}
+
 class InterpWrapper {
 
     EvalContext __rootCtx = createRootContext();
@@ -136,6 +140,7 @@ class InterpWrapper {
         __rootCtx.define('panControl', panControl());
         __rootCtx.define('addEventProcessor', addEventProcessor());
         __rootCtx.define('seek', seek());
+        __rootCtx.define('tell', tell());
     }
 
     void checkForInput() {
