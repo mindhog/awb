@@ -7,14 +7,15 @@ import crack.fs makePath;
 import crack.functor Functor1;
 import crack.lang CString, Exception;
 import crack.net Poller, POLLIN, POLLERR, POLLOUT;
-import crack.io cin, cout, FStr;
+import crack.io cin, cout, cerr, FStr;
 import crack.midi.event ControlChange, Event, NoteOn, NoteOff, Track;
 import crack.time TimeDelta;
 import spug.loop.model EventManager;
 import spug.loop.instrument MidiInstrument;
 import spug.loop.jack jackCallback, WaveManager, WindowBufferAdapter;
 
-import crash createRootContext, eval, Builtin, EvalContext;
+import crash createRootContext, eval, ActiveFunc, Builtin, EvalContext;
+import stdlib stdlib;
 import types IntObj;
 
 @import crack.ann impl;
@@ -69,6 +70,10 @@ EventManager eventManager;
     return 0;
 }
 
+@function int Ev_getValue(Event event) {
+    return ControlChange.cast(event).value;
+}
+
 alias EventProcessor = Functor1[void, Event];
 
 class VolumeControl @impl EventProcessor {
@@ -86,6 +91,13 @@ class VolumeControl @impl EventProcessor {
     return VolumeControl(adapter);
 }
 
+## Set the volume from a value from 0 to 127.
+@function int setVolume(WindowBufferAdapter adapter, int volume) {
+    adapter.volume = float(volume) / 128.0;
+    cout `volume set to $(adapter.volume)\n`;
+    return 0;
+}
+
 class PanControl @impl EventProcessor {
     WindowBufferAdapter adapter;
 
@@ -100,6 +112,45 @@ class PanControl @impl EventProcessor {
 
 @function EventProcessor panControl(WindowBufferAdapter adapter) {
     return PanControl(adapter);
+}
+
+## Set the channel pan from -32k to 32k.
+@function int setPan(WindowBufferAdapter adapter, int pan) {
+    adapter.setPan(pan);
+    return 0;
+}
+
+## Event processor that can run a crash script.
+class CrashScriptEventProcessor @impl EventProcessor {
+    EvalContext __context;
+    ActiveFunc __func;
+
+    oper init(EvalContext context, ActiveFunc func) :
+        __context = context,
+        __func = func {
+    }
+
+    void oper call(Event event) {
+        try {
+            __func.invoke(__context, Array[Object]![event]);
+        } catch (Exception ex) {
+            cerr `Exception caught by event dispatcher:\n$ex\n`;
+        }
+    }
+}
+
+## CrashEventProcessor <crash-func>
+##
+## Creates an event processor from a crash function.
+class CrashEventProcessorCmd : Builtin {
+    Object invoke(EvalContext context, Array[Object] args) {
+        if (args.count() != 1)
+            throw Exception('Accepts only one argument');
+        func := ActiveFunc.cast(args[0], null);
+        if (!func)
+            throw Exception('Argument must be a function');
+        return CrashScriptEventProcessor(EvalContext(context), func);
+    }
 }
 
 @function int addEventProcessor(int eventSelector, EventProcessor processor) {
@@ -129,6 +180,8 @@ class InterpWrapper {
     oper init() {
         __poller.add(cin, POLLIN | POLLERR);
 
+        __rootCtx.define("stdlib", stdlib());
+
         __rootCtx.define('play', play());
         __rootCtx.define('get_tempo', get_tempo());
         __rootCtx.define('set_tempo', set_tempo());
@@ -136,9 +189,13 @@ class InterpWrapper {
         __rootCtx.define('metro', metro());
         __rootCtx.define('channel_connect', channelConnect());
         __rootCtx.define('connect', connect());
+        __rootCtx.define('Ev_getValue', Ev_getValue());
         __rootCtx.define('volumeControl', volumeControl());
+        __rootCtx.define('setVolume', setVolume());
         __rootCtx.define('panControl', panControl());
+        __rootCtx.define('setPan', setPan());
         __rootCtx.define('addEventProcessor', addEventProcessor());
+        __rootCtx.define('CrashEventProcessor', CrashEventProcessorCmd());
         __rootCtx.define('seek', seek());
         __rootCtx.define('tell', tell());
     }
