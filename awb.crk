@@ -1063,7 +1063,12 @@ for (arg :in nonFlagArgs) {
         em.load(arg);
     } else if (arg.endsWith('.crash')) {
         cout `running script $arg\n`;
-        app.interp.evalScript(arg);
+        try {
+            app.interp.evalScript(arg);
+        } catch (Exception ex) {
+            cerr `Got exception:\n$ex\n`;
+            exit(1);
+        }
     } else {
         cout `ERROR: file with unknown extension: $arg\n`;
     }
