@@ -201,7 +201,10 @@ class WindowBuffer {
         playPos,
 
         ## The absolute read position in samples.
-        readPos;
+        readPos,
+
+        ## If nonzero, we're past the end of the data.
+        pastEnd;
 
     ## The ring buffer.
     ManagedWaveBuffer ringBuf = {1024 * 1024};
@@ -225,6 +228,14 @@ class WindowBuffer {
         numTracks = waveDef.channels {
     }
 
+    @final void __noMoreData() {
+        cerr `no more data, clearing buffer\n`;
+        # Clear the ring buffer.
+        for (int i = 0; i < ringBuf.cap; ++i)
+            ringBuf.buffer[i] = 0;
+        if (!pastEnd) pastEnd += 1;
+    }
+
     ## Get the next chunk of data from the file into the ring buffer.
     ## Returns true if a refresh was done, false if no refresh was needed.
     bool refresh() {
@@ -235,25 +246,6 @@ class WindowBuffer {
             return false;
         rp := uintz(readPos);
         pp := uintz(playPos);
-        if (leading < 0) {
-            # We're already behind.  Start reading from the play position.
-            cerr `fell behind by $leading samples\n`;
-            rp = pp;
-            src.seek(int64(rp *  BYTES_PER_SAMPLE), SEEK_SET);
-            readPos -= leading;
-        }
-
-        # We're more than a buffer-length ahead, back the read position up to
-        # the play position.
-        if (leading > ringBuf.cap) {
-            cerr `backing up (rp = $rp, leading = $leading)\n`;
-            rp = pp;
-            src.seek(int64(rp * BYTES_PER_SAMPLE), SEEK_SET);
-
-            # We can't currently set an atomic integer, so we adjust readPos
-            # to be playPos by adding the negative difference.
-            readPos += leading;
-        }
 
         # Figure out how much to read.  Read the next chunk or up to the end
         # of the ring buffer.
@@ -262,16 +254,46 @@ class WindowBuffer {
         if (samplesToRead > samplesRemaining)
             samplesToRead = samplesRemaining;
 
+        if (leading < 0) {
+            # We're already behind.  Start reading from the play position.
+            cerr `fell behind by $leading samples\n`;
+            rp = pp;
+            if (src.seek(int64(rp * BYTES_PER_SAMPLE + dataStart), SEEK_SET)) {
+                __noMoreData();
+                return false;
+            }
+            readPos -= leading;
+        }
+
+        # We're more than a buffer-length ahead, back the read position up to
+        # the play position.
+        if (leading > ringBuf.cap) {
+            cerr `backing up (rp = $rp, leading = $leading)\n`;
+            rp = pp;
+            if (src.seek(int64(rp * BYTES_PER_SAMPLE + dataStart), SEEK_SET)) {
+                __noMoreData();
+                return false;
+            }
+
+            # We can't currently set an atomic integer, so we adjust readPos
+            # to be playPos by adding the negative difference.
+            readPos += leading;
+        }
+
         cerr `reading $samplesToRead samples into $(rp % ringBuf.cap)\n`;
         WaveBuffer waveBuf = {samplesToRead, ringBuf.buffer + rp % ringBuf.cap};
         readPos += amtRead := waveDef.read(src, waveBuf);
         cerr `  got $amtRead samples.  readPos is $readPos\n`;
+        if (!amtRead)
+            __noMoreData();
+        else
+            if (pastEnd) pastEnd -= 1;
 
         return amtRead;
     }
 
     void seek(uint frame) {
-        playPos -= playPos - frame * numTracks;
+        playPos -= playPos - intz(frame * numTracks);
     }
 
     uint tell() {
@@ -303,8 +325,10 @@ class RefreshThread : Thread {
                 t := Time.now();
                 MutexLock lock = {__mtx};
                 curBufs = buffers.clone();
-                cerr `refresh thread got lock: $(Time.now() - t)\n`;
+#                cerr `refresh thread got lock: $(Time.now() - t)\n`;
             }
+            if (curBufs)
+                cerr `play pos: $(curBufs[0].playPos)\n`;
             bool refreshed = false;
             for (buf :in curBufs)
                 refreshed = refreshed || buf.refresh();
