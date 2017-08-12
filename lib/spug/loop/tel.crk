@@ -4,21 +4,23 @@
 
 import crack.cont.array Array;
 import crack.fs makePath;
-import crack.functor Functor1;
+import crack.functor Functor0, Functor1;
 import crack.lang CString, Exception;
 import crack.net Poller, POLLIN, POLLERR, POLLOUT;
 import crack.io cin, cout, cerr, FStr;
 import crack.midi.event ControlChange, Event, NoteOn, NoteOff, Track;
 import crack.time TimeDelta;
+import spug.loop.evtrec makeEventRecorderModule;
 import spug.loop.model EventManager;
 import spug.loop.instrument MidiInstrument;
 import spug.loop.jack jackCallback, WaveManager, WindowBufferAdapter;
 
-import crash createRootContext, eval, ActiveFunc, Builtin, EvalContext;
+import crash createRootContext, eval, parseBlockArg, ActiveFunc, Block, Builtin,
+    EvalContext, Obj;
 import stdlib stdlib;
 import types IntObj;
 
-@import crack.ann impl;
+@import crack.ann assert, impl, interface;
 @import ann function;
 
 EventManager eventManager;
@@ -116,6 +118,8 @@ class PanControl @impl EventProcessor {
 
 ## Set the channel pan from -32k to 32k.
 @function int setPan(WindowBufferAdapter adapter, int pan) {
+    # TODO: This appears to be completely wrong, setPan() accepts a float from
+    # -1 to +1.
     adapter.setPan(pan);
     return 0;
 }
@@ -172,12 +176,85 @@ class CrashEventProcessorCmd : Builtin {
     return eventManager.waveMan.tell();
 }
 
+## Skip forward one second.
+@function int bak() {
+    if (!eventManager.waveMan)
+        return -1;
+
+    pos := eventManager.waveMan.tell();
+    if (pos < 44100)
+        return -2;
+
+    eventManager.waveMan.seek(pos - 44100);
+    return 0;
+}
+
+## Skip back one second.
+@function int fwd() {
+    if (!eventManager.waveMan)
+        return -1;
+
+    pos := eventManager.waveMan.tell();
+    eventManager.waveMan.seek(pos + 44100);
+    return 0;
+}
+
+@interface AppMethods {
+    @abstract void setBinding(int key, Functor0[void] callback);
+}
+
+alias Callback = Functor0[void];
+
+@function(AppMethods) int bind(int key, Callback callback) {
+    self.setBinding(key, callback);
+    return 0;
+}
+
+Obj makeAppWrapper(AppMethods app) {
+    obj := Obj();
+    obj.define('bind', bind(app));
+    return obj;
+}
+
+class CrashCallback @impl Functor0[void] {
+    EvalContext context;
+    Block block;
+
+    oper init(EvalContext context, Block block) :
+        context = context,
+        block = block {
+    }
+
+    void oper call() {
+        context.pushFuncFrame();
+        try {
+            block.evaluate(context);
+        } catch (Exception ex) {
+            context.popFuncFrame();
+            throw ex;
+        }
+    }
+}
+
+class CallbackCmd : Builtin {
+    Object invoke(EvalContext context, Array[Object] args) {
+        if (args.count() != 1)
+            throw Exception('Accepts only one arguments');
+        return CrashCallback(context, parseBlockArg(args, 0));
+    }
+}
+
+@function Obj getEventRecModule() {
+    @assert(eventManager);
+    return makeEventRecorderModule(eventManager);
+}
+
 class InterpWrapper {
 
     EvalContext __rootCtx = createRootContext();
     Poller __poller = {};
 
-    oper init() {
+    oper init(AppMethods app) {
         __poller.add(cin, POLLIN | POLLERR);
 
         __rootCtx.define("stdlib", stdlib());
@@ -198,6 +275,11 @@ class InterpWrapper {
         __rootCtx.define('CrashEventProcessor', CrashEventProcessorCmd());
         __rootCtx.define('seek', seek());
         __rootCtx.define('tell', tell());
+        __rootCtx.define('fwd', fwd());
+        __rootCtx.define('bak', bak());
+        __rootCtx.define('app', makeAppWrapper(app));
+        __rootCtx.define('callback', CallbackCmd());
+        __rootCtx.define('evtrec', getEventRecModule());
     }
 
     void checkForInput() {

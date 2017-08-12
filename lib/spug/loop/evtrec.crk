@@ -1,0 +1,148 @@
+## The event recorder module.
+
+import crack.cont.array Array;
+import crack.fs makePath, Path;
+import crack.functor Functor1;
+import crack.io Formatter, StandardFormatter;
+import crack.midi.event ControlChange, Event;
+import crash Builtin, EvalContext, Obj;
+import spug.loop.model EventManager;
+import spug.loop.jack WaveManager, WindowBufferAdapter;
+import types IntObj;
+
+@import ann function;
+@import crack.ann impl;
+
+alias EventProcessor = Functor1[void, Event];
+
+class Panner @impl EventProcessor {
+    WindowBufferAdapter adapter;
+    WaveManager waveMan;
+    Formatter out;
+    int track;
+    oper init(WindowBufferAdapter adapter, WaveManager waveMan,
+              Formatter out,
+              int track
+              ) :
+        adapter = adapter,
+        waveMan = waveMan,
+        out = out,
+        track = track {
+    }
+    void oper call(Event event) {
+        adapter.setPan(pan := ControlChange.cast(event).value / 64.0 - 1.0);
+        out I`forward $(waveMan.tell())
+              pan $track $(pan)
+              `;
+    }
+}
+
+class VolumeControl @impl EventProcessor {
+    WindowBufferAdapter adapter;
+    WaveManager waveMan;
+    Formatter out;
+    int track;
+    oper init(WindowBufferAdapter adapter, WaveManager waveMan,
+              Formatter out,
+              int track
+              ) :
+        adapter = adapter,
+        waveMan = waveMan,
+        out = out,
+        track = track {
+    }
+    void oper call(Event event) {
+        adapter.volume = float(ControlChange.cast(event).value) / 128.0;
+        # TODO: only want to see the last of these for a given time position
+        out I`forward $(waveMan.tell())
+              volume $track $(adapter.volume)
+              `;
+    }
+}
+
+## A representation of a project, which is a base directory containing a bunch
+## of synchronized wave files and into which an output logfile is written,
+## describing all of the mixer events for the project.
+class Project {
+    EventManager eventManager;
+    Path dir;
+
+    ## The output logfile.
+    Formatter out;
+
+    ## The next track index.
+    int __trackIndex;
+
+    oper init(EventManager eventManager, String dir) :
+        eventManager = eventManager,
+        dir = makePath(dir) {
+
+        # Rather than blindly overwriting this, we should probably load it in
+        # a crash context that nerfs most of the commands except for the
+        # "load" commands.
+        out = StandardFormatter((this.dir/'logfile.crash').writer());
+    }
+
+    ## Adds a track given the name of a wave file.
+    void addTrack(String filename, int volumeController, int panController) {
+        if (!eventManager.waveMan)
+            eventManager.waveMan = WaveManager.create();
+        adapter := eventManager.mapWaveFile((dir/filename).getFullName());
+
+        eventManager.eventProcessors[panController] =
+            Panner(adapter, eventManager.waveMan, out, __trackIndex);
+        eventManager.eventProcessors[volumeController] =
+            VolumeControl(adapter, eventManager.waveMan,  out, __trackIndex);
+
+        ++__trackIndex;
+
+        # Add the new track to the log.
+        out `load $(dir/filename)\n`;
+    }
+
+    ## Write 'text' to the logfile.  Note that this does not add a newline,
+    ## you'll want to provide that.
+    void writeLog(String text) {
+        out.write(text);
+    }
+}
+
+@function(Project) int Project_addTrack(String filename, int panController,
+                                        int volumeController
+                                        ) {
+    self.addTrack(filename, panController, volumeController);
+    return 0;
+}
+
+@function(Project) int Project_writeLog(String text) {
+    self.writeLog(text);
+    return 0;
+}
+
+class EventRecorderModule {
+    EventManager eventManager;
+    oper init(EventManager eventManager) : eventManager = eventManager {}
+}
+
+## Create a new EventRecorderModule for crash.  This lets us inject the event
+## manager.
+Obj makeEventRecorderModule(EventManager eventManager) {
+    obj := Obj();
+    erm := EventRecorderModule(eventManager);
+
+    ## Create a new project object in the given directory.
+    @function(EventRecorderModule) Obj makeProject(String dir) {
+        obj := Obj();
+        proj := Project(self.eventManager, dir);
+        obj.define('addTrack', Project_addTrack(proj));
+        obj.define('writeLog', Project_writeLog(proj));
+        import crack.io cerr;
+        cerr `makeProject() -> $(obj.vars)\n`;
+        return obj;
+    }
+
+    import crack.io cerr;
+    cerr `adding a project object\n`;
+    obj.define('Project', makeProject(erm));
+    return obj;
+}

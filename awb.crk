@@ -3,7 +3,9 @@
 #    SDL_PollEvent, SDL_SetVideoMode, SDL_Quit, SDL_INIT_EVERYTHING,
 #    SDL_RESIZABLE;
 import crack.ascii parseInt;
+import crack.cont.hashmap HashMap;
 import crack.fs cwd;
+import crack.functor Functor0;
 import crack.lang AssertionError, CString, Exception;
 import crack.cmdline CmdOptions, Option, CMD_STR;
 import crack.sys argv, exit;
@@ -26,7 +28,7 @@ import crack.strutil StringArray;
 #import crack.ccl CCLInterpreter;
 
 import spug.loop.jack WaveManager;
-import spug.loop.tel telEventManager = eventManager, InterpWrapper;
+import spug.loop.tel telEventManager = eventManager, AppMethods, InterpWrapper;
 import spug.loop.model programNames, ChannelMap, EventManager, Project,
     Section, Controller, IDLE, LATCHED_RECORD, PLAY, RECORD;
 import spug.loop.instrument FluidSynthInstrument, Instrument, Orchestra;
@@ -681,11 +683,11 @@ class TextWidget : Widget {
 */
 
 ## The main application class.
-class App : Object @implements KeyboardHandler, MouseButtonHandler,
+class App : Object @implements AppMethods, KeyboardHandler, MouseButtonHandler,
             ResizeHandler, Controller {
     SDLApp app = {640, 480};
     EventManager eventManager;
-    InterpWrapper interp = {};
+    InterpWrapper interp;
 
     # the cursor that points to the next event in the merged track.  This
     # should get reset whenever we reset the start time
@@ -704,6 +706,9 @@ class App : Object @implements KeyboardHandler, MouseButtonHandler,
     TextWidget statusBar;
     TrackPanel trackPanel;
     Array[Widget] panels = {};
+
+    ## Key bindings.   Keys are specified as SDL constants
+    HashMap[int, Functor0[void]] bindings = {};
 
     Piano piano;
 
@@ -793,6 +798,12 @@ class App : Object @implements KeyboardHandler, MouseButtonHandler,
                 app.flip();
                 return true;
             }
+        }
+
+        # See if there's a binding.
+        if (handler := bindings.get(sym)) {
+            handler();
+            return true;
         }
 
         if (sym == b'q')
@@ -911,7 +922,12 @@ class App : Object @implements KeyboardHandler, MouseButtonHandler,
         return true;
     }
 
-    oper init(ChannelMap channelMap) {
+    # AppMethods interface.
+    void setBinding(int key, Functor0[void] callback) {
+        bindings[key] = callback;
+    }
+
+    oper init(ChannelMap channelMap) : interp(this) {
 
         app.resizable = true;
         app.initialize();
@@ -1054,7 +1070,7 @@ telEventManager = em;
 app.setEventManager(em);
 
 String projectFile;
-for (arg :in nonFlagArgs) {
+for (arg :in nonFlagArgs.subarray(1)) {
     if (arg.endsWith('.awb')) {
         cout `loading awb project $arg\n`;
         if (projectFile)
@@ -1069,6 +1085,8 @@ for (arg :in nonFlagArgs) {
             cerr `Got exception:\n$ex\n`;
             exit(1);
         }
+    } else if (arg.endsWith('.wav')) {
+        em.mapWaveFile(arg);
     } else {
         cout `ERROR: file with unknown extension: $arg\n`;
     }
