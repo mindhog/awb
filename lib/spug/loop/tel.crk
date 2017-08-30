@@ -2,11 +2,13 @@
 ## used to provide the interface to the "TEL" language, an early predecessor
 ## to Crash.
 
+import crack.strutil StringArray;
 import crack.cont.array Array;
 import crack.fs makePath;
 import crack.functor Functor0, Functor1;
 import crack.lang CString, Exception;
 import crack.net Poller, POLLIN, POLLERR, POLLOUT;
+import crack.process Process;
 import crack.io cin, cout, cerr, FStr;
 import crack.midi.event ControlChange, Event, NoteOn, NoteOff, Track;
 import crack.time TimeDelta;
@@ -18,7 +20,7 @@ import spug.loop.jack jackCallback, WaveManager, WindowBufferAdapter;
 import crash createRootContext, eval, parseBlockArg, ActiveFunc, Block, Builtin,
     EvalContext, Obj;
 import stdlib stdlib;
-import types IntObj;
+import types FloatObj, IntObj;
 
 @import crack.ann assert, impl, interface;
 @import ann function;
@@ -121,6 +123,11 @@ class PanControl @impl EventProcessor {
     # TODO: This appears to be completely wrong, setPan() accepts a float from
     # -1 to +1.
     adapter.setPan(pan);
+    return 0;
+}
+
+@function int setGain(WindowBufferAdapter adapter, float gain) {
+    adapter.gain = gain;
     return 0;
 }
 
@@ -249,6 +256,20 @@ class CallbackCmd : Builtin {
     return makeEventRecorderModule(eventManager);
 }
 
+## Command to run a command on the shell.
+class ShellCmd : Builtin {
+    Object invoke(EvalContext context, Array[Object] args) {
+        StringArray strArgs = {};
+        cerr `going through args $args\n`;
+        for (arg :in args)
+            strArgs.append(FStr() `$arg`);
+        cerr `calling process:\n`;
+        rc := Process(strArgs, 0).run();
+        cerr `returning int\n`;
+        return IntObj(rc);
+    }
+}
+
 class InterpWrapper {
 
     EvalContext __rootCtx = createRootContext();
@@ -271,9 +292,11 @@ class InterpWrapper {
         __rootCtx.define('setVolume', setVolume());
         __rootCtx.define('panControl', panControl());
         __rootCtx.define('setPan', setPan());
+        __rootCtx.define('setGain', setGain());
         __rootCtx.define('addEventProcessor', addEventProcessor());
         __rootCtx.define('CrashEventProcessor', CrashEventProcessorCmd());
         __rootCtx.define('seek', seek());
+        __rootCtx.define('shell', ShellCmd());
         __rootCtx.define('tell', tell());
         __rootCtx.define('fwd', fwd());
         __rootCtx.define('bak', bak());
