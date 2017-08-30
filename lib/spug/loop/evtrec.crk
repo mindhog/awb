@@ -8,7 +8,7 @@ import crack.midi.event ControlChange, Event;
 import crash Builtin, EvalContext, Obj;
 import spug.loop.model EventManager;
 import spug.loop.jack WaveManager, WindowBufferAdapter;
-import types IntObj;
+import types FloatObj, IntObj;
 
 @import ann function;
 @import crack.ann impl;
@@ -73,6 +73,8 @@ class Project {
     ## The next track index.
     int __trackIndex;
 
+    Array[WindowBufferAdapter] __channels = {};
+
     oper init(EventManager eventManager, String dir) :
         eventManager = eventManager,
         dir = makePath(dir) {
@@ -95,6 +97,7 @@ class Project {
             VolumeControl(adapter, eventManager.waveMan,  out, __trackIndex);
 
         ++__trackIndex;
+        __channels.append(adapter);
 
         # Add the new track to the log.
         out `load $(dir/filename)\n`;
@@ -105,12 +108,49 @@ class Project {
     void writeLog(String text) {
         out.write(text);
     }
+
+    ## Set the gain for the channel at the index.
+    void setGain(int index, float gain) {
+        __channels[index].gain = gain;
+        out `gain $index $gain\n`;
+    }
+
+    ## Set the volume for the channel at the index.
+    void setVol(int index, float volume) {
+        __channels[index].volume = volume;
+        out `volume $index $volume\n`;
+    }
+
+    ## Set the pan for the channel at the index.
+    void setPan(int index, float pan) {
+        __channels[index].setPan(pan);
+        out `pan $index $pan\n`;
+    }
 }
 
 @function(Project) int Project_addTrack(String filename, int panController,
                                         int volumeController
                                         ) {
     self.addTrack(filename, panController, volumeController);
+    return 0;
+}
+
+@function(Project) int Project_setGain(int index, float gain) {
+    self.setGain(index, gain);
+    return 0;
+}
+
+@function(Project) int Project_setPan(int index, float pan) {
+    self.setPan(index, pan);
+    return 0;
+}
+
+@function(Project) int Project_setVol(int index, float volume) {
+    if (volume > 1)
+        volume = 1;
+    else if (volume < -1)
+        volume = -1;
+    self.setVol(index, volume);
     return 0;
 }
 
@@ -135,6 +175,8 @@ Obj makeEventRecorderModule(EventManager eventManager) {
         obj := Obj();
         proj := Project(self.eventManager, dir);
         obj.define('addTrack', Project_addTrack(proj));
+        obj.define('setGain', Project_setGain(proj));
+        obj.define('setPan', Project_setPan(proj));
         obj.define('writeLog', Project_writeLog(proj));
         import crack.io cerr;
         cerr `makeProject() -> $(obj.vars)\n`;
