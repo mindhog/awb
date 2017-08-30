@@ -258,7 +258,9 @@ class WindowBuffer {
             # We're already behind.  Start reading from the play position.
             cerr `fell behind by $leading samples\n`;
             rp = pp;
-            if (src.seek(int64(rp * BYTES_PER_SAMPLE + dataStart), SEEK_SET)) {
+            if (src.seek(int64(rp * BYTES_PER_SAMPLE + dataStart), SEEK_SET) ==
+                 -1
+                ) {
                 __noMoreData();
                 return false;
             }
@@ -270,7 +272,9 @@ class WindowBuffer {
         if (leading > ringBuf.cap) {
             cerr `backing up (rp = $rp, leading = $leading)\n`;
             rp = pp;
-            if (src.seek(int64(rp * BYTES_PER_SAMPLE + dataStart), SEEK_SET)) {
+            if (src.seek(int64(rp * BYTES_PER_SAMPLE + dataStart), SEEK_SET) ==
+                 -1
+                ) {
                 __noMoreData();
                 return false;
             }
@@ -352,7 +356,7 @@ class RefreshThread : Thread {
 class WindowBufferAdapter : Object @implements Functor1[void, JackWrapper] {
 
     WindowBuffer buf;
-    float volume;
+    float volume, gain;
 
     ## Array of pan values, one per track.  Pan values range from -1 (totally
     ## left) to +1 (totally right).
@@ -361,7 +365,8 @@ class WindowBufferAdapter : Object @implements Functor1[void, JackWrapper] {
     oper init(WindowBuffer buf) :
         buf = buf,
         pan = array[float](buf.numTracks),
-        volume = 1.0 {
+        volume = 1.0,
+        gain = 1.0 {
 
         for (int i; i < buf.numTracks; ++i)
             pan[i] = 0.0;
@@ -380,10 +385,12 @@ class WindowBufferAdapter : Object @implements Functor1[void, JackWrapper] {
             absPos := buf.playPos + i * buf.numTracks;
             for (int j; j < buf.numTracks; ++j) {
                 sample := buf.ringBuf[(absPos + j) % buf.ringBuf.cap] / 32768.0;
+                if (pan[j] > 1.0 || pan[j] < -1.0)
+                    cerr `\033[31mPan out of range: $(pan[j])\033[0m\n`;
                 wrapper.lbuf[i] = wrapper.lbuf[i] +
-                                  sample * volume * ((1 - pan[j]) / 2);
+                                  sample * volume * gain * ((1 - pan[j]) / 2);
                 wrapper.rbuf[i] = wrapper.rbuf[i] +
-                                  sample * volume * ((1 + pan[j]) / 2);
+                                  sample * volume * gain * ((1 + pan[j]) / 2);
             }
         }
 
