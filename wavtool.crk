@@ -1,0 +1,323 @@
+## Tool to mix and rewrite a set of wave files based on a crash script.
+
+import crack.audio.wavfile readWave, ManagedWaveBuffer, WaveBuffer, WaveDef;
+import crack.cont.array Array;
+import crack.fs makePath;
+import crack.io cerr, cout, SeekableReader, SeekableWriter, SEEK_END, SEEK_SET;
+import crack.sys argv;
+import crash createRootContext, eval, Builtin, EvalContext;
+import spug.loop.jack BYTES_PER_SAMPLE;
+import types FloatObj, IntObj;
+
+@import ann function;
+@import crack.ann assert;
+
+class TrackInfo {
+    ## This can really only be a mono wave at this time.
+    WaveDef wave;
+
+    ## Source stream.
+    SeekableReader src;
+
+    ## Start of wave data.
+    uint64 dataStart;
+
+    ## -1 for far left, +1 for far right.
+    float pan;
+
+    ## 0 to 1.
+    float volume = 1;
+
+    ## Volume multiplier, greater than 0.
+    float gain = 1;
+
+    ## Start position of the data in the file.
+    int64 __dataStart;
+
+    oper init(String filename) {
+        wave = readWave(src = makePath(filename).reader());
+        __dataStart = src.tell();
+        cerr `channels: $(wave.channels)\n`;
+
+        # Verify that the frame count appears accurate.
+        src.seek(0, SEEK_END);
+        expectedCount :=
+            (src.tell() - __dataStart) / (BYTES_PER_SAMPLE * wave.channels);
+        if (expectedCount != wave.frameCount) {
+            cerr I`bad frame count, expected $expectedCount, got \
+                   $(wave.frameCount)\n`;
+            wave.frameCount = expectedCount;
+        }
+
+        src.seek(int64(__dataStart), SEEK_SET);
+    }
+
+    WaveBuffer readBuffer(uint frames) {
+        # TODO: support stereo waves.
+        buf := ManagedWaveBuffer(frames);
+        wave.read(src, buf);
+        return buf;
+    }
+
+    ## Seek to a frame position.
+    ## TODO: decide semantics when seeking past the end of a wave.
+    void seek(uint pos) {
+        src.seek(int64(__dataStart + (pos * BYTES_PER_SAMPLE * wave.channels)),
+                 SEEK_SET
+                 );
+    }
+}
+
+
+## corresponds to the position in a set of files.
+class RemixHead {
+
+    ## Current frame position across all wave files.
+    uint pos;
+
+    ## If non-null, this is the file that we're writing to.  It must have two
+    ## channels.
+    SeekableWriter outFile;
+    WaveDef outDef;
+
+    ## Output frame count (should be zero if outFile/outDef are null).
+    uint outFrameCount;
+
+    Array[TrackInfo] trackInfo = {};
+
+    ## Minimum and maximum amplitude written so far.
+    float maxAmp, minAmp;
+
+    ## If true, collect statistics.  If this is false and we're not writing an
+    ## output file, forwardTo() just skips the data and does a seek.
+    bool collectStats;
+
+    ## Load a wave file into the next channel.  Return the track index.
+    int load(String filename) {
+        trackInfo.append(TrackInfo(filename));
+        return trackInfo.count() - 1;
+    }
+
+    ## Open a new output file.  Any existing file will be closed.
+    void openOutput(String filename) {
+        if (outDef)
+            outDef.finish(outFile);
+        outFile = makePath(filename).writer();
+        outDef = WaveDef(2, trackInfo[0].wave.rate, 16);
+        outDef.writeHeader(outFile);
+        outFrameCount = 0;
+    }
+
+    @final void __mergeMonoTrack(Array[float] accum, TrackInfo track,
+                                 int frames
+                                 ) {
+        buf := track.readBuffer(frames);
+
+        for (int i = 0; i < buf.size; ++i) {
+            float left, right;
+            float sample = buf[i] / 32768.0;
+            left = sample * track.volume * track.gain * ((1 - track.pan) / 2);
+            right = sample * track.volume * track.gain * ((1 + track.pan) / 2);
+            accum[i * 2] = accum[i * 2] + left;
+            accum[i * 2 + 1] = accum[i * 2 + 1] + right;
+        }
+    }
+
+    @final void __mergeStereoTrack(Array[float] accum, TrackInfo track,
+                                   int frames
+                                   ) {
+        buf := track.readBuffer(frames * 2);
+
+        for (int i = 0; i < buf.size / 2; ++i) {
+            float left, right;
+            float sampleLeft = buf[i * 2] / 32768.0;
+            float sampleRight = buf[i * 2 + 1] / 32768.0;
+
+            # Very simple panning algorithm: if we're panning left, pan the
+            # right channel into the left, if we're panning right pan the left
+            # channel into the right.
+            if (track.pan < 0) {
+                left = (sampleLeft + sampleRight * -track.pan) * track.volume;
+                right = sampleRight * (track.pan + 1) * track.volume;
+            } else if (track.pan > 0) {
+                left = sampleLeft * (1 - track.pan) * track.volume;
+                right = (sampleRight + sampleLeft * track.pan) * track.volume;
+            } else {
+                left = sampleLeft * track.volume;
+                right = sampleRight * track.volume;
+            }
+
+            accum[i * 2] = accum[i * 2] + left;
+            accum[i * 2 + 1] = accum[i * 2 + 1] + right;
+        }
+    }
+
+    void __writeData(int frames) {
+        # Accumulator buffer for us to mix all of the results into, size * 2
+        # for stereo.
+        accum := Array[float](frames * 2, 0);
+
+        # Mix and pan all of the waves into the accumulator.
+        for (track :in trackInfo) {
+            if (track.wave.channels == 2)
+                __mergeStereoTrack(accum, track, frames);
+            else
+                __mergeMonoTrack(accum, track, frames);
+        }
+
+        # Create an output buffer.
+        outBuf := ManagedWaveBuffer(frames * 2);
+        for (sample :in accum) {
+            # TODO: add compressor algorithm, don't just clip.
+            if (sample > 1.0)
+                sample = 1.0;
+            else if (sample < -1.0)
+                sample = -1.0;
+
+            outBuf.append(int16(sample * 32767));
+
+            # Update min/max amplitude.
+            if (sample > maxAmp)
+                maxAmp = sample;
+            else if (sample < minAmp)
+                minAmp = sample;
+        }
+
+        if (outDef)
+            outDef.writeData(outFile, outBuf);
+        outFrameCount += frames;
+        pos += frames;
+    }
+
+    ## Mix and write 'frames' frames of data to the output file.
+    void writeData(int frames) {
+        while (frames > 0) {
+            if (frames > 1024)
+                __writeData(1024);
+            else
+                __writeData(frames);
+            frames -= 1024;
+        }
+    }
+
+    ## Move forward to the specified position, writing data along the way if
+    ## necesssary.
+    ## Fails with an assertion error if 'pos' is less than the current
+    ## position.
+    void forwardTo(int pos) {
+        @assert(pos >= this.pos);
+        if (outFile || collectStats)
+            writeData(pos - this.pos);
+        else {
+            # Seek all of the tracks.
+            for (track :in trackInfo)
+                track.seek(pos);
+        }
+        this.pos = pos;
+    }
+
+    ## Set the volume for the track.
+    void setVolume(int track, float volume) {
+        trackInfo[track].volume = volume;
+    }
+
+    ## Set the gain for the track.
+    void setGain(int track, float gain) {
+        trackInfo[track].gain = gain;
+    }
+
+    ## Set the panning for the track. Value must be between -1 (far left) and
+    ## 1 (far right).
+    void setPan(int track, float pan) {
+        @assert(pan >= -1.0 && pan <= 1.0);
+        trackInfo[track].pan = pan;
+    }
+
+    ## Finish writing the current file from the remainder of all track data.
+    void finish() {
+        cerr `forwarding to $(trackInfo[0].wave.frameCount)\n`;
+        forwardTo(trackInfo[0].wave.frameCount);
+        if (outDef)
+            outDef.finish(outFile);
+    }
+
+    void closeFile() {
+        outDef.finish(outFile);
+    }
+}
+
+project := RemixHead();
+
+## Move forward to the specified position, writing to the output file if
+## "outfile" has been called
+@function int forward(int pos) {
+    project.forwardTo(pos);
+    return 0;
+}
+
+## Start a new output file.
+@function int outfile(String filename) {
+    project.openOutput(filename);
+    return 0;
+}
+
+## Load 'filename' into the project.  Returns the new track index.
+@function int load(String filename) {
+    return project.load(filename);
+}
+
+## Set the panning for a given track index.
+@function int pan(int track, float val) {
+    project.setPan(track, val);
+    return 0;
+}
+
+## Set the volume for a given track index.
+@function int volume(int track, float val) {
+    project.setVolume(track, val);
+    return 0;
+}
+
+@function int gain(int track, float val) {
+    project.setGain(track, val);
+    return 0;
+}
+
+## Close the file ("pen up").
+@function int close() {
+    project.closeFile();
+    return 0;
+}
+
+@function int finish() {
+    project.finish();
+    return 0;
+}
+
+## Enable/disable statistics collection.
+@function int collectStats(int enabled) {
+    project.collectStats = enabled;
+    return 0;
+}
+
+## Dump all stats to standard output.
+@function int showStats() {
+    cout `min amp: $(project.minAmp)\nmax amp: $(project.maxAmp)\n`;
+    return 0;
+}
+
+ctx := createRootContext();
+
+ctx.define('forward', forward());
+ctx.define('outfile', outfile());
+ctx.define('load', load());
+ctx.define('pan', pan());
+ctx.define('volume', volume());
+ctx.define('gain', gain());
+ctx.define('finish', finish());
+ctx.define('close', close());
+ctx.define('collectStats', collectStats());
+ctx.define('showStats', showStats());
+
+eval(makePath(argv[1]).readAll(), ctx);
+#project.finish();
