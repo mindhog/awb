@@ -1,0 +1,16 @@
+# Standard configuration stuff.
+
+# bind '-' to 'bak'
+app bind 45 [callback { bak }]
+
+# bind '=' (under '+') to fwd
+app bind 61 [callback { fwd }]
+
+connect fluidsynth:r_00 system:playback_1
+connect fluidsynth:l_00 system:playback_2
+connect awb:left system:playback_1
+connect awb:right system:playback_2
+
+# Connect a midi device to AWB's midi input (this depends on selected midi
+# device numbers and therefore sucks).
+shell aconnect 32:1 129:0
