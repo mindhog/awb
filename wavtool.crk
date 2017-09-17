@@ -2,6 +2,7 @@
 
 import crack.audio.wavfile readWave, ManagedWaveBuffer, WaveBuffer, WaveDef;
 import crack.cont.array Array;
+import crack.cont.treemap TreeMap;
 import crack.fs makePath;
 import crack.io cerr, cout, SeekableReader, SeekableWriter, SEEK_END, SEEK_SET;
 import crack.sys argv;
@@ -306,18 +307,110 @@ project := RemixHead();
     return 0;
 }
 
+## Alternate command set and datastructures to support scanning.
+## Wrapping this up in a class for modularity.
+##
+## Scanning allows us to run through the set of commands and construct a set
+## of commands for AWB to set the state to what it was at the end of a logfile.
+class Scan {
+    int pos;
+    TreeMap[int, float] vols = {};
+    TreeMap[int, float] pans = {};
+
+    @function(Scan) int forward(int pos) {
+        self.pos = pos;
+        return 0;
+    }
+
+    @function(Scan) int outfile(String filename) {
+        return 0;
+    }
+
+    @function(Scan) int load(String filename) {
+        return 0;
+    }
+
+    @function(Scan) int pan(int track, float val) {
+        self.pans[track] = val;
+        return 0;
+    }
+
+    @function(Scan) int volume(int track, float val) {
+        self.vols[track] = val;
+        return 0;
+    }
+
+    @function(Scan) int gain(int track, float val) {
+        return 0;
+    }
+
+    @function(Scan) int finish() {
+        return 0;
+    }
+
+    @function(Scan) int close() {
+        return 0;
+    }
+
+    @function(Scan) int collectStats(int enabled) {
+        return 0;
+    }
+
+    @function(Scan) int showStats() {
+        return 0;
+    }
+
+    void dump() {
+        for (channel :in vols)
+            cout `\$proj setVol $(channel.key) $(channel.val)\n`;
+
+        for (channel :in pans)
+            cout `\$proj setPan $(channel.key) $(channel.val)\n`;
+
+        cout `seek $pos\n`;
+    }
+}
+
 ctx := createRootContext();
 
-ctx.define('forward', forward());
-ctx.define('outfile', outfile());
-ctx.define('load', load());
-ctx.define('pan', pan());
-ctx.define('volume', volume());
-ctx.define('gain', gain());
-ctx.define('finish', finish());
-ctx.define('close', close());
-ctx.define('collectStats', collectStats());
-ctx.define('showStats', showStats());
+if (argv[1] == 'mix') {
 
-eval(makePath(argv[1]).readAll(), ctx);
-#project.finish();
+    ctx.define('forward', forward());
+    ctx.define('outfile', outfile());
+    ctx.define('load', load());
+    ctx.define('pan', pan());
+    ctx.define('volume', volume());
+    ctx.define('gain', gain());
+    ctx.define('finish', finish());
+    ctx.define('close', close());
+    ctx.define('collectStats', collectStats());
+    ctx.define('showStats', showStats());
+
+    eval(makePath(argv[2]).readAll(), ctx);
+
+} else if (argv[1] == 'scan') {
+
+    scan := Scan();
+
+    ctx.define('forward', Scan.forward(scan));
+    ctx.define('outfile', Scan.outfile(scan));
+    ctx.define('load', Scan.load(scan));
+    ctx.define('pan', Scan.pan(scan));
+    ctx.define('volume', Scan.volume(scan));
+    ctx.define('gain', Scan.gain(scan));
+    ctx.define('finish', Scan.finish(scan));
+    ctx.define('close', Scan.close(scan));
+    ctx.define('collectStats', Scan.collectStats(scan));
+    ctx.define('showStats', Scan.showStats(scan));
+
+    eval(makePath(argv[2]).readAll(), ctx);
+    scan.dump();
+} else {
+    cerr I`Usage:
+           $(argv[0]) mix <scriptfile>
+              Run the script and do a mix-down.
+           $(argv[0]) scan <scriptfile>
+              Scan the script, emitting a set of commands to set AWB to the
+              state at the end of the script.
+           `;
+}
