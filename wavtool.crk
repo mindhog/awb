@@ -403,6 +403,10 @@ if (argv[1] == 'mix') {
     ctx.define('collectStats', Scan.collectStats(scan));
     ctx.define('showStats', Scan.showStats(scan));
 
+    # Define the "merk" command so we can handle raw output without having to
+    # add output filenames first.
+    ctx.define('mark', Scan.forward(scan));
+
     eval(makePath(argv[2]).readAll(), ctx);
     scan.dump();
 } else {
