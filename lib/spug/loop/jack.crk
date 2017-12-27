@@ -64,12 +64,13 @@ class JackWrapper {
     @final void process(uint32 nframes) {
         lbuf = left.getBuffer(nframes);
         rbuf = right.getBuffer(nframes);
+
+        for (int i; i < nframes; ++i) {
+            lbuf[i] = 0;
+            rbuf[i] = 0;
+        }
         if (__paused) {
             # Clear both buffers and return.
-            for (int i; i < nframes; ++i) {
-                lbuf[i] = 0;
-                rbuf[i] = 0;
-            }
             return;
         }
         frameCount = nframes;
@@ -112,6 +113,9 @@ class JackWrapper {
     @final void unpause() {
         __paused = false;
     }
+
+    ## Returns the jack client's sample rate.
+    @final uint32 getSampleRate() { return __client.getSampleRate() }
 }
 
 ## This is the jack callback.
@@ -206,6 +210,8 @@ class WindowBuffer {
         ## If nonzero, we're past the end of the data.
         pastEnd;
 
+    atomic_int disableRead;
+
     ## The ring buffer.
     ManagedWaveBuffer ringBuf = {1024 * 1024};
 
@@ -239,6 +245,9 @@ class WindowBuffer {
     ## Get the next chunk of data from the file into the ring buffer.
     ## Returns true if a refresh was done, false if no refresh was needed.
     bool refresh() {
+        if (disableRead)
+            return true;
+
         intz leading = readPos - playPos;
         if (leading > ringBuf.cap / 2 && leading <= ringBuf.cap)
             # XXX Also need to deal with the case where we're out of data in
@@ -284,10 +293,10 @@ class WindowBuffer {
             readPos += leading;
         }
 
-        cerr `reading $samplesToRead samples into $(rp % ringBuf.cap)\n`;
+#        cerr `reading $samplesToRead samples into $(rp % ringBuf.cap)\n`;
         WaveBuffer waveBuf = {samplesToRead, ringBuf.buffer + rp % ringBuf.cap};
         readPos += amtRead := waveDef.read(src, waveBuf);
-        cerr `  got $amtRead samples.  readPos is $readPos\n`;
+#        cerr `  got $amtRead samples.  readPos is $readPos\n`;
         if (!amtRead)
             __noMoreData();
         else
@@ -331,8 +340,8 @@ class RefreshThread : Thread {
                 curBufs = buffers.clone();
 #                cerr `refresh thread got lock: $(Time.now() - t)\n`;
             }
-            if (curBufs)
-                cerr `play pos: $(curBufs[0].playPos)\n`;
+#            if (curBufs)
+#                cerr `play pos: $(curBufs[0].playPos)\n`;
             bool refreshed = false;
             for (buf :in curBufs)
                 refreshed = refreshed || buf.refresh();
@@ -503,8 +512,6 @@ class WaveManager : JackWrapper {
 
         adapter := WindowBufferAdapter(buf);
         frameCount = 1;
-        lbuf = array[float](1);
-        rbuf = lbuf;
         # Another hack to force precompilation of WindowBufferAdapter.
         adapter(this);
         addProcessor(adapter);
@@ -520,5 +527,16 @@ class WaveManager : JackWrapper {
 
     uintz tell() {
         return wbas ?  wbas[0].getPos() : 0;
+    }
+
+    ## Disables reads, leaving the window buffers to play from their loop.
+    void disableRead() {
+        int offset;
+        if (wbas && wbas[0].buf.disableRead)
+            offset = -1;
+        else
+            offset = 1;
+        for (a :in wbas)
+            a.buf.disableRead += offset;
     }
 }
