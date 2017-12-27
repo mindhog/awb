@@ -177,6 +177,7 @@ Obj makeEventRecorderModule(EventManager eventManager) {
         obj.define('addTrack', Project_addTrack(proj));
         obj.define('setGain', Project_setGain(proj));
         obj.define('setPan', Project_setPan(proj));
+        obj.define('setVol', Project_setVol(proj));
         obj.define('writeLog', Project_writeLog(proj));
         import crack.io cerr;
         cerr `makeProject() -> $(obj.vars)\n`;
