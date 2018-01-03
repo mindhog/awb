@@ -206,6 +206,14 @@ class CrashEventProcessorCmd : Builtin {
     return 0;
 }
 
+@function int disableRead() {
+    if (!eventManager.waveMan)
+        return -1;
+
+    eventManager.waveMan.disableRead();
+    return 0;
+}
+
 @interface AppMethods {
     @abstract void setBinding(int key, Functor0[void] callback);
 }
@@ -303,6 +311,7 @@ class InterpWrapper {
         __rootCtx.define('app', makeAppWrapper(app));
         __rootCtx.define('callback', CallbackCmd());
         __rootCtx.define('evtrec', getEventRecModule());
+        __rootCtx.define('disableRead', disableRead());
     }
 
     void checkForInput() {
