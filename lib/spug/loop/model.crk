@@ -7,8 +7,9 @@ import crack.cont.hashmap HashMap;
 import crack.cont.treemap TreeMap;
 import crack.fs cwd, makePath;
 import crack.functor Functor1;
-import crack.io cout, FStr, StringReader, StringWriter;
+import crack.io cerr, cout, FStr, StringReader, StringWriter;
 import crack.lang cmp, makeHashVal, CString, Exception;
+import crack.math floor;
 import crack.midi.event ChannelEvent, ControlChange, EndTrack, Event,
     MidiReader, MidiWriter, ProgramChange, SeekableEventSource, Track;
 import crack.protobuf Field, ProtoReader, ProtoWriter;
@@ -17,7 +18,7 @@ import spug.loop.jack WaveManager, WindowBufferAdapter;
 import crack.midi.alsa Port, Sequencer;
 import crack.protobuf Message;
 import crack.serial SerialReader, SerialWriter;
-import crack.time Time;
+import crack.time Time_add = add, Time, TimeDelta;
 
 @import crack.ann assert, impl, implements, interface;
 @import crack.protobuf.ann protobuf;
@@ -469,6 +470,9 @@ class LoopCursor {
         }
     }
 
+    ## True if the track is not empty.
+    bool isTrue() { return track.count() > 1 }
+
     void setPos(uint pos) {
         while (!immediatelyFollows(pos)) next();
     }
@@ -659,7 +663,27 @@ class EventManager {
         if (mode == RECORD)
             endRecord();
         mode = PLAY;
-        setPos(0);
+
+        # This is a hack to deal with the looping/wave editing dichotomy - if
+        # we're doing midi looping (as evidenced by the presence of midi
+        # tracks) then we set the current position to zero.
+        if (!waveMan) {
+            setPos(0);
+        } else {
+            # Mark the start time but then offset it backwards by the current
+            # position of the wave managaer.
+            markStartTime();
+
+            # Get the current frame number and convert to seconds since the
+            # beginning of the wave.
+            timeSinceStart :=
+                float(waveMan.tell()) / float(waveMan.getSampleRate());
+            wholeSecs := floor(timeSinceStart);
+            nsecs := (timeSinceStart - wholeSecs) * 1e+9;
+            startTime = Time_add(startTime,
+                                 TimeDelta(-int32(wholeSecs), -int32(nsecs))
+                                 );
+        }
         if (waveMan)
             waveMan.unpause();
     }
@@ -718,7 +742,7 @@ class EventManager {
     }
 
     void __playPendingEvents(LoopCursor cur, uint pos) {
-        while (!cur.immediatelyFollows(pos)) {
+        while (cur && !cur.immediatelyFollows(pos)) {
             instrument.onEvent(e := cur.next());
 #            cout `played event $e at time $(e.time)/$(cur.span) for pos $pos\n`;
         }
@@ -881,6 +905,8 @@ class EventManager {
         # Calculate end time in microseconds.
         endTime := int64(result.getFrameCount()) * 1000000 /
                    int64(result.getRate());
+        if ((spanInTicks := usecsToTicks(endTime)) > curSection.span)
+            curSection.span = spanInTicks;
 
         curSection.tracks.append(
             Track( filename, Array[Event]![EndTrack(usecsToTicks(endTime))] )
@@ -902,3 +928,4 @@ class EventManager {
     }
 
 }
+
