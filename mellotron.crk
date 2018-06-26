@@ -1,0 +1,209 @@
+## This is a stand-alone Mellotron emulator.  It needs to be run in the same
+## directory as its samples (see the loadInstrment() calls below).
+
+import crack.audio.wavfile readWave, ManagedWaveBuffer;
+import crack.cont.array Array;
+import crack.fs makePath, Path;
+import crack.functor Functor1;
+import crack.io cerr, Formatter, FStr;
+import crack.math abs;
+import crack.midi.alsa Port, Queue, Sequencer, SND_SEQ_OPEN_INPUT, SND_SEQ_OPEN_OUTPUT;
+import crack.midi.event ChannelEvent, ControlChange, Event, NoteOn, NoteOff,
+    PitchWheel, ProgramChange;
+import crack.strutil StringArray;
+import spug.loop.jack jackCallback, JackWrapper;
+
+@import crack.ann impl;
+
+class NoteState {
+    ## True if the note is active.  This is the only field that may be mutated
+    ## outside of the jack thread.
+    bool active;
+
+    ## Current amplitude.
+    float amp;
+
+    ## Current position in the "tape"
+    uint pos;
+}
+
+Formatter trace;
+
+## Jack processor for the mellotron.
+class MellotronProcessor @impl Functor1[void, JackWrapper] {
+    ## Note states.  True if the note is engaged, false if not.
+    Array[NoteState] state = {35};
+
+    # The array of samples.
+    Array[ManagedWaveBuffer] samples = {};
+
+    ## Position in the tape loops (this is from when we were assuming that
+    ## there was a single position, which isn't the case for a real mellotron).
+    int pos;
+
+    ## Controls the volume (from 0 to 1).
+    float volume = 1.0;
+
+    oper init() {
+        for (int i; i < 35; ++i)
+            state.append(NoteState());
+    }
+
+    void oper call(JackWrapper wrapper) {
+        lbuf := wrapper.lbuf;
+        rbuf := wrapper.rbuf;
+        count := wrapper.frameCount;
+
+        # Translate a 1/10 second attack into an increment.
+        # Generally, the formula for this is (1/r) / d (where 'd' is the
+        # duration of the attack).
+        const INCR := 10.0 / float(wrapper.getSampleRate());
+
+        int numVoices;
+
+        # Iterate over the set of notes.
+        for (int i = 0; i < 35; ++i) {
+            note := state[i];
+            amp := note.amp;
+
+            if (amp || note.active) {
+                buf := samples[i];
+
+                # Wrap around if we get to the end of the sample.
+#                if (pos + count > buf.size)
+#                    pos = 0;
+                if (note.pos >= buf.size) {
+                    cerr `XXX out of range\n`;
+                    if (!note.active) {
+                        cerr `XXX turning off amp\n`;
+                        note.amp = 0;
+                        note.pos = 0;
+                    }
+                    continue;
+                }
+                uint pos = note.pos;
+                if (!amp) {
+                    # The note has just been activated, set amplitude all the
+                    # way up and reset the position.
+                    cerr `XXX reseting note\n`;
+                    amp = 1;
+                    pos = 0;
+                }
+
+                # Fill the buffer.
+                for (int j = 0; j < count; ++j) {
+                    if (pos >= buf.size)
+                        break;
+
+                    rbuf[j] = lbuf[j] = lbuf[j] +
+                              volume * amp * buf[pos + j] / 32768.0;
+
+                    # Move amplitude up to (or down to) its target value.
+                    if (note.active && amp < 1) {
+                        amp += INCR;
+                        if (amp > 1)
+                            amp = 1;
+                    } else if (!note.active && amp) {
+                        amp -= INCR;
+                        if (amp < 0)
+                            amp = 0;
+                    }
+                }
+                note.pos = pos + count;
+            }
+
+            # Store the modified amplitude back in the note record.
+            note.amp = amp;
+        }
+
+        # One more pass through the buffers to average the number of voices.
+        numVoices = 4;
+        for (int i = 0; i < count; ++i) {
+            rbuf[i] = rbuf[i] / float(numVoices);
+            lbuf[i] = lbuf[i] / float(numVoices);
+        }
+
+#        pos += count;
+    }
+}
+
+processor := MellotronProcessor();
+
+const NOTES :=
+    StringArray!['G', 'G#', 'A', 'A#', 'B', 'C', 'C#', 'D', 'D#', 'E', 'F', 'F#'];
+
+ManagedWaveBuffer readWaveBuffer(Path file) {
+    src := file.reader();
+    def := readWave(src);
+    ManagedWaveBuffer buf = {def.frameCount};
+    while (chunk := src.read(4096)) {
+        for (int i = 0; i < chunk.count(); i += 2) {
+            buf.append(int16(chunk[i]) + (int16(chunk[i + 1]) << 8));
+        }
+    }
+    return buf;
+}
+
+Array[ManagedWaveBuffer] loadInstrument(String name) {
+    Array[ManagedWaveBuffer] result = {};
+    dir := makePath('samples') / name;
+    for (int i = 0; i < 35; ++i) {
+        filename := FStr() `$(NOTES[i % 12])$((i + 7) / 12 + 2).wav`;
+        result.append(readWaveBuffer(dir/filename));
+    }
+    return result;
+}
+
+programs := Array[Array[ManagedWaveBuffer]]![
+    loadInstrument('cello'),
+    loadInstrument('choir'),
+    loadInstrument('mk2-flute'),
+    loadInstrument('mk2-brass'),
+    loadInstrument('m300a'),
+    loadInstrument('m300b'),
+    loadInstrument('m300-brass'),
+    loadInstrument('mk2-violins'),
+    loadInstrument('string-section'),
+    loadInstrument('woodwinds'),
+];
+processor.samples = programs[0];
+
+jackWrapper := JackWrapper();
+# Force jitting of the mellotron processor.
+jackWrapper.init();
+jackCallback(0, jackWrapper);
+jackWrapper.frameCount = 1024;
+jackWrapper.lbuf = array[float](1024);
+jackWrapper.rbuf = array[float](1024);
+trace = cerr;
+processor.state[0].active = true;
+processor(jackWrapper);
+processor.state[0].active = false;
+trace = null;
+jackWrapper.addProcessor(processor);
+jackWrapper.activate();
+
+Sequencer s = {SND_SEQ_OPEN_INPUT | SND_SEQ_OPEN_OUTPUT, 0};
+port := s.makeWritePort('Mellotron');
+
+while (true) {
+    event := s.getEvent();
+    cerr `got event: $event\n`;
+    if (e := NoteOn.cast(event, null)) {
+        if (e.note >= 31 && e.note < 66)
+            processor.state[e.note - 31].active = e.velocity;
+    } else if (e := NoteOff.cast(event, null)) {
+        if (e.note >= 31 && e.note < 66)
+            processor.state[e.note - 31].active = false;
+    } else if (e := ProgramChange.cast(event, null)) {
+        if (e.program < programs.count())
+            processor.samples = programs[e.program];
+    } else if (e := ControlChange.cast(event, null)) {
+        if (e.controller == 0)
+            processor.samples = programs[int(e.value) * programs.count() / 128];
+        else if (e.controller == 15 || e.controller == 7)
+            processor.volume = float(e.value) / 127;
+    }
+}
+
+
