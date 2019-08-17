@@ -2,8 +2,9 @@
 
 import crack.audio.wavfile readWave, ManagedWaveBuffer, WaveBuffer, WaveDef;
 import crack.cont.array Array;
-import crack.ext._jack JackClient, JackPort, JackClient_open,
-    Jack_getDefaultAudioType, JACK_PORT_IS_OUTPUT, JACK_PORT_IS_INPUT;
+import crack.ext._jack JackClient, JackPort, JackPosition, JackClient_open,
+    Jack_getDefaultAudioType, JACK_PORT_IS_OUTPUT, JACK_PORT_IS_INPUT,
+    JACK_TRANSPORT_ROLLING;
 import crack.fs makePath;
 import crack.functor Function1, Functor1;
 import crack.io cout, cerr, SeekableReader, SEEK_SET;
@@ -15,7 +16,11 @@ import crack.time Time;
 
 @import crack.ann implements;
 
+@export_symbols JACK_TRANSPORT_ROLLING;
+
 int jackCallback(uint32 nframes, voidptr arg);
+
+class JackPos : Object, JackPosition {}
 
 class JackWrapper {
 
@@ -27,12 +32,17 @@ class JackWrapper {
     uint32 frameCount;
     array[float] lbuf, rbuf;
     bool __paused;
+    uint32 __startFrame;
+    String __name = 'awb';
 
     Array[Functor1[void, JackWrapper]] __processors = {};
 
+    oper init() {}
+    oper init(String name) : __name = name {}
+
     void init() {
         array[int] status = {0};
-        __client = JackClient_open('awb'.buffer, 0, status);
+        __client = JackClient_open(__name.buffer, 0, status);
         __client.setProcessCallback(jackCallback, this);
         left = __client.portRegister('left'.buffer, Jack_getDefaultAudioType(),
                                      JACK_PORT_IS_OUTPUT,
@@ -77,6 +87,8 @@ class JackWrapper {
         count := __processors.count();
         for (int i = 0; i < count; ++i)
             __processors[i](this);
+
+        __startFrame += frameCount;
     }
 
     @final void activate() {
@@ -116,6 +128,16 @@ class JackWrapper {
 
     ## Returns the jack client's sample rate.
     @final uint32 getSampleRate() { return __client.getSampleRate() }
+
+    ## Returns the current start frame
+    @final uint32 getStartFrame() { return __startFrame }
+
+    # Sets the current start frame.
+    @final void setStartFrame(uint32 startFrame) { __startFrame = startFrame }
+
+    @final JackClient getClient() {
+        return __client;
+    }
 }
 
 ## This is the jack callback.
