@@ -256,11 +256,40 @@ class WindowBuffer {
         numTracks = waveDef.channels {
     }
 
-    @final void __noMoreData() {
-        cerr `no more data, clearing buffer\n`;
-        # Clear the ring buffer.
-        for (int i = 0; i < ringBuf.cap; ++i)
+    @final void __clearRange(uint start, uint end) {
+        for (int i = start; i < end; ++i)
             ringBuf.buffer[i] = 0;
+    }
+
+    @final void __noMoreData() {
+        if (playPos < readPos && uintz(readPos - playPos) < ringBuf.cap) {
+            # We haven't played the entire buffer yet, we can't clear all of
+            # it.
+
+            pp := playPos % ringBuf.cap;
+            rp := readPos % ringBuf.cap;
+
+            # Simplest case is where the remaining range doesn't wrap:
+            #   pp     rp
+            # |------------|
+            #    |------|
+            if (pp < rp) {
+                __clearRange(0, pp);
+                __clearRange(rp, ringBuf.cap);
+
+            # Otherwise the range wraps and we need to clear out the middle:
+            #   rp     pp
+            # |------------|
+            # ---|      |---
+            } else {
+                __clearRange(rp, pp);
+            }
+
+            return;
+        }
+
+        # Clear the ring buffer.
+        __clearRange(0, ringBuf.cap);
         if (!pastEnd) pastEnd += 1;
     }
 
