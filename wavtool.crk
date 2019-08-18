@@ -4,7 +4,8 @@ import crack.audio.wavfile readWave, ManagedWaveBuffer, WaveBuffer, WaveDef;
 import crack.cont.array Array;
 import crack.cont.treemap TreeMap;
 import crack.fs makePath;
-import crack.io cerr, cout, SeekableReader, SeekableWriter, SEEK_END, SEEK_SET;
+import crack.io cerr, cout, SeekableReader, SeekableWriter, StandardFormatter,
+    SEEK_END, SEEK_SET;
 import crack.sys argv;
 import crash createRootContext, eval, Builtin, EvalContext;
 import spug.loop.jack BYTES_PER_SAMPLE;
@@ -138,15 +139,18 @@ class RemixHead {
             # right channel into the left, if we're panning right pan the left
             # channel into the right.
             if (track.pan < 0) {
-                left = (sampleLeft + sampleRight * -track.pan) * track.volume;
-                right = sampleRight * (track.pan + 1) * track.volume;
+                left = (sampleLeft + sampleRight * -track.pan);
+                right = sampleRight * (track.pan + 1);
             } else if (track.pan > 0) {
-                left = sampleLeft * (1 - track.pan) * track.volume;
-                right = (sampleRight + sampleLeft * track.pan) * track.volume;
+                left = sampleLeft * (1 - track.pan);
+                right = (sampleRight + sampleLeft * track.pan);
             } else {
-                left = sampleLeft * track.volume;
-                right = sampleRight * track.volume;
+                left = sampleLeft;
+                right = sampleRight;
             }
+
+            left *= track.gain * track.volume;
+            right *= track.gain * track.volume;
 
             accum[i * 2] = accum[i * 2] + left;
             accum[i * 2 + 1] = accum[i * 2 + 1] + right;
@@ -409,6 +413,27 @@ if (argv[1] == 'mix') {
 
     eval(makePath(argv[2]).readAll(), ctx);
     scan.dump();
+} else if (argv[1] == 'new') {
+    outfile := argv[2];
+    outPath := makePath(outfile);
+    out := StandardFormatter(outPath.writer());
+    out I`\
+        evalfile /home/mmuller/w/awb/awbconfig.crash
+        var DIR $(outPath.parent().getFullName())
+        var proj [[evtrec] Project \$DIR]
+
+        `;
+
+    for (iter :on argv.subarray(3))
+        out `\$proj addTrack $(iter.elem()) $(iter.index + 8) $(iter.index)\n`;
+
+    out I`\
+        app bind 109 [callback {
+            var pos [tell]
+            print 'marking ' \$pos '\\n'
+            \$proj writeLog [format 'mark ' \$pos '\\n']
+        }]
+        `;
 } else {
     cerr I`Usage:
            $(argv[0]) mix <scriptfile>
