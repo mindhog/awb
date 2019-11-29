@@ -18,7 +18,7 @@ import spug.loop.instrument MidiInstrument;
 import spug.loop.jack jackCallback, WaveManager, WindowBufferAdapter;
 
 import crash createRootContext, eval, parseBlockArg, ActiveFunc, Block, Builtin,
-    EvalContext, Obj;
+    EvalContext, Obj, SimpleValue;
 import stdlib stdlib;
 import types FloatObj, IntObj;
 
@@ -328,6 +328,14 @@ class InterpWrapper {
     }
 
     void evalScript(String filename) {
-        eval(makePath(filename).readAll(), __rootCtx);
+        path := makePath(filename);
+        __rootCtx.define('scriptDir',
+                         SimpleValue(path.parent().getFullName())
+                         );
+        __rootCtx.define('scriptFile',
+                         SimpleValue(path.getFullName())
+                         );
+        eval(path.readAll(), __rootCtx);
     }
 }
+
