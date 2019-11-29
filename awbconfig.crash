@@ -13,4 +13,31 @@ connect awb:right system:playback_2
 
 # Connect a midi device to AWB's midi input (this depends on selected midi
 # device numbers and therefore sucks).
-shell aconnect 32:1 129:0
+shell aconnect 28:0 129:0
+
+# 899833 stray_mark
+# 2181881 101_brain_damaged.wav
+
+# Keeps track of the next track to be allocated with the "track" command.
+var trackNum 0
+
+# Adds a new track.
+def track {file} {
+    var volCC [+ [* 256 $trackNum] $trackNum]
+    var panCC [+ $volCC 16]
+    $project addTrack $file $volCC $panCC
+    set trackNum [+ $trackNum 1]
+}
+
+def pan {track val} {
+    $project setPan $track $val
+}
+
+def vol {track val} {
+    $project setVol $track $val
+}
+
+def gain {track val} {
+    $probject setGain $track $val
+}
+
