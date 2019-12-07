@@ -1021,8 +1021,13 @@ class App : Object @implements AppMethods, KeyboardHandler, MouseButtonHandler,
 }
 
 Sequencer s = {SND_SEQ_OPEN_INPUT | SND_SEQ_OPEN_OUTPUT, 0};
-port := s.makeWritePort('Crack Port');
-port.connectTo(clientNum, portNum);
+port := s.makeWritePort('in');
+outPort := s.makeReadPort('out');
+
+# If the user specified a port to connect from on the command line, connect
+# it.
+if (clientNum)
+    port.connectTo(clientNum, portNum);
 
 cout `creating wave manager\n`;
 waveMan := WaveManager.create();
