@@ -1,4 +1,7 @@
 # LV2 API Extension.  Lets us work with LV2 plugins.
+# crack ext/lilv.crk && \
+#    g++ -shared -fPIC -I/usr/local/include/crack-1.2 \
+#    -I/usr/include/lilv-0/lilv -llilv-0 lilv.cc -o lib/spug/loop/lilv.so
 
 @import crack.extgen generateExtension;
 
@@ -30,8 +33,39 @@
         LilvNode *makeMidiEventClass(LilvWorld *world) {
             return lilv_new_uri(world, LILV_URI_MIDI_EVENT);
         }
+        void LilvInstance_connectPort(LilvInstance *instance,
+                                      uint32_t	port_index,
+                                      void *	data_location
+                                      ) {
+            lilv_instance_connect_port(instance, port_index, data_location);
+        }
+
+        void LilvInstance_activate(LilvInstance *instance) {
+            lilv_instance_activate(instance);
+        }
+        void LilvInstance_deactivate(LilvInstance *instance) {
+            lilv_instance_deactivate(instance);
+        }
+        void LilvInstance_run(LilvInstance *instance, uint32_t sample_count) {
+            lilv_instance_run(instance, sample_count);
+        }
+
         '
 
+    @cname Opaque
+    class LilvInstance {
+        @cname LilvInstance_connectPort
+        void connectPort(uint32	port_index, voidptr	data_location);
+
+        @cname LilvInstance_activate
+        void activate();
+
+        @cname LilvInstance_run
+        void run	(uint32	sample_count);
+
+        @cname LilvInstance_deactivate
+        void deactivate();
+    }
 
     @cname Opaque
     class LilvIter {}
@@ -65,10 +99,22 @@
         @cname lilv_port_get_name
         LilvNode getPortName(LilvPort port);
 
+        @cname lilv_port_get_index
+        uint32 getPortIndex(LilvPort port);
+
         @cname lilv_port_is_a
         bool portIsA(LilvPort port, LilvNode cls);
 
-        # LilvInstance instantiate(float64 sampleRate, voidptr features);
+        @cname lilv_plugin_instantiate
+        LilvInstance instantiate(float64 sampleRate, voidptr features);
+
+        ## Populates the arrays with the minimum, maximum and default values
+        ## for each port.  The arrays must either be null (in which case they
+        ## are not populated) or arrays of size corresponding to the number of
+        ## ports.
+        @cname lilv_plugin_get_port_ranges_float
+        void getPortRanges(array[float] min_values, array[float] max_values,
+                           array[float] def_values);
     }
 
     @cname Opaque

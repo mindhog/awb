@@ -14,7 +14,9 @@ import crack.runtime free, sleep;
 import crack.threads Mutex, MutexLock, Thread;
 import crack.time Time;
 
-@import crack.ann implements;
+import .processors bufferFrameCount, AudioBuffer, BufferVector, Component;
+
+@import crack.ann assert, impl, implements;
 
 @export_symbols JACK_TRANSPORT_ROLLING;
 
@@ -411,48 +413,98 @@ class RefreshThread : Thread {
     }
 }
 
-## Allows a WindowBuffer (which maintains a ring of buffers and reads them
-## from a wave file) to be used as a Jack processor.
-class WindowBufferAdapter : Object @implements Functor1[void, JackWrapper] {
+class Mixer @impl Component {
+    BufferVector buffers;
 
-    WindowBuffer buf;
-    float volume, gain;
+    ## Left buffer and right buffer, these can be set directly by the client.
+    array[float] lbuf, rbuf;
+
+    float volume = 1.0, gain = 1.0;
 
     ## Array of pan values, one per track.  Pan values range from -1 (totally
     ## left) to +1 (totally right).
-    array[float] pan;
+    Array[float] pan;
 
-    oper init(WindowBuffer buf) :
-        buf = buf,
-        pan = array[float](buf.numTracks),
-        volume = 1.0,
-        gain = 1.0 {
-
-        for (int i; i < buf.numTracks; ++i)
-            pan[i] = 0.0;
-        if (buf.numTracks == 2) {
+    oper init(int numTracks) : buffers(numTracks), pan(numTracks, 0) {
+        for (int i = 0; i < numTracks; ++i)
+            buffers.append(AudioBuffer(bufferFrameCount, 0));
+        if (buffers.count() == 2) {
             pan[0] = -1;
             pan[1] = 1;
         }
     }
 
-    oper del() {
-        free(pan);
+    int getInputChannelCount() {
+        return buffers.count();
+    }
+
+    BufferVector getInputBuffers() {
+        return buffers;
+    }
+
+    int getOutputChannelCount() {
+        return 2;
+    }
+
+    void setOutputBuffers(BufferVector bufs) {
+        @assert(bufs.count() == 2);
+        lbuf = bufs[0].data();
+        rbuf = bufs[1].data();
+    }
+
+    ## Sets the output buffers from the jack wrapper.
+    void setOutputBuffers(JackWrapper jack) {
+        lbuf = jack.lbuf;
+        rbuf = jack.rbuf;
+    }
+
+    void run(int frameCount) {
+        numTracks := buffers.count();
+        for (int i; i < frameCount; ++i) {
+            for (int j; j < numTracks; ++j) {
+                sample := buffers[j][i];
+                if (pan[j] > 1.0 || pan[j] < -1.0)
+                    cerr `\033[31mPan out of range: $(pan[j])\033[0m\n`;
+                lbuf[i] = lbuf[i] +
+                          sample * volume * gain * ((1 - pan[j]) / 2);
+                rbuf[i] = rbuf[i] +
+                          sample * volume * gain * ((1 + pan[j]) / 2);
+            }
+        }
+        if (_next)
+            _next.run(frameCount);
+    }
+}
+
+
+## Allows a WindowBuffer (which maintains a ring of buffers and reads them
+## from a wave file) to be used as a Jack processor.
+class WindowBufferAdapter : Object @implements Functor1[void, JackWrapper] {
+
+    WindowBuffer buf;
+    Mixer mixer;
+    Component headComponent;
+
+    oper init(WindowBuffer buf) :
+        buf = buf,
+        mixer = Mixer(buf.numTracks),
+        headComponent = mixer {
     }
 
     void oper call(JackWrapper wrapper) {
+
+        # Convert samples to floats and inject them into the input buffers.
+        input := headComponent.getInputBuffers();
         for (int i; i < wrapper.frameCount; ++i) {
             absPos := buf.playPos + i * buf.numTracks;
             for (int j; j < buf.numTracks; ++j) {
                 sample := buf.ringBuf[(absPos + j) % buf.ringBuf.cap] / 32768.0;
-                if (pan[j] > 1.0 || pan[j] < -1.0)
-                    cerr `\033[31mPan out of range: $(pan[j])\033[0m\n`;
-                wrapper.lbuf[i] = wrapper.lbuf[i] +
-                                  sample * volume * gain * ((1 - pan[j]) / 2);
-                wrapper.rbuf[i] = wrapper.rbuf[i] +
-                                  sample * volume * gain * ((1 + pan[j]) / 2);
+                input[j][i] = sample;
             }
         }
+
+        mixer.setOutputBuffers(wrapper);
+        headComponent.run(wrapper.frameCount);
 
         buf.playPos += wrapper.frameCount * buf.numTracks;
     }
@@ -474,7 +526,7 @@ class WindowBufferAdapter : Object @implements Functor1[void, JackWrapper] {
     @final void setPan(float pan) {
         # TODO: support panning ranges.
         for (int i; i < buf.numTracks; ++i)
-            this.pan[i] = pan;
+            mixer.pan[i] = pan;
     }
 
     ## Returns current "play position" (the number of frames since the wave
@@ -482,6 +534,12 @@ class WindowBufferAdapter : Object @implements Functor1[void, JackWrapper] {
     ## buffer, but it should otherwise be fairly accurate WRT what is
     ## currently being played.
     @final intz getPos() { return buf.tell() }
+
+    ## Adds a new component to the head of the component chain.
+    @final void insertComponent(Component component) {
+        component.append(headComponent);
+        headComponent = component;
+    }
 }
 
 ## Clears the output buffers in the Jack wrapper.

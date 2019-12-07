@@ -86,8 +86,8 @@ class VolumeControl @impl EventProcessor {
     oper init(WindowBufferAdapter adapter) : adapter = adapter {}
 
     void oper call(Event event) {
-        adapter.volume = ControlChange.cast(event).value / 128.0;
-        cout `changing volume of $adapter to $(adapter.volume)\n`;
+        adapter.mixer.volume = ControlChange.cast(event).value / 128.0;
+        cout `changing volume of $adapter to $(adapter.mixer.volume)\n`;
     }
 }
 
@@ -97,8 +97,8 @@ class VolumeControl @impl EventProcessor {
 
 ## Set the volume from a value from 0 to 127.
 @function int setVolume(WindowBufferAdapter adapter, int volume) {
-    adapter.volume = float(volume) / 128.0;
-    cout `volume set to $(adapter.volume)\n`;
+    adapter.mixer.volume = float(volume) / 128.0;
+    cout `volume set to $(adapter.mixer.volume)\n`;
     return 0;
 }
 
@@ -127,7 +127,7 @@ class PanControl @impl EventProcessor {
 }
 
 @function int setGain(WindowBufferAdapter adapter, float gain) {
-    adapter.gain = gain;
+    adapter.mixer.gain = gain;
     return 0;
 }
 

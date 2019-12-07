@@ -1,8 +1,21 @@
 ## Tools for working with LV2 plugins.
 
 import crack.cont.array Array;
-import spug.loop.lilv LilvWorld_new, LilvPlugin, LilvPlugins, LilvPort,
+import crack.io cerr;
+import spug.loop.lilv makeInputPortClass, makeOutputPortClass,
+    makeAudioPortClass, makeControlPortClass, makeEventPortClass,
+    LilvWorld_new, LilvInstance, LilvNode, LilvPlugin, LilvPlugins, LilvPort,
     LilvWorld;
+import .jack JackWrapper;
+import .processors bufferFrameCount, AudioBuffer, BufferVector, Component;
+
+@import crack.ann assert, impl;
+
+# These are port classes, they have to be initialized from a Lilv World,
+# meaning that they really need to be associated with every single object that
+# uses them.  For now, we just make them globals - we don't really need more
+# than a single world instance.
+LilvNode INPUT_PORT, OUTPUT_PORT, AUDIO_PORT, CONTROL_PORT, EVENT_PORT;
 
 class Port {
     LilvPlugin __plugin;
@@ -16,10 +29,24 @@ class Port {
     String getName() {
         return String(__plugin.getPortName(__port).asString());
     }
+
+    bool isOfType(LilvNode type) {
+        return __plugin.portIsA(__port, type);
+    }
+
+    uint32 getIndex() {
+        return __plugin.getPortIndex(__port);
+    }
 }
+
+class Plugin;
+class PluginInstance;
+
+PluginInstance _makePluginInstance(Plugin plugin, LilvInstance inst);
 
 class Plugin {
     LilvPlugin __rep;
+    Array[float] __defaults;
 
     class PortIter {
         LilvPlugin __plugin;
@@ -42,9 +69,117 @@ class Plugin {
         return String(__rep.getName().asString());
     }
 
+    uint32 getNumPorts() { return __rep.getNumPorts() }
+
     PortIter iterPorts() {
         return PortIter(__rep);
     }
+
+    PluginInstance makeInstance(float64 sampleRate) {
+        return _makePluginInstance(this, __rep.instantiate(sampleRate, null));
+    }
+
+    ## Returns an array of defaults for all ports.
+    Array[float] getDefaults() {
+        if (!__defaults) {
+            __defaults = Array[float](getNumPorts(), 0);
+            __rep.getPortRanges(null, null, __defaults.data());
+        }
+        return __defaults;
+    }
+}
+
+class PluginInstance @impl Component {
+
+    Plugin __plugin;
+
+    ## The underlying lilv plugin instance.
+    LilvInstance __rep;
+
+    Array[Array[float]] __inBufs,  __outBufs;
+    Array[float] __controls;
+
+    oper init(Plugin plugin, LilvInstance rep) :
+        __plugin = plugin,
+        __rep = rep,
+        __controls = plugin.getDefaults().clone() {
+
+        __rep.activate();
+    }
+
+    int getInputChannelCount() {
+        if (__inBufs)
+            return __inBufs.count();
+
+        int result;
+        for (port :in __plugin.iterPorts()) {
+            if (port.isOfType(AUDIO_PORT) && port.isOfType(INPUT_PORT))
+                ++result;
+        }
+        return result;
+    }
+
+    BufferVector getInputBuffers() {
+        if (__inBufs)
+            return __inBufs;
+
+        vec := BufferVector();
+        for (port :in __plugin.iterPorts()) {
+            if (port.isOfType(AUDIO_PORT) && port.isOfType(INPUT_PORT)) {
+                buf := AudioBuffer(bufferFrameCount, 0);
+                vec.append(buf);
+                __rep.connectPort(port.getIndex(), buf.data());
+            }
+        }
+
+        __inBufs = vec;
+        return vec;
+    }
+
+    int getOutputChannelCount() {
+        if (__outBufs)
+            return __outBufs.count();
+
+        int result;
+        for (port :in __plugin.iterPorts()) {
+            if (port.isOfType(AUDIO_PORT) && port.isOfType(OUTPUT_PORT))
+                ++result;
+        }
+        return result;
+    }
+
+    void setOutputBuffers(BufferVector bufs) {
+        iter := bufs.iter();
+        defaults := __plugin.getDefaults();
+        for (port :in __plugin.iterPorts()) {
+            if (port.isOfType(AUDIO_PORT) && port.isOfType(OUTPUT_PORT)) {
+                @assert(iter);
+                __rep.connectPort(port.getIndex(), iter.elem().data());
+                iter.next();
+            } else if (port.isOfType(CONTROL_PORT)) {
+                __rep.connectPort(port.getIndex(),
+                                  __controls.data() + port.getIndex()
+                                  );
+            } else if (!port.isOfType(AUDIO_PORT)) {
+                # We want to ignore audio input ports - don't null them out.
+                __rep.connectPort(port.getIndex(), null);
+            }
+        }
+
+        # Make sure we've used all of the buffers.
+        @assert(!iter);
+        __outBufs = bufs;
+    }
+
+    void run(int numFrames) {
+        __rep.run(uint32(numFrames));
+        if (_next)
+            _next.run(numFrames);
+    }
+}
+
+PluginInstance _makePluginInstance(Plugin plugin, LilvInstance inst) {
+    return PluginInstance(plugin, inst);
 }
 
 ## The set of all plugins.
@@ -55,12 +190,17 @@ class PluginLibrary {
 
     alias Iter = Array[Plugin].ArrayIter;
 
-#    LilvNode
-#        INPUT_PORT,
-
     oper init() {
         __world = LilvWorld_new();
         __world.loadAll();
+
+        # Initialize yechy globals.
+        INPUT_PORT = makeInputPortClass(__world);
+        OUTPUT_PORT = makeOutputPortClass(__world);
+        AUDIO_PORT = makeAudioPortClass(__world);
+        CONTROL_PORT = makeControlPortClass(__world);
+        EVENT_PORT = makeEventPortClass(__world);
+
         plugins := __world.getAllPlugins();
         iter := plugins.begin();
         while (!plugins.isEnd(iter)) {
@@ -72,8 +212,13 @@ class PluginLibrary {
     Iter iter() {
         return __plugins.iter();
     }
+
+    ## Gets the plugin with the specified name.
+    Plugin getPluginByName(String name) {
+        for (plugin :in this) {
+            if (name == plugin.getName())
+                return plugin;
+        }
+        return null;
+    }
 }
-
-
-
-

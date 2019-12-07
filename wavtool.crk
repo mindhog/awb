@@ -6,9 +6,12 @@ import crack.cont.treemap TreeMap;
 import crack.fs makePath;
 import crack.io cerr, cout, SeekableReader, SeekableWriter, StandardFormatter,
     SEEK_END, SEEK_SET;
+import crack.lang Exception;
 import crack.sys argv;
 import crash createRootContext, eval, Builtin, EvalContext;
 import spug.loop.jack BYTES_PER_SAMPLE;
+import spug.loop.plugins PluginInstance, PluginLibrary;
+import spug.loop.processors makeBufferVector, BufferVector, Component;
 import types FloatObj, IntObj;
 
 @import ann function;
@@ -35,6 +38,9 @@ class TrackInfo {
 
     ## Start position of the data in the file.
     int64 __dataStart;
+
+    ## Components pipeline.
+    Component effects;
 
     oper init(String filename) {
         wave = readWave(src = makePath(filename).reader());
@@ -94,6 +100,9 @@ class RemixHead {
     ## output file, forwardTo() just skips the data and does a seek.
     bool collectStats;
 
+    # Two channel output buffer vector.
+    BufferVector effectsOut = makeBufferVector(2);
+
     ## Load a wave file into the next channel.  Return the track index.
     int load(String filename) {
         trackInfo.append(TrackInfo(filename));
@@ -108,6 +117,49 @@ class RemixHead {
         outDef = WaveDef(2, trackInfo[0].wave.rate, 16);
         outDef.writeHeader(outFile);
         outFrameCount = 0;
+    }
+
+    @final void __mergeWithProcessing(Array[float] accum, TrackInfo track,
+                                      int frames
+                                      ) {
+
+        # Fill the input buffers.
+        inbufs := track.effects.getInputBuffers();
+        buf := track.readBuffer(frames * track.wave.channels);
+        for (int ch; ch < track.wave.channels && ch < inbufs.count(); ++ch) {
+            for (int i = 0; i < frames; ++i) {
+                inbufs[ch][i] = buf[i * track.wave.channels + ch] / 32768.0;
+            }
+        }
+
+        # Run the effects chain.
+        track.effects.run(frames);
+
+        # Mix down from the final output buffers.
+        for (int i = 0; i < frames; ++i) {
+            float left, right;
+            float sampleLeft = effectsOut[0][i];
+            float sampleRight = effectsOut[1][i];
+            # Very simple panning algorithm: if we're panning left, pan the
+            # right channel into the left, if we're panning right pan the left
+            # channel into the right.
+            if (track.pan < 0) {
+                left = (sampleLeft + sampleRight * -track.pan);
+                right = sampleRight * (track.pan + 1);
+            } else if (track.pan > 0) {
+                left = sampleLeft * (1 - track.pan);
+                right = (sampleRight + sampleLeft * track.pan);
+            } else {
+                left = sampleLeft;
+                right = sampleRight;
+            }
+
+            left *= track.gain * track.volume;
+            right *= track.gain * track.volume;
+
+            accum[i * 2] = accum[i * 2] + left;
+            accum[i * 2 + 1] = accum[i * 2 + 1] + right;
+        }
     }
 
     @final void __mergeMonoTrack(Array[float] accum, TrackInfo track,
@@ -164,7 +216,9 @@ class RemixHead {
 
         # Mix and pan all of the waves into the accumulator.
         for (track :in trackInfo) {
-            if (track.wave.channels == 2)
+            if (track.effects)
+                __mergeWithProcessing(accum, track, frames);
+            else if (track.wave.channels == 2)
                 __mergeStereoTrack(accum, track, frames);
             else
                 __mergeMonoTrack(accum, track, frames);
@@ -252,6 +306,7 @@ class RemixHead {
 }
 
 project := RemixHead();
+plugins := PluginLibrary();
 
 ## Move forward to the specified position, writing to the output file if
 ## "outfile" has been called
@@ -286,6 +341,23 @@ project := RemixHead();
 @function int gain(int track, float val) {
     project.setGain(track, val);
     return 0;
+}
+
+## Inserts a new effects plugin.
+@function PluginInstance insertEffect(int track, String name) {
+    plugin := plugins.getPluginByName(name);
+    if (!plugin)
+        throw Exception('No plugin with the specified name');
+    inst := plugin.makeInstance(project.trackInfo[0].wave.rate);
+    trackObj := project.trackInfo[track];
+    if (trackObj.effects)
+        inst.append(trackObj.effects);
+    else
+        inst.setOutputBuffers(project.effectsOut);
+    cerr I`output buffers are $(project.effectsOut.count()) \
+           $(project.effectsOut[0].count()), $(project.effectsOut[1].count())`;
+    trackObj.effects = inst;
+    return inst;
 }
 
 ## Close the file ("pen up").
@@ -385,6 +457,7 @@ if (argv[1] == 'mix') {
     ctx.define('pan', pan());
     ctx.define('volume', volume());
     ctx.define('gain', gain());
+    ctx.define('insertEffect', insertEffect());
     ctx.define('finish', finish());
     ctx.define('close', close());
     ctx.define('collectStats', collectStats());

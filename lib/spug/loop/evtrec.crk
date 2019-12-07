@@ -3,12 +3,14 @@
 import crack.cont.array Array;
 import crack.fs makePath, Path;
 import crack.functor Functor1;
-import crack.io Formatter, StandardFormatter;
+import crack.io Formatter, FStr, StandardFormatter;
+import crack.lang Exception;
 import crack.midi.event ControlChange, Event;
 import crash Builtin, EvalContext, Obj;
 import spug.loop.model EventManager;
 import spug.loop.jack WaveManager, WindowBufferAdapter;
 import types FloatObj, IntObj;
+import .plugins PluginInstance, PluginLibrary;
 
 @import ann function;
 @import crack.ann impl;
@@ -52,10 +54,10 @@ class VolumeControl @impl EventProcessor {
         track = track {
     }
     void oper call(Event event) {
-        adapter.volume = float(ControlChange.cast(event).value) / 128.0;
+        adapter.mixer.volume = float(ControlChange.cast(event).value) / 128.0;
         # TODO: only want to see the last of these for a given time position
         out I`forward $(waveMan.tell())
-              volume $track $(adapter.volume)
+              volume $track $(adapter.mixer.volume)
               `;
     }
 }
@@ -72,6 +74,8 @@ class Project {
 
     ## The next track index.
     int __trackIndex;
+
+    PluginLibrary __plugins = {};
 
     Array[WindowBufferAdapter] __channels = {};
 
@@ -111,13 +115,13 @@ class Project {
 
     ## Set the gain for the channel at the index.
     void setGain(int index, float gain) {
-        __channels[index].gain = gain;
+        __channels[index].mixer.gain = gain;
         out `gain $index $gain\n`;
     }
 
     ## Set the volume for the channel at the index.
     void setVol(int index, float volume) {
-        __channels[index].volume = volume;
+        __channels[index].mixer.volume = volume;
         out `volume $index $volume\n`;
     }
 
@@ -125,6 +129,16 @@ class Project {
     void setPan(int index, float pan) {
         __channels[index].setPan(pan);
         out `pan $index $pan\n`;
+    }
+
+    PluginInstance insertEffect(int index, String pluginName) {
+        plugin := __plugins.getPluginByName(pluginName);
+        if (!plugin)
+            throw Exception(FStr() `Unknown plugin $(pluginName.getRepr())`);
+        # TODO: need to get the rate from somewhere in the system.
+        inst := plugin.makeInstance(44100);
+        __channels[index].insertComponent(inst);
+        return inst;
     }
 }
 
@@ -143,6 +157,11 @@ class Project {
 @function(Project) int Project_setPan(int index, float pan) {
     self.setPan(index, pan);
     return 0;
+}
+
+@function(Project)
+PluginInstance Project_insertEffect(int index, String pluginName) {
+    return self.insertEffect(index, pluginName);
 }
 
 @function(Project) int Project_setVol(int index, float volume) {
@@ -179,6 +198,7 @@ Obj makeEventRecorderModule(EventManager eventManager) {
         obj.define('setPan', Project_setPan(proj));
         obj.define('setVol', Project_setVol(proj));
         obj.define('writeLog', Project_writeLog(proj));
+        obj.define('insertEffect', Project_insertEffect(proj));
         import crack.io cerr;
         cerr `makeProject() -> $(obj.vars)\n`;
         return obj;

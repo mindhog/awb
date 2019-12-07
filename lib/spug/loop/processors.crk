@@ -1,0 +1,77 @@
+## Audio processor interfaces.
+
+import crack.cont.array Array;
+import crack.io cerr;
+
+@import crack.ann interface;
+
+alias AudioBuffer = Array[float];
+alias BufferVector = Array[AudioBuffer];
+
+@export_symbols AudioBuffer, BufferVector;
+
+## Maximum number of frames per buffer for all components globally.
+int bufferFrameCount = 4096;
+
+## Components share audio buffers.
+##
+## The "shape" of a BufferVector is the size of its matrix, for example 2
+## channel audio with 4K samples would have a shape of 2x4096.
+##
+## - A component always has a notion of the "next component", when we run a
+##   component we finish by running the next component in the chain.
+## - We need to be able to set output buffers so we can write directly to the
+##   jack output buffers.
+@interface Component {
+
+    ## The next component in the chain.
+    Component _next;
+
+    ## Returns the number of input channels for the component.
+    @abstract int getInputChannelCount();
+
+    ## Returns the input buffers for the component.
+    @abstract BufferVector getInputBuffers();
+
+    ## Returns the number of output channels for the component.
+    @abstract int getOutputChannelCount();
+
+    ## Set the output buffers for the component.  'buffers' must be the
+    ## correct shape (see above).
+    @abstract void setOutputBuffers(BufferVector buffers);
+
+    ## Append another component.
+    @abstract void append(Component other) {
+        # xxx if there's already a "next" component, we'll want to inject this
+        # one before it.
+
+        if (other.getInputChannelCount() == getOutputChannelCount()) {
+            setOutputBuffers(other.getInputBuffers());
+        } else {
+            cerr `channel count mismatch connecting components\n`;
+            if (other.getInputChannelCount() > getOutputChannelCount()) {
+                size := getOutputChannelCount();
+                setOutputBuffers(other.getInputBuffers().subarray(size));
+            } else {
+                size := getOutputChannelCount();
+                bufs := other.getInputBuffers().clone();
+                while (bufs.count() < size)
+                    bufs.append(AudioBuffer(bufferFrameCount, 0));
+                setOutputBuffers(bufs);
+            }
+        }
+
+        _next = other;
+    }
+
+    @abstract void run(int numFrames);
+}
+
+## Returns a buffer vector consisting of numBuffers buffers of length
+## bufferFrameCount.
+BufferVector makeBufferVector(int numBuffers) {
+    result := BufferVector(numBuffers);
+    for (int i = 0; i < numBuffers; ++i)
+        result.append(AudioBuffer(bufferFrameCount, 0));
+    return result;
+}
