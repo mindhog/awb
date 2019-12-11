@@ -1,6 +1,7 @@
 ## The event recorder module.
 
 import crack.cont.array Array;
+import crack.cont.treemap TreeMap;
 import crack.fs makePath, Path;
 import crack.functor Functor1;
 import crack.io Formatter, FStr, StandardFormatter;
@@ -11,6 +12,7 @@ import spug.loop.model EventManager;
 import spug.loop.jack WaveManager, WindowBufferAdapter;
 import types FloatObj, IntObj;
 import .plugins PluginInstance, PluginLibrary;
+import .plugincmds makeEffectObj;
 
 @import ann function;
 @import crack.ann impl;
@@ -159,9 +161,8 @@ class Project {
     return 0;
 }
 
-@function(Project)
-PluginInstance Project_insertEffect(int index, String pluginName) {
-    return self.insertEffect(index, pluginName);
+@function(Project) Obj Project_insertEffect(int index, String pluginName) {
+    return makeEffectObj(self.insertEffect(index, pluginName));
 }
 
 @function(Project) int Project_setVol(int index, float volume) {

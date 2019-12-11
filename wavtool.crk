@@ -8,9 +8,10 @@ import crack.io cerr, cout, SeekableReader, SeekableWriter, StandardFormatter,
     SEEK_END, SEEK_SET;
 import crack.lang Exception;
 import crack.sys argv;
-import crash createRootContext, eval, Builtin, EvalContext;
+import crash createRootContext, eval, Builtin, EvalContext, Obj;
 import spug.loop.jack BYTES_PER_SAMPLE;
 import spug.loop.plugins PluginInstance, PluginLibrary;
+import spug.loop.plugincmds makeEffectObj;
 import spug.loop.processors makeBufferVector, BufferVector, Component;
 import types FloatObj, IntObj;
 
@@ -344,7 +345,7 @@ plugins := PluginLibrary();
 }
 
 ## Inserts a new effects plugin.
-@function PluginInstance insertEffect(int track, String name) {
+@function Obj insertEffect(int track, String name) {
     plugin := plugins.getPluginByName(name);
     if (!plugin)
         throw Exception('No plugin with the specified name');
@@ -357,7 +358,7 @@ plugins := PluginLibrary();
     cerr I`output buffers are $(project.effectsOut.count()) \
            $(project.effectsOut[0].count()), $(project.effectsOut[1].count())`;
     trackObj.effects = inst;
-    return inst;
+    return makeEffectObj(inst);
 }
 
 ## Close the file ("pen up").

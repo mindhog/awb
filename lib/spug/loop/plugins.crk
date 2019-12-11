@@ -1,6 +1,7 @@
 ## Tools for working with LV2 plugins.
 
 import crack.cont.array Array;
+import crack.cont.treemap TreeMap;
 import crack.io cerr;
 import spug.loop.lilv makeInputPortClass, makeOutputPortClass,
     makeAudioPortClass, makeControlPortClass, makeEventPortClass,
@@ -9,7 +10,7 @@ import spug.loop.lilv makeInputPortClass, makeOutputPortClass,
 import .jack JackWrapper;
 import .processors bufferFrameCount, AudioBuffer, BufferVector, Component;
 
-@import crack.ann assert, impl;
+@import crack.ann assert, cvars, impl;
 
 # These are port classes, they have to be initialized from a Lilv World,
 # meaning that they really need to be associated with every single object that
@@ -99,6 +100,9 @@ class PluginInstance @impl Component {
     Array[Array[float]] __inBufs,  __outBufs;
     Array[float] __controls;
 
+    ## Mapping of control name to control index.
+    TreeMap[String, int] __controlsByName = {};
+
     oper init(Plugin plugin, LilvInstance rep) :
         __plugin = plugin,
         __rep = rep,
@@ -157,6 +161,7 @@ class PluginInstance @impl Component {
                 __rep.connectPort(port.getIndex(), iter.elem().data());
                 iter.next();
             } else if (port.isOfType(CONTROL_PORT)) {
+                __controlsByName[port.getName()] = port.getIndex();
                 __rep.connectPort(port.getIndex(),
                                   __controls.data() + port.getIndex()
                                   );
@@ -169,6 +174,29 @@ class PluginInstance @impl Component {
         # Make sure we've used all of the buffers.
         @assert(!iter);
         __outBufs = bufs;
+    }
+
+    class PortNameIter {
+        alias TreeIter = TreeMap[String, int].Iter;
+        @cvars {
+            TreeIter __iter;
+        }
+
+        void next() { __iter.next() }
+        String elem() { return __iter.elem().key }
+        bool isTrue() { return __iter }
+    }
+
+    PortNameIter iterPortNames() {
+        return PortNameIter(__controlsByName.iter());
+    }
+
+    void setControlValue(String name, float value) {
+        __controls[__controlsByName[name]] = value;
+    }
+
+    float getControlValue(String name) {
+        return __controls[__controlsByName[name]];
     }
 
     void run(int numFrames) {
