@@ -295,8 +295,15 @@ class RemixHead {
 
     ## Finish writing the current file from the remainder of all track data.
     void finish() {
-        cerr `forwarding to $(trackInfo[0].wave.frameCount)\n`;
-        forwardTo(trackInfo[0].wave.frameCount);
+        # Find the longest track.
+        int frames;
+        for (track :in trackInfo) {
+            if (track.wave.frameCount > frames)
+                frames = track.wave.frameCount;
+        }
+
+        cerr `forwarding to $frames\n`;
+        forwardTo(frames);
         if (outDef)
             outDef.finish(outFile);
     }
