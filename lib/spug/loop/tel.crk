@@ -7,6 +7,7 @@ import crack.cont.array Array;
 import crack.fs makePath;
 import crack.functor Functor0, Functor1;
 import crack.lang CString, Exception;
+import crack.midi.alsa PortInfo, Sequencer;
 import crack.net Poller, POLLIN, POLLERR, POLLOUT;
 import crack.process Process;
 import crack.io cin, cout, cerr, FStr;
@@ -68,9 +69,71 @@ EventManager eventManager;
     return 0;
 }
 
+# Port modes.
+const int PM_MIDI = 0, PM_JACK = 1;
+
+class PortDescriptor {
+    int mode;
+    String name;
+    oper init(String descriptor) {
+        if (descriptor.startsWith('jack:')) {
+            mode = PM_JACK;
+            name = descriptor.substr(5);
+        } else if (descriptor.startsWith('midi:')) {
+            mode = PM_MIDI;
+            name = descriptor.substr(5);
+        } else {
+            # Legacy mode.
+            mode = PM_JACK;
+            name = descriptor;
+        }
+    }
+
+    PortInfo getPortInfo(Sequencer seq) {
+        if (mode != PM_MIDI)
+            throw Exception(FStr() `Port $name is not a midi port.`);
+
+        # Get the client name/port name.
+        sep := name.lfind('/');
+        if (sep == -1)
+            throw Exception(
+                FStr() I`$(name.getRepr()) is not a legal midi port name \
+                         (should be of the form <client>/<port>)`
+            );
+        clientName := name.substr(0, sep);
+        portName := name.substr(sep + 1);
+
+        for (client :in seq.getAllClients()) {
+            if (client.getName() == clientName) {
+                for (port :in client.getAllPorts(seq.seq)) {
+                    if (portName == port.getName())
+                        return port;
+                }
+            }
+        }
+
+        throw Exception(FStr() `Port $name not found.`);
+    }
+}
+
 @function int connect(String source, String dest) {
-    if (eventManager.waveMan)
-        eventManager.waveMan.connect(CString(source), CString(dest));
+
+    sd := PortDescriptor(source);
+    dd := PortDescriptor(dest);
+    if (sd.mode != dd.mode)
+        throw Exception(
+            FStr() `Can't connect jack ports to midi ports: $source -> $dest`
+        );
+
+    if (sd.mode == PM_JACK) {
+        if (eventManager.waveMan)
+            eventManager.waveMan.connect(CString(source), CString(dest));
+    } else {
+        sd.getPortInfo(eventManager.sequencer)
+            .connect(eventManager.sequencer,
+                     dd.getPortInfo(eventManager.sequencer)
+                     );
+    }
     return 0;
 }
 
