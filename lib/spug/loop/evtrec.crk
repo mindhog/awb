@@ -5,17 +5,17 @@ import crack.cont.treemap TreeMap;
 import crack.fs makePath, Path;
 import crack.functor Functor1;
 import crack.io Formatter, FStr, StandardFormatter;
-import crack.lang Exception;
-import crack.midi.event ControlChange, Event;
-import crash Builtin, EvalContext, Obj;
+import crack.lang Exception, StaticString;
+import crack.midi.event ChannelEvent, ControlChange, Event;
+import crash parseBlockArg, Block, Builtin, EvalContext, Obj;
 import spug.loop.model EventManager;
 import spug.loop.jack WaveManager, WindowBufferAdapter;
-import types FloatObj, IntObj;
+import types BoolObj, FloatObj, IntObj;
 import .plugins PluginInstance, PluginLibrary;
 import .plugincmds makeEffectObj;
 
 @import ann function;
-@import crack.ann impl;
+@import crack.ann cvars, impl;
 
 alias EventProcessor = Functor1[void, Event];
 
@@ -61,6 +61,57 @@ class VolumeControl @impl EventProcessor {
         out I`forward $(waveMan.tell())
               volume $track $(adapter.mixer.volume)
               `;
+    }
+}
+
+## Returns the event classname.
+@function(Event) String Event_type() {
+    return StaticString(self.class.name);
+}
+
+## Returns the channel (the event must be a ChannelEvent, specifically one of
+## NoteOn, NoteOff, ProgramChange, PitchWheel, or ControlChange).
+@function(Event) int Event_channel() {
+    return ChannelEvent.cast(self).channel;
+}
+
+## Returns the controller (the event must be a ControlChange event).
+@function(Event) int Event_controller() {
+    return ControlChange.cast(self).controller;
+}
+
+## Returns the controller value (the event must be a ControlChange event).
+@function(Event) int Event_value() {
+    return ControlChange.cast(self).value;
+}
+
+Obj wrapEvent(Event event) {
+    result := Obj();
+    result.define('type', Event_type(event));
+    result.define('channel', Event_channel(event));
+    result.define('controller', Event_controller(event));
+    result.define('value', Event_value(event));
+    return result;
+}
+
+## An event processor that invokes a crash script.
+class ScriptProcessor @impl EventProcessor {
+    @cvars {
+        EvalContext context;
+        Block block;
+    }
+
+    void oper call(Event event) {
+        import crack.io cerr;
+        context.pushFuncFrame();
+        try {
+            context.define('event', wrapEvent(event));
+            block.evaluate(context);
+        } catch (Exception ex) {
+            cerr `Got exception in event handler script: $ex\n`;
+        }
+        context.popFuncFrame();
+        cerr `terminating from script processor\n`;
     }
 }
 
@@ -133,6 +184,19 @@ class Project {
         out `pan $index $pan\n`;
     }
 
+    ## Enable or diable the channel.
+    void setEnabled(int index, bool enabled) {
+        if (enabled)
+            __channels[index].enable();
+        else
+            __channels[index].disable();
+    }
+
+    ## Returns true if the channel is enabled.
+    bool getEnabled(int index) {
+        return __channels[index].enabled();
+    }
+
     PluginInstance insertEffect(int index, String pluginName) {
         plugin := __plugins.getPluginByName(pluginName);
         if (!plugin)
@@ -141,6 +205,13 @@ class Project {
         inst := plugin.makeInstance(44100);
         __channels[index].insertComponent(inst);
         return inst;
+    }
+
+    ## Bind an arbitrary controller event to an event processor.
+    ## As elsewhere, 'controller' is an integer in which the low-byte is the
+    ## controller id and the high-byte is the channel number.
+    void bindController(int controller, EventProcessor processor) {
+        eventManager.eventProcessors[controller] = processor;
     }
 }
 
@@ -165,6 +236,21 @@ class Project {
     return makeEffectObj(self.insertEffect(index, pluginName));
 }
 
+class Project_bindControllerScriptCmd : Builtin {
+    @cvars{
+        Project proj;
+    }
+
+    Object invoke(EvalContext context, Array[Object] args) {
+        if (args.count() != 2)
+            throw Exception('Accepts exactly two arguments');
+        proj.bindController(IntObj.convert(args[0]).val,
+                            ScriptProcessor(context, parseBlockArg(args, 1))
+                            );
+        return IntObj(0);
+    }
+}
+
 @function(Project) int Project_setVol(int index, float volume) {
     if (volume > 1)
         volume = 1;
@@ -177,6 +263,15 @@ class Project {
 @function(Project) int Project_writeLog(String text) {
     self.writeLog(text);
     return 0;
+}
+
+@function(Project) int Project_setEnabled(int index, bool enabled) {
+    self.setEnabled(index, enabled);
+    return 0;
+}
+
+@function(Project) bool Project_getEnabled(int index) {
+    return self.getEnabled(index);
 }
 
 class EventRecorderModule {
@@ -200,6 +295,11 @@ Obj makeEventRecorderModule(EventManager eventManager) {
         obj.define('setVol', Project_setVol(proj));
         obj.define('writeLog', Project_writeLog(proj));
         obj.define('insertEffect', Project_insertEffect(proj));
+        obj.define('bindControllerScript',
+                   Project_bindControllerScriptCmd(proj)
+                   );
+        obj.define('setEnabled', Project_setEnabled(proj));
+        obj.define('getEnabled', Project_getEnabled(proj));
         import crack.io cerr;
         cerr `makeProject() -> $(obj.vars)\n`;
         return obj;

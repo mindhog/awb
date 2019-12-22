@@ -65,6 +65,12 @@ int bufferFrameCount = 4096;
     }
 
     @abstract void run(int numFrames);
+
+    ## Activate the component.
+    @abstract void activate();
+
+    ## Deactivate the component.
+    @abstract void deactivate();
 }
 
 ## Returns a buffer vector consisting of numBuffers buffers of length

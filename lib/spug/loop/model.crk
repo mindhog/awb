@@ -487,6 +487,7 @@ class EventManager {
     Orchestra instrument;
     Sequencer sequencer;
     ChannelMap channelMap;
+    Port outPort;
 
     # initialize to default project.
     Project project = {};

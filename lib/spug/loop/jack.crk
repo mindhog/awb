@@ -420,6 +420,7 @@ class Mixer @impl Component {
     array[float] lbuf, rbuf;
 
     float volume = 1.0, gain = 1.0;
+    bool __active = true;
 
     ## Array of pan values, one per track.  Pan values range from -1 (totally
     ## left) to +1 (totally right).
@@ -459,6 +460,8 @@ class Mixer @impl Component {
     }
 
     void run(int frameCount) {
+        if (!__active)
+            return;
         numTracks := buffers.count();
         for (int i; i < frameCount; ++i) {
             for (int j; j < numTracks; ++j) {
@@ -474,6 +477,14 @@ class Mixer @impl Component {
         if (_next)
             _next.run(frameCount);
     }
+
+    void activate() {
+        __active = true;
+    }
+
+    void deactivate() {
+        __active = false;
+    }
 }
 
 
@@ -485,6 +496,9 @@ class WindowBufferAdapter : Object @implements Functor1[void, JackWrapper] {
     Mixer mixer;
     Component headComponent;
 
+    # If this is set to false, the adapter is disabled.
+    bool __enabled = true;
+
     oper init(WindowBuffer buf) :
         buf = buf,
         mixer = Mixer(buf.numTracks),
@@ -492,19 +506,21 @@ class WindowBufferAdapter : Object @implements Functor1[void, JackWrapper] {
     }
 
     void oper call(JackWrapper wrapper) {
-
-        # Convert samples to floats and inject them into the input buffers.
-        input := headComponent.getInputBuffers();
-        for (int i; i < wrapper.frameCount; ++i) {
-            absPos := buf.playPos + i * buf.numTracks;
-            for (int j; j < buf.numTracks; ++j) {
-                sample := buf.ringBuf[(absPos + j) % buf.ringBuf.cap] / 32768.0;
-                input[j][i] = sample;
+        if (__enabled) {
+            # Convert samples to floats and inject them into the input buffers.
+            input := headComponent.getInputBuffers();
+            for (int i; i < wrapper.frameCount; ++i) {
+                absPos := buf.playPos + i * buf.numTracks;
+                for (int j; j < buf.numTracks; ++j) {
+                    sample :=
+                        buf.ringBuf[(absPos + j) % buf.ringBuf.cap] / 32768.0;
+                    input[j][i] = sample;
+                }
             }
-        }
 
-        mixer.setOutputBuffers(wrapper);
-        headComponent.run(wrapper.frameCount);
+            mixer.setOutputBuffers(wrapper);
+            headComponent.run(wrapper.frameCount);
+        }
 
         buf.playPos += wrapper.frameCount * buf.numTracks;
     }
@@ -539,6 +555,29 @@ class WindowBufferAdapter : Object @implements Functor1[void, JackWrapper] {
     @final void insertComponent(Component component) {
         component.append(headComponent);
         headComponent = component;
+    }
+
+    ## Enable the adapter, causing it to play audio.
+    @final void enable() {
+        if (!__enabled) {
+            if (headComponent)
+                headComponent.activate();
+            __enabled = true;
+        }
+    }
+
+    ## Disable the adapter, turning off all audio from it.
+    @final void disable() {
+        if (__enabled) {
+            if (headComponent)
+                headComponent.deactivate();
+            __enabled = false;
+        }
+    }
+
+    ## Returns true if the adapter is enabled.
+    @final bool enabled() {
+        return __enabled;
     }
 }
 

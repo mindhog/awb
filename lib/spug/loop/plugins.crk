@@ -204,6 +204,14 @@ class PluginInstance @impl Component {
         if (_next)
             _next.run(numFrames);
     }
+
+    void activate() {
+        __rep.activate();
+    }
+
+    void deactivate() {
+        __rep.deactivate();
+    }
 }
 
 PluginInstance _makePluginInstance(Plugin plugin, LilvInstance inst) {
