@@ -12,7 +12,7 @@ import crack.lang cmp, makeHashVal, CString, Exception;
 import crack.math floor;
 import crack.midi.event ChannelEvent, ControlChange, EndTrack, Event,
     MidiReader, MidiWriter, ProgramChange, SeekableEventSource, Track;
-import crack.protobuf Field, ProtoReader, ProtoWriter;
+import crack.protobuf readMessageFromString, Field, ProtoReader, ProtoWriter;
 import spug.loop.instrument Instrument, Orchestra;
 import spug.loop.jack WaveManager, WindowBufferAdapter;
 import crack.midi.alsa Port, Sequencer;
@@ -189,8 +189,9 @@ class Section {
         }
 
         # Read the optional data.
+        optionalDataString := src.readString();
         optionalData = SectionOptionalData();
-        optionalData.deserialize(ProtoReader(src));
+        readMessageFromString(optionalData, optionalDataString);
     }
 }
 
