@@ -14,7 +14,7 @@ import crack.io cin, cout, cerr, FStr;
 import crack.midi.event ControlChange, Event, NoteOn, NoteOff, Track;
 import crack.time TimeDelta;
 import spug.loop.evtrec makeEventRecorderModule;
-import spug.loop.model EventManager;
+import spug.loop.model EventManager, Section;
 import spug.loop.instrument MidiInstrument;
 import spug.loop.jack jackCallback, WaveManager, WindowBufferAdapter;
 
@@ -57,10 +57,17 @@ EventManager eventManager;
     return 0;
 }
 
+## Loads a wave file into the next available track of the project.
 @function WindowBufferAdapter load(String filename) {
     if (!eventManager.waveMan)
         eventManager.waveMan = WaveManager.create();
     return eventManager.mapWaveFile(filename);
+}
+
+## Load the specified AWB project file.
+@function int loadProject(String filename) {
+    eventManager.load(filename);
+    return 0;
 }
 
 @function int channelConnect(int channel, int client, int port) {
@@ -341,6 +348,38 @@ class ShellCmd : Builtin {
     }
 }
 
+Obj makeTrack(Track track) {
+    result := Obj();
+
+    ## Dump the track to standard output.
+    @function(Track) int dump() {
+        cout `$self\n`;
+        return 0;
+    }
+
+    result.define('dump', dump(track));
+    return result;
+}
+
+## Returns the currently active "Section" object.
+@function Obj getCurrentSection() {
+    result := Obj();
+
+    ## Returns the specified track from the current section.
+    @function(Section) Obj getTrack(int index) {
+        return makeTrack(self.tracks[index]);
+    }
+
+    ## Returns the number of clock ticks in a measure.
+    @function(Section) int getMeasureSize() {
+        return self.measure;
+    }
+
+    result.define('getTrack', getTrack(eventManager.curSection));
+    result.define('getMeasureSize', getMeasureSize(eventManager.curSection));
+    return result;
+}
+
 class InterpWrapper {
 
     EvalContext __rootCtx = createRootContext();
@@ -355,6 +394,7 @@ class InterpWrapper {
         __rootCtx.define('get_tempo', get_tempo());
         __rootCtx.define('set_tempo', set_tempo());
         __rootCtx.define('load', load());
+        __rootCtx.define('loadProject', loadProject());
         __rootCtx.define('metro', metro());
         __rootCtx.define('channel_connect', channelConnect());
         __rootCtx.define('connect', connect());
@@ -375,6 +415,7 @@ class InterpWrapper {
         __rootCtx.define('callback', CallbackCmd());
         __rootCtx.define('evtrec', getEventRecModule());
         __rootCtx.define('disableRead', disableRead());
+        __rootCtx.define('getCurrentSection', getCurrentSection());
     }
 
     void checkForInput() {
