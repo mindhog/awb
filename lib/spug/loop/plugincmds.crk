@@ -1,0 +1,27 @@
+## Crash commands for controlling plugins.
+
+import crack.cont.array Array;
+import crash Builtin, EvalContext, Obj;
+import types FloatObj, IntObj;
+import .plugins PluginInstance;
+
+@import ann function;
+
+@function(PluginInstance)
+int PluginInstance_setControl(String name, float val) {
+    self.setControlValue(name, val);
+    return 0;
+}
+
+@function(PluginInstance)
+float PluginInstance_getControlVal(String name) {
+    return self.getControlValue(name);
+}
+
+Obj makeEffectObj(PluginInstance plugin) {
+    obj := Obj();
+    obj.define('setControl', PluginInstance_setControl(plugin));
+    obj.define('getControlVal', PluginInstance_getControlVal(plugin));
+    return obj;
+}
+
