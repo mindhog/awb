@@ -7,13 +7,15 @@ import crack.cont.array Array;
 import crack.fs makePath;
 import crack.functor Functor0, Functor1;
 import crack.lang CString, Exception;
-import crack.midi.alsa PortInfo, Sequencer;
+import crack.midi.alsa PortInfo, Sequencer, SND_SEQ_OPEN_OUTPUT,
+    SND_SEQ_OPEN_INPUT;
 import crack.net Poller, POLLIN, POLLERR, POLLOUT;
 import crack.process Process;
 import crack.io cin, cout, cerr, FStr;
 import crack.midi.event ControlChange, Event, NoteOn, NoteOff, Track;
 import crack.time TimeDelta;
 import spug.loop.evtrec makeEventRecorderModule;
+import spug.loop.midieng MidiDispatcher, MidiEngine;
 import spug.loop.model EventManager, Section;
 import spug.loop.instrument MidiInstrument;
 import spug.loop.jack jackCallback, WaveManager, WindowBufferAdapter;
@@ -380,6 +382,37 @@ Obj makeTrack(Track track) {
     return result;
 }
 
+Obj _midiEngineObj;
+
+## Get the midi engine, creating it if necessary.
+@function Obj getMidiEngine() {
+    if (_midiEngineObj)
+        return _midiEngineObj;
+
+    if (!eventManager.waveMan)
+        throw Exception('Wave manager not defined');
+
+    seq := Sequencer(SND_SEQ_OPEN_OUTPUT | SND_SEQ_OPEN_INPUT, 0);
+    seq.seq.set_client_name('AWBX'.buffer);
+    eng := MidiEngine(eventManager.waveMan, seq);
+
+    # XXX Hack.  Remove once we have a more principled way of adding ports.
+    eng.outPort = seq.makeReadPort('out');
+    seq.makeWritePort('in');
+
+    eng.start();
+
+    _midiEngineObj = o := Obj();
+
+    ## Create an outuput port that all events are sent to.
+    @function(MidiEngine) int routeToOutputPort() {
+        self.addProcessor(MidiDispatcher());
+        return 0;
+    }
+    o.define('routeToOutputPort', routeToOutputPort(eng));
+    return _midiEngineObj;
+}
+
 class InterpWrapper {
 
     EvalContext __rootCtx = createRootContext();
@@ -391,6 +424,7 @@ class InterpWrapper {
         __rootCtx.define("stdlib", stdlib());
 
         __rootCtx.define('play', play());
+        __rootCtx.define('getMidiEngine', getMidiEngine());
         __rootCtx.define('get_tempo', get_tempo());
         __rootCtx.define('set_tempo', set_tempo());
         __rootCtx.define('load', load());

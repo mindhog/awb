@@ -444,6 +444,8 @@ class LoopCursor {
         span = track[-1].time;
     }
 
+    Event elem() { return track[index] }
+
     Event next() {
         cur := track[index];
         ++index;
@@ -456,6 +458,8 @@ class LoopCursor {
         return cur;
     }
 
+    ## Returns true if the event is the next event in the track following
+    ## 'pos'.
     bool immediatelyFollows(uint pos) {
         if (index == 0) {
             if (track.count() == 1)
