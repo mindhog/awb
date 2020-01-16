@@ -135,8 +135,18 @@ class MidiEngine {
             __trackCursors.append(LoopCursor(track));
 
         for (cur :in __trackCursors) {
-            while (cur.elem().time < pos % cur.span)
+            # Find the first event that is either 1) after 'pos' or 2) the
+            # first event in the track (indicating that we've looped around
+            # past 'pos').
+            startIndex := cur.index;
+            while (cur.elem().time < pos % cur.span && cur.index) {
                 cur.next();
+                if (cur.index == startIndex) {
+                    # XXX doesn't look like we ever actually see this.
+                    cerr `xxx looped around to start index\n`;
+                    break;
+                }
+            }
         }
     }
 
@@ -189,6 +199,7 @@ class MidiEngine {
                 __recordTrack = null;
                 __section = Section();
                 __startTime = 0;
+                __trackCursors = null;
                 __jack.getClient().transportStop();
             } else if (cc.controller == 41) {
                 # Control 41 is the "play" button, so have it toggle play.
