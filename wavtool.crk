@@ -129,7 +129,11 @@ class RemixHead {
         buf := track.readBuffer(frames * track.wave.channels);
         for (int ch; ch < track.wave.channels && ch < inbufs.count(); ++ch) {
             for (int i = 0; i < frames; ++i) {
-                inbufs[ch][i] = buf[i * track.wave.channels + ch] / 32768.0;
+                index := i * track.wave.channels + ch;
+                if (index < buf.size)
+                    inbufs[ch][i] = buf[index] / 32768.0;
+                else
+                    inbufs[ch][i] = 0;
             }
         }
 
