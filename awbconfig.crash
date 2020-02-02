@@ -13,13 +13,36 @@ connect awb:right system:playback_2
 
 # Connect a midi device to AWB's midi input (this depends on selected midi
 # device numbers and therefore sucks).
-shell aconnect 28:0 129:0
+#shell aconnect 28:0 128:0
+connect 'midi:nanoKONTROL2/nanoKONTROL2 MIDI 1'  'midi:AWB/in'
 
 # 899833 stray_mark
 # 2181881 101_brain_damaged.wav
 
 # Keeps track of the next track to be allocated with the "track" command.
 var trackNum 0
+
+def makeProject {} {
+    var result [[evtrec] Project $scriptDir]
+
+    # bind 'm' ("mark") to write the position.
+    app bind 109 [callback {
+        var pos [tell]
+        print 'marking ' $pos '\n'
+        $project writeLog [format 'mark ' $pos '\n']
+    }]
+
+    $result bindControllerScript 41 {
+        print 'got control event\n'
+        if {event value} {
+            print 'playing'
+            play
+        }
+        print 'done with control event\n'
+    }
+
+    give $result
+}
 
 # Adds a new track.
 def track {file} {
@@ -38,6 +61,14 @@ def vol {track val} {
 }
 
 def gain {track val} {
-    $probject setGain $track $val
+    $project setGain $track $val
 }
 
+# Bindings for Korg Nanokontrol (channel,controller):
+# << - 0,43
+# >> - 0,44
+# Stop - 0,42
+# Play - 0,41
+# Record - 0,45
+# Track < - 0,58
+# Track > - 0,59
