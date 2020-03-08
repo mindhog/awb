@@ -1,4 +1,5 @@
 import crack.cont.array Array;
+import crack.ext._jack JackClient;
 import crack.functor Functor2;
 import crack.io cerr, FileHandle;
 import crack.lang Exception;
@@ -14,14 +15,14 @@ import crack.time TimeDelta;
 import spug.loop.jack JackPos, JackWrapper, JACK_TRANSPORT_ROLLING;
 import spug.loop.model LoopCursor, Section;
 
-@import crack.ann cvars, impl;
+@import crack.ann cvars, impl, interface;
 
-class MidiEngine;
+class MidiSequencer;
 
 ## EventProcessors are called whenever the MidiEngine receives an event.  They
 ## are called synchronously and therefore must be able to deal with the event
 ## in a small bounded amount of time.
-alias EventProcessor = Functor2[void, MidiEngine, Event];
+alias EventProcessor = Functor2[void, MidiSequencer, Event];
 
 const MAX_TIME := 0xffffffff;
 
@@ -37,9 +38,16 @@ const int
     ST_LATCHED = 2,
     ST_RECORD = 3;
 
-class MidiEngine {
+## Interface to wrap jack interactions.
+@interface Jack {
+    @abstract void start();
+    @abstract void stop();
+    @abstract int getTransportState(JackPos pos);
+}
+
+@final class MidiSequencer {
     Sequencer __seq;
-    JackWrapper __jack;
+    Jack __jack;
 
     # Last known state information of the jack transport.
     JackPos __pos = JackPos();
@@ -78,7 +86,7 @@ class MidiEngine {
     @final void __updateJackState() {
         if (!__posIsValid) {
             lastState := __transportState;
-            __transportState = __jack.getClient().transportQuery(__pos);
+            __transportState = __jack.getTransportState(__pos);
             __posIsValid = true;
         }
     }
@@ -135,15 +143,12 @@ class MidiEngine {
             __trackCursors.append(LoopCursor(track));
 
         for (cur :in __trackCursors) {
-            # Find the first event that is either 1) after 'pos' or 2) the
-            # first event in the track (indicating that we've looped around
-            # past 'pos').
+            # Find the first event that is after 'pos'.
             startIndex := cur.index;
-            while (cur.elem().time < pos % cur.span && cur.index) {
+            while (cur.elem().time < pos % cur.span) {
                 cur.next();
                 if (cur.index == startIndex) {
                     # XXX doesn't look like we ever actually see this.
-                    cerr `xxx looped around to start index\n`;
                     break;
                 }
             }
@@ -185,8 +190,7 @@ class MidiEngine {
                     # rolling.
                     __recordTrack = Track('noname');
                     if (__transportState != JACK_TRANSPORT_ROLLING) {
-                        jack := __jack.getClient();
-                        jack.transportStart();
+                        __jack.start();
                         __updateJackState();
                     }
                     __state = ST_LATCHED;
@@ -200,16 +204,16 @@ class MidiEngine {
                 __section = Section();
                 __startTime = 0;
                 __trackCursors = null;
-                __jack.getClient().transportStop();
+                __jack.stop();
             } else if (cc.controller == 41) {
                 # Control 41 is the "play" button, so have it toggle play.
                 if (cc.value != 127)
                     return;
                 if (__transportState == JACK_TRANSPORT_ROLLING) {
                     # Currently playing.  Stop.
-                    __jack.getClient().transportStop();
+                    __jack.stop();
                 } else {
-                    __jack.getClient().transportStart();
+                    __jack.stop();
                     __startTime = __pos.usecs;
                     __setTrackCursors(0);
                     for (cur :in __trackCursors)
@@ -236,7 +240,7 @@ class MidiEngine {
         }
     }
 
-    oper init(JackWrapper jack, Sequencer seq) :
+    oper init(Jack jack, Sequencer seq) :
         __jack = jack,
         __seq = seq {
     }
@@ -244,10 +248,10 @@ class MidiEngine {
     class EventHandler @impl PollEventCallback {
         Sequencer __seq;
         Array[Event] __recorded;
-        RawPtr[MidiEngine] __engine;
+        RawPtr[MidiSequencer] __engine;
 
-        oper init(MidiEngine engine, Sequencer seq) :
-            __engine = RawPtr[MidiEngine](engine),
+        oper init(MidiSequencer engine, Sequencer seq) :
+            __engine = RawPtr[MidiSequencer](engine),
             __seq = seq {
         }
 
@@ -266,7 +270,10 @@ class MidiEngine {
         }
     }
 
-    void __runOneCycle(Poller poller, TimeDelta timeoutObj) {
+    ## timeoutObj: this is neither an input nor an output parameter, we just
+    ## pass one of these in from the caller to avoid having to allocate one
+    ## for each cycle.
+    void runOneCycle(Poller poller, TimeDelta timeoutObj) {
         __updateJackState();
 
         TimeDelta timeout;
@@ -321,19 +328,23 @@ class MidiEngine {
         poller.waitAndProcess(timeout);
     }
 
-    void __run() {
-        # Create the event handlers for incoming MIDI events.
+    void registerHandlers(Poller poller) {
         count := __seq.seq.poll_descriptors_count(POLLIN);
         fds := PollSet(count);
         rc := __seq.seq.poll_descriptors_vp(fds, count, POLLIN);
 
-        poller := Poller();
         evt := PollEvt();
         for (int i = 0; i < count; ++i) {
             fds.get(i, evt);
             cerr `fd $(evt.fd) events $(evt.events)\n`;
             poller.add(FileHandle(evt.fd), EventHandler(this, __seq));
         }
+    }
+
+    void _run() {
+        # Create the event handlers for incoming MIDI events.
+        poller := Poller();
+        registerHandlers(poller);
 
         # This is the TimeDelta structure that we'll populate and reuse for
         # the poll timeout.  If the transport is rolling and there are events,
@@ -346,7 +357,7 @@ class MidiEngine {
         cerr `starting loop\n`;
         while (true) {
             try {
-                __runOneCycle(poller, timeoutObj);
+                runOneCycle(poller, timeoutObj);
             } catch (Exception ex) {
                 cerr `Got exception in run thread:\n$ex\n`;
             }
@@ -365,22 +376,56 @@ class MidiEngine {
         __processor = processor;
     }
 
-    void start() {
-        class MyThread : Thread {
-            @cvars {
-                MidiEngine eng;
-            }
+}
 
-            void run() {
-                eng.__run();
-            }
-        }
-        MyThread(this).start();
+@final class JackImpl @impl Jack {
+    @cvars {
+        JackClient __client;
+    }
+    void start() {
+        __client.transportStart();
+    }
+
+    void stop() {
+        __client.transportStop();
+    }
+
+    int getTransportState(JackPos pos) {
+        return __client.transportQuery(pos);
     }
 }
 
+## Midi engine public interface.
+@final class MidiEngine {
+    MidiSequencer __mseq;
+
+    oper init(JackWrapper jackWrapper, Sequencer seq) :
+        __mseq(JackImpl(jackWrapper.getClient()), seq) {
+    }
+
+    void start() {
+        class MyThread : Thread {
+            @cvars {
+                MidiSequencer eng;
+            }
+
+            void run() {
+                eng._run();
+            }
+        }
+
+        MyThread(__mseq).start();
+    }
+
+    void addProcessor(EventProcessor processor) {
+        __mseq.addProcessor(processor);
+    }
+
+    Port oper .outPort =(Port port) { return __mseq.outPort = port }
+}
+
 class MidiDispatcher @impl EventProcessor {
-    void oper call(MidiEngine engine, Event event) {
+    void oper call(MidiSequencer engine, Event event) {
         engine.outPort.send(event);
     }
 }

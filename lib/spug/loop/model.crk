@@ -101,6 +101,10 @@ class Section {
         # verify that the time is an even multiple of the current span
         } else {
 
+            # If we don't have measure defined, define it now.
+            if (!measure)
+                measure = time;
+
             # if the end time is closer to the beginning of the measure than
             # to the end, trim all events to the end of the measure boundary.
             timeInMeasure := time % measure;
@@ -622,6 +626,11 @@ class EventManager {
             # otherwise, just reset it.
             markStartTime();
         }
+
+        # Start the wave manager if we're coming in from IDLE.
+        if (waveMan && mode == IDLE)
+            waveMan.unpause();
+
         mode = RECORD;
         recordTrack = Track(channelMap.getCurrentChannel().getProgramName());
     }

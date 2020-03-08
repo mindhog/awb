@@ -1,0 +1,304 @@
+
+import crack.cont.list List;
+import crack.io cerr, FileHandle, Formatter, FStr;
+import crack.ext._jack JACK_TRANSPORT_STOPPED;
+import crack.lang cmp, Exception;
+import crack.midi.alsa Port, Sequencer, SND_SEQ_OPEN_OUTPUT,
+    SND_SEQ_OPEN_INPUT;
+import crack.math min;
+import crack.midi.event ControlChange, Event, NoteOn;
+import crack.net Poller, PollEventCallback;
+import crack.time TimeDelta;
+import spug.loop.jack JackPos, JackWrapper, JACK_TRANSPORT_ROLLING;
+import spug.loop.midieng Jack, MidiDispatcher, MidiSequencer;
+import unittest register, runAllTests, Test;
+
+@import crack.ann assert, cvars, impl;
+
+int cmpEvent(Event a, Event b) {
+    if ((an := NoteOn.cast(a)) &&
+        (bn := NoteOn.cast(b))) {
+        rc := cmp(an.time, bn.time);
+        if (rc) return rc;
+        rc = cmp(an.note, bn.note);
+        return rc;
+    } else {
+        throw Exception(FStr() `can't compare events $a:$b`);
+    }
+}
+
+class EL : List[Event] {
+    int cmp(EL other) {
+        size := min(count(), other.count());
+        for (int i = 0; i < size; ++i) {
+            if (diff := cmpEvent(this[i], other[i]))
+                return diff;
+        }
+
+        if (count() > size)
+            return 1;
+        else if (other.count() > size)
+            return -1;
+        else
+            return 0;
+    }
+
+    int cmp(Object other) {
+        return (o := EL.cast(other, null)) ? cmp(o) : Object.cmp(other);
+    }
+
+    void formatTo(Formatter out) {
+        out `[`;
+        for (event :in this) {
+            if (e := NoteOn.cast(event, null))
+                out `$(e.time):$(e.note); `;
+            else
+                out `$event; `
+        }
+        out `]`;
+    }
+}
+
+class JackFake @impl Jack {
+    int state;
+    uint64 t;
+    void start() { state = JACK_TRANSPORT_ROLLING }
+    void stop() { state = JACK_TRANSPORT_STOPPED }
+    int getTransportState(JackPos pos) {
+        pos.usecs = t;
+        return state;
+    }
+}
+
+class SequencerFake : Sequencer {
+
+    EL __events = {};
+    JackFake __jack;
+
+    oper init(JackFake jack) :
+        Sequencer(SND_SEQ_OPEN_OUTPUT | SND_SEQ_OPEN_INPUT, 0),
+        __jack = jack {
+    }
+
+    bool hasEvent() {
+        return __events && __events[0].time <= __jack.t;
+    }
+
+    Event getEvent() {
+        if (hasEvent()) {
+            return __events.popHead();
+        } else
+            return null;
+    }
+
+    # Test methods.
+
+    ## Add an event to the input event queue.  This is the queue of events
+    ## that will be read from the sequencer (as if coming in from an outside
+    ## source, like a controller.  Event time must be specified in absolute
+    ## usecs (normally these are specified in ticks).
+    void addEvent(Event event) {
+        __events.pushTail(event);
+    }
+
+    Event getCurEvent() {
+        return __events[0];
+    }
+
+    ## Returns true if there are any events queued (even if none is available
+    ## for the current time)
+    bool hasFutureEvents() { return __events }
+}
+
+class PortFake : Port {
+    EL events = {};
+    JackFake __jack;
+
+    oper init(JackFake jack) :
+        Port(null, 0),
+        __jack = jack {
+    }
+
+    void send(Event event) {
+        e := event.clone();
+        e.time = __jack.t / 695;
+        events.pushTail(e);
+    }
+}
+
+class PollerFake : Poller {
+
+    PollEventCallback __callback;
+
+    ## The next absolute time to wait until.
+    uint64 waitTime;
+
+    @cvars {
+        JackFake __jack;
+        SequencerFake __seq;
+    }
+
+    int wait(TimeDelta timeout) {
+
+        # If there are events and no timeout, this is easy.
+        if (__seq.hasFutureEvents() && !timeout) {
+            __jack.t = __seq.getCurEvent().time;
+#            cerr `xxx got events, no timeout, $(__jack.t / 695)\n`;
+            return 1;
+        }
+
+        # This shouldn't happen in a test case.
+        @assert(timeout &&
+                 "would wait forever: no events queued, no timeout given!"
+                );
+
+        # See which comes first, the timeout, the first event, or the waitTime.
+        t := __jack.t + uint64(timeout.secs * 1000000) +
+             uint64(timeout.nsecs / 1000);
+#        cerr `   xxx timeout time is $(t / 695)\n`;
+
+        # Start by assuming we'll timeout.
+        bool timedOut = true;
+
+        # If the next event is before the timeout, the end time is that of the
+        # next event.
+        if (__seq.hasFutureEvents() &&
+            (eventTime := __seq.getCurEvent().time) < t) {
+            t = eventTime;
+            timedOut = false;
+#            cerr `   xxx next event comes before timeout: $(t / 695)\n`;
+        }
+
+        # If the waitTime is before 't', the end time is the wait time.
+        if (waitTime < t) {
+            t = waitTime;
+
+            # We mark this as a "timeout" even through it's not because we
+            # don't want the engine to try to process any events and that's
+            # the timeout behavior.
+            timedOut = true;
+#            cerr `   xxx waitTime comes before timeout & next event: $(t / 695)\n`;
+        }
+
+        __jack.t = t;
+        return timedOut ? 0 : 1;
+    }
+
+    void waitAndProcess(TimeDelta timeout) {
+        if (wait(timeout))
+            __callback(this, null);
+    }
+
+    void add(FileHandle p, PollEventCallback callback) {
+        @assert(!__callback);
+        __callback = callback;
+    }
+}
+
+NoteOn no(int time, int note) { return NoteOn(time, 0, byte(note), 127) }
+
+@abstract class EngineTest : Test {
+    JackFake jack = JackFake();
+    SequencerFake seq;
+    MidiSequencer eng;
+    PollerFake poller;
+    TimeDelta timeoutObj = TimeDelta();
+    PortFake outPort;
+
+    void setUp() {
+        seq = SequencerFake(jack);
+        eng = MidiSequencer(jack, seq);
+        poller = PollerFake(jack, seq);
+        eng.registerHandlers(poller);
+        eng.outPort = outPort = PortFake(jack);
+        eng.addProcessor(MidiDispatcher());
+    }
+
+    ## Returns absoulte time in usecs for the current time + ticks.
+    uint64 getAbsTime(uint ticks) { return jack.t + ticks * 695 }
+
+    ## Send a record event.  'ticks' is the number of relative ticks in the
+    ## future.
+    void sendRecord(uint ticks) {
+        seq.addEvent(ControlChange(getAbsTime(ticks), 0, 45, 127));
+    }
+
+    ## Send a "note on" event.  'ticks' is the number of relative ticks in the
+    ## future.
+    void sendNoteOn(uint ticks, byte note) {
+        seq.addEvent(NoteOn(getAbsTime(ticks), 0, note, 127));
+    }
+
+    ## forward the engine the specified number of ticks, evaluating all events
+    ## along the way.
+    void wait(uint ticks) {
+        poller.waitTime = jack.t + ticks * 695;
+        while (jack.t < poller.waitTime)
+            eng.runOneCycle(poller, timeoutObj);
+    }
+
+    ## Schedule record, three note on events at 100, 200, 300 ticks, and then
+    ## another record event at 400 ticks.
+    void sendThreeNoteOns() {
+        sendRecord(0);
+        sendNoteOn(100, 1);
+        sendNoteOn(200, 2);
+        sendNoteOn(300, 3);
+        sendRecord(400);
+    }
+}
+
+class SeqTest : EngineTest {
+    void run() {
+        # Record three notes.
+        sendThreeNoteOns();
+        wait(400);
+
+        # Make sure we get the first event back out from the record.
+        assertEqual(outPort.events,
+                    EL![no(100, 1), no(200, 2), no(300, 3), no(400, 1)]
+                    );
+        outPort.events = EL();
+
+        # Add a new track at +50
+        sendRecord(5);
+        sendNoteOn(50, 4);
+        sendNoteOn(150, 5);
+        sendNoteOn(250, 6);
+        sendRecord(350);
+        wait(600);
+
+        # Even though the end event happens after the end event of the first
+        # track, the new track is still no longer than the first track and
+        # therefore the section span does not change.
+        assertEqual(outPort.events,
+                    EL![no(450, 4), no(499, 2), no(550, 5), no(599, 3),
+                        no(650, 6), no(699, 1), no(750, 4), no(799, 2),
+                        no(849, 5), no(899, 3), no(949, 6), no(999, 1)]
+                    );
+    }
+}
+register(SeqTest());
+
+## Test increasing the length of a loop.
+class LengtheningTest : EngineTest {
+    void run() {
+        sendThreeNoteOns();
+
+        sendRecord(405);
+        sendNoteOn(450, 4);
+        sendNoteOn(755, 5);
+        sendRecord(760);
+
+        wait(900);
+        assertEqual(outPort.events,
+                    EL![no(100, 1), no(200, 2), no(300, 3), no(400, 1),
+                        no(450, 4), no(499, 2), no(599, 3), no(699, 1),
+                        no(755, 5), no(799, 2), no(899, 3)]
+                    );
+    }
+}
+register(LengtheningTest());
+
+runAllTests();
+
