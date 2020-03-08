@@ -810,6 +810,8 @@ class App : Object @implements AppMethods, KeyboardHandler, MouseButtonHandler,
             app.terminate();
         else if (sym == b'r') {
             eventManager.doLatchedRecord();
+        } else if (sym == b'i') {
+            eventManager.doRecord();
         } else if (sym == b' ') {
             eventManager.togglePlay();
         } else if (sym == b'c') {
