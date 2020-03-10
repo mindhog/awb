@@ -1,0 +1,61 @@
+
+import crack.cont.array Array;
+import crack.io StringWriter, Writer;
+import crack.lang AppendBuffer;
+import crack.midi.event Event, MidiWriter, Track;
+
+class Buf = AppendBuffer {
+    void write4(uint32 val) {
+        append(byte(val >> 24));
+        append(byte(val >> 16));
+        append(byte(val >> 8));
+        append(byte(val));
+    }
+
+    void write2(uint16 val) {
+        append(byte(val >> 8));
+        append(byte(val));
+    }
+}
+
+class MidiFile {
+
+    uint ticksPerQN;
+    Array[Track] __tracks = Array[Track]();
+
+    ## ticksPerQN: Ticks per quarter note.  The high bit must be zero,
+    ##             otherwised this has a different meaning when stored to the
+    ##             file.
+    oper init(uint ticksPerQN) :
+        ticksPerQN = ticksPerQN {
+    }
+
+    void append(Track track) {
+        __tracks.append(track);
+    }
+
+    ## Write a midi file.
+    void write(Writer out) {
+        buf := Buf(AppendBuffer(14));
+        buf.extend('MThd');
+        buf.write4(6);  # size of the chunk
+        buf.write2(1);  # Format 1
+        buf.write2(uint16(__tracks.count()));
+        buf.write2(uint16(ticksPerQN));
+
+        for (track :in __tracks) {
+            # Serialize the track.
+            dest := StringWriter();
+            track.writeTo(MidiWriter(dest));
+            serializedTrack := dest.string();
+
+            # Add it to the buffer.
+            buf.extend('MTrk');
+            buf.write4(uint32(serializedTrack.size));
+            buf.extend(serializedTrack);
+        }
+
+        # Finally, write the buffer.
+        out.write(buf);
+    }
+}

@@ -25,6 +25,8 @@ import crash createRootContext, eval, parseBlockArg, ActiveFunc, Block, Builtin,
 import stdlib stdlib;
 import types FloatObj, IntObj;
 
+import .midifile MidiFile;
+
 @import crack.ann assert, impl, interface;
 @import ann function;
 
@@ -410,13 +412,31 @@ Obj _midiEngineObj;
 
     _midiEngineObj = o := Obj();
 
-    ## Create an outuput port that all events are sent to.
+    ## Create an output port that all events are sent to.
     @function(MidiEngine) int routeToOutputPort() {
         self.addProcessor(MidiDispatcher());
         return 0;
     }
     o.define('routeToOutputPort', routeToOutputPort(eng));
     return _midiEngineObj;
+}
+
+class ExportMidiFileCmd : Builtin {
+    Object invoke(EvalContext context, Array[Object] args) {
+        if (args.count() < 2)
+            throw Exception(
+                'Usage: exportMidiFile <filename> <trackNum> ...'
+            );
+        filename := String.cast(args[0]);
+        tracks := Array[Track]();
+        file := MidiFile(eventManager.ppb);
+        for (arg :in args.subarray(1)) {
+            track := eventManager.curSection.tracks[IntObj.convert(args[1]).val];
+            file.append(track);
+        }
+        file.write(makePath(filename).writer());
+        return IntObj(0);
+    }
 }
 
 class InterpWrapper {
@@ -430,6 +450,7 @@ class InterpWrapper {
         __rootCtx.define("stdlib", stdlib());
 
         __rootCtx.define('play', play());
+        __rootCtx.define('exportMidiFile', ExportMidiFileCmd());
         __rootCtx.define('getMidiEngine', getMidiEngine());
         __rootCtx.define('get_tempo', get_tempo());
         __rootCtx.define('set_tempo', set_tempo());
