@@ -429,7 +429,7 @@ class ExportMidiFileCmd : Builtin {
             );
         filename := String.cast(args[0]);
         tracks := Array[Track]();
-        file := MidiFile(eventManager.ppb);
+        file := MidiFile(eventManager.ppb, float(eventManager.tempo));
         for (arg :in args.subarray(1)) {
             track := eventManager.curSection.tracks[IntObj.convert(args[1]).val];
             file.append(track);

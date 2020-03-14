@@ -21,13 +21,15 @@ class Buf = AppendBuffer {
 class MidiFile {
 
     uint ticksPerQN;
+    float bpm;
     Array[Track] __tracks = Array[Track]();
 
     ## ticksPerQN: Ticks per quarter note.  The high bit must be zero,
     ##             otherwised this has a different meaning when stored to the
     ##             file.
-    oper init(uint ticksPerQN) :
-        ticksPerQN = ticksPerQN {
+    oper init(uint ticksPerQN, float bpm) :
+        ticksPerQN = ticksPerQN,
+        bpm = bpm {
     }
 
     void append(Track track) {
@@ -43,10 +45,25 @@ class MidiFile {
         buf.write2(uint16(__tracks.count()));
         buf.write2(uint16(ticksPerQN));
 
+        # convert beats per minute to microseconds per beat
+        msecsPerBeat := uint(6e+7 / float(bpm));
+
         for (track :in __tracks) {
-            # Serialize the track.
+            # Serialize the set tempo event.  This really only needs to happen
+            # for the first track.
             dest := StringWriter();
-            track.writeTo(MidiWriter(dest));
+            midiWriter := MidiWriter(dest);
+            midiWriter.encodeVarLen(0);  # Time.
+            midiWriter.write(0xff);  # Synthetic event 0x51
+            midiWriter.write(0x51);
+            midiWriter.write(3);  # Number of bytes.
+            midiWriter.write(byte(msecsPerBeat >> 16));  # msecs per beat.
+            midiWriter.write(byte(msecsPerBeat >> 8));
+            midiWriter.write(byte(msecsPerBeat));
+
+            # Serialize the track.
+            track.writeTo(midiWriter);
+            midiWriter.flush();
             serializedTrack := dest.string();
 
             # Add it to the buffer.
