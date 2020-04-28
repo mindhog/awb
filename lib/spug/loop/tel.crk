@@ -173,11 +173,8 @@ class Wave : ManagedWaveBuffer {
 }
 
 ## Add the wave model to the engine.
-@function WaveAdapter addWaveModel(WaveModel model, String trackName,
-                                   int spanInMSecs
-                                   ) {
-    cerr `total span in msecs: $spanInMSecs\n`;
-    return eventManager.addWaveModel(model, trackName, spanInMSecs);
+@function WaveAdapter addWaveModel(WaveModel model, String trackName) {
+    return eventManager.addWaveModel(model, trackName);
 }
 
 ## Load the specified AWB project file.

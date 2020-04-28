@@ -931,16 +931,15 @@ class EventManager {
         return result;
     }
 
-    WaveAdapter addWaveModel(WaveModel model, String trackName,
-                             int64 spanInMSecs
-                             ) {
+    WaveAdapter addWaveModel(WaveModel model, String trackName) {
         @assert(waveMan);
         result := waveMan.addWaveModel(model);
+        spanInUSecs := int64(model.frames) * 1000000 / 44100;
+        spanInTicks := usecsToTicks(spanInUSecs);
         curSection.tracks.append(
-            Track(trackName,
-                  Array[Event]![EndTrack(usecsToTicks(spanInMSecs))] )
+            Track(trackName, Array[Event]![EndTrack(spanInTicks)])
         );
-        if ((spanInTicks := usecsToTicks(spanInMSecs)) > curSection.span)
+        if (spanInTicks > curSection.span)
             curSection.span = spanInTicks;
         controller.trackAdded();
         return result;

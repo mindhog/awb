@@ -160,6 +160,8 @@ int jackCallback(uint32 nframes, voidptr arg) {
     ##
     ## The returned buffer is expected to be two channel.
     @abstract WaveBuffer getChunk(uint index);
+
+    @abstract uint oper .frames();
 }
 
 ## Jack callback processor that plays a WaveModel.
@@ -197,6 +199,10 @@ class SimpleWaveModel : WaveModel {
     Array[WaveBuffer] buffers = {};
     WaveBuffer getChunk(uint index) {
         return buffers[index % buffers.count()];
+    }
+
+    uint oper .frames() {
+        return buffers.count() * framesPerChunk;
     }
 }
 
