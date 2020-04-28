@@ -154,6 +154,11 @@ int jackCallback(uint32 nframes, voidptr arg) {
     ## Number of frames per chunk.  This must be constant for the entire model.
     int framesPerChunk;
 
+    ## Get the chunk to play at the given index.
+    ##
+    ## Note that 'index' is an index over the chunks, not the frames.
+    ##
+    ## The returned buffer is expected to be two channel.
     @abstract WaveBuffer getChunk(uint index);
 }
 
@@ -194,6 +199,118 @@ class SimpleWaveModel : WaveModel {
         return buffers[index % buffers.count()];
     }
 }
+
+## A wave model that is a proxy for a sequence of other wave buffers.
+##
+## As it stands, this is pretty simple.  The aim is for it to have a flexible
+## interface so that we can do more advanced stuff with it.
+class SequencerWaveModel : WaveModel {
+    class PositionedBuffer {
+        ## Start frame of the buffer
+        uint start;
+
+        ## Number of channels.
+        int channels;
+
+        WaveBuffer buf;
+
+        oper init(uint start, int channels, WaveBuffer buf) :
+            start = start,
+            channels = channels,
+            buf = buf {
+        }
+
+        int oper .end() { return buf.size / channels + start }
+
+        bool overlaps(int start, int end) {
+            return start < this.end && end > this.start;
+        }
+
+        @final int16 oper[](int index) {
+            return buf[index];
+        }
+
+        uint oper .frames() { return buf.size / channels }
+    }
+
+    ## An array of buffers ordered by their start positions.
+    Array[PositionedBuffer] __bufs = {};
+    WaveBuffer __mixBuf;
+
+    oper init(int framesPerChunk) :
+        __mixBuf = ManagedWaveBuffer(framesPerChunk * 2) {
+
+        this.framesPerChunk = framesPerChunk;
+    }
+
+    void __clearMixBuf() {
+        for (int i = 0; i < __mixBuf.cap; ++i)
+            __mixBuf[i] = 0;
+    }
+
+    void __mixIn(int index, PositionedBuffer pbuf) {
+        offset := index - pbuf.start;
+
+        # If we're already in the pbuf, then we start copying to the beginning
+        # of the mex buf, otherwise we start from the first frame of the pbuf.
+        start := offset >= 0 ? 0 : -offset;
+
+        # If the end of the pbuf isn't until after the end of the mix buf,
+        # then we end at the end position of the mixbuf.  Otherwise we end at
+        # the last frame in the pbuf.
+        end := pbuf.end > index + framesPerChunk ?
+                framesPerChunk :
+                pbuf.end - index;
+
+        if (pbuf.channels == 1) {
+            # if this is a single channel wave, copy the sample to the left
+            # and right channels of the output buffer.
+            for (i := start; i < end; ++i) {
+                __mixBuf[i * 2] = __mixBuf[i * 2] + pbuf[i + offset];
+                __mixBuf[i * 2 + 1] = __mixBuf[i * 2 + 1] + pbuf[i + offset];
+            }
+        } else {
+            # For any other number of channels, copy the first two channels to
+            # the two output channels and ignore the rest.
+            for (i := start; i < end; ++i) {
+                __mixBuf[i * 2] = __mixBuf[i * 2] +
+                    pbuf[(i + offset) * pbuf.channels];
+                __mixBuf[i * 2 + 1] = __mixBuf[i * 2 + 1] +
+                    pbuf[(i + offset) * pbuf.channels + 1];
+            }
+        }
+    }
+
+    ## Add a new positioned buffer to the model.
+    void add(PositionedBuffer pbuf) {
+        for (iter :on __bufs) {
+            if (iter.elem().start > pbuf.start) {
+                __bufs.insert(iter.index, pbuf);
+                return;
+            }
+        }
+        __bufs.append(pbuf);
+    }
+
+    uint oper .frames() { return __bufs ? __bufs[-1].end : 0 }
+
+    WaveBuffer getChunk(uint index) {
+        __clearMixBuf();
+        pos := index * framesPerChunk;
+
+        for (buf :in __bufs) {
+            # If the buffer starts after this chunk, we can quit.
+            if (pos + framesPerChunk < buf.start)
+                break;
+
+            if (buf.overlaps(pos, pos + framesPerChunk))
+                __mixIn(pos, buf);
+        }
+
+        return __mixBuf;
+    }
+}
+
 
 const BYTES_PER_SAMPLE := 2;
 
@@ -639,6 +756,13 @@ class WaveManager : JackWrapper {
         WaveAdapter waveAdapter = {null};
         waveAdapter.model = wave;
         addProcessor(waveAdapter);
+    }
+
+    ## Add a raw WaveModel.  This is most useful for adding a
+    ## SequenceWaveModel.
+    WaveAdapter addWaveModel(WaveModel model) {
+        addProcessor(result := WaveAdapter(model));
+        return result;
     }
 
     WindowBufferAdapter addFile(String fileName) {

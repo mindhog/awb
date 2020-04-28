@@ -2,23 +2,27 @@
 ## used to provide the interface to the "TEL" language, an early predecessor
 ## to Crash.
 
+import crack.audio.wavfile wf_readWave = readWave, ManagedWaveBuffer,
+    WaveBuffer;
 import crack.strutil StringArray;
 import crack.cont.array Array;
 import crack.fs makePath;
 import crack.functor Functor0, Functor1;
+import crack.io cin, cout, cerr, FStr;
 import crack.lang CString, Exception;
 import crack.midi.alsa PortInfo, Sequencer, SND_SEQ_OPEN_OUTPUT,
     SND_SEQ_OPEN_INPUT;
 import crack.net Poller, POLLIN, POLLERR, POLLOUT;
 import crack.process Process;
-import crack.io cin, cout, cerr, FStr;
+import crack.runtime free;
 import crack.midi.event ControlChange, Event, NoteOn, NoteOff, Track;
 import crack.time TimeDelta;
 import spug.loop.evtrec makeEventRecorderModule;
 import spug.loop.midieng MidiDispatcher, MidiEngine;
 import spug.loop.model EventManager, Section;
 import spug.loop.instrument MidiInstrument;
-import spug.loop.jack jackCallback, WaveManager, WindowBufferAdapter;
+import spug.loop.jack jackCallback, SequencerWaveModel, WaveAdapter,
+    WaveManager, WaveModel, WindowBufferAdapter;
 
 import crash createRootContext, eval, parseBlockArg, ActiveFunc, Block, Builtin,
     EvalContext, Obj, SimpleValue;
@@ -72,6 +76,108 @@ EventManager eventManager;
     if (!eventManager.waveMan)
         eventManager.waveMan = WaveManager.create();
     return eventManager.mapWaveFile(filename);
+}
+
+## A WaveBuffer containing the full contents of a file and information on the
+## number of channels.
+class Wave : ManagedWaveBuffer {
+    int channels;
+
+    oper init(int channels, int cap) :
+        channels = channels,
+        ManagedWaveBuffer(cap) {
+    }
+
+    void grow(uintz newCap) {
+        # If cap is currently enpty, just create a new buffer of the specified
+        # capacity.
+        if (cap == 0) {
+            buffer = array[int16](newCap);
+            cap = newCap;
+            return;
+        }
+
+        if (newCap < cap) {
+            newBuf := array[int16](newCap);
+            for (int i = 0; i < size; ++i)
+                newBuf[i] = buffer[i];
+            free(buffer);
+            buffer = newBuf;
+        }
+    }
+
+    ## Concatenate 'other' onto the end of this wave.
+    void extend(WaveBuffer other) {
+        if (size + other.size > cap)
+            grow(cap * 2);
+        for (int i = 0; i < other.size; ++i)
+            buffer[size + i] = other.buffer[i];
+        size = size + other.size;
+    }
+
+    ## Number of frames in the wave.
+    uintz oper .frames() {
+        return size / channels;
+    }
+}
+
+## Read an entire wave file in as a Wave buffer.
+@function Wave readWave(String filename) {
+    src := makePath(filename).reader();
+    def := wf_readWave(src);
+    buf := ManagedWaveBuffer(4096);
+    wave := Wave(def.channels, def.frameCount * def.channels);
+    while (def.read(src, buf))
+        wave.extend(buf);
+    return wave;
+}
+
+## Create a SequencerWaveModel, a sequence of Wave objects (see readWave)
+## positioned in time.
+## These should be treated as immutable after being added to the event manager
+## using addWaveModel.
+@function Obj makeSequencerWaveModel() {
+
+    ## Adds a Wave to the sequence at the specified position ('pos' is an
+    ## offset in frames).
+    @function(SequencerWaveModel) int add(int pos, Wave wave) {
+        self.add(SequencerWaveModel.PositionedBuffer(pos, wave.channels, wave));
+        return 0;
+    }
+
+    ## Append a new wave starting after the last wave.
+    @function(SequencerWaveModel) int append(Wave wave) {
+        self.add(SequencerWaveModel.PositionedBuffer(self.frames,
+                                                     wave.channels,
+                                                     wave
+                                                     )
+                 );
+        return 0;
+    }
+
+    @function(SequencerWaveModel) int frames() {
+        return int(self.frames);
+    }
+
+    @function(SequencerWaveModel) SequencerWaveModel getSelf() {
+        return self;
+    }
+
+    swm := SequencerWaveModel(2048);
+    result := Obj();
+    result.define('add', add(swm));
+    result.define('append', append(swm));
+    result.define('frames', frames(swm));
+    result.define('self', getSelf(swm));
+    return result;
+}
+
+## Add the wave model to the engine.
+@function WaveAdapter addWaveModel(WaveModel model, String trackName,
+                                   int spanInMSecs
+                                   ) {
+    cerr `total span in msecs: $spanInMSecs\n`;
+    return eventManager.addWaveModel(model, trackName, spanInMSecs);
 }
 
 ## Load the specified AWB project file.
@@ -455,6 +561,9 @@ class InterpWrapper {
         __rootCtx.define('get_tempo', get_tempo());
         __rootCtx.define('set_tempo', set_tempo());
         __rootCtx.define('load', load());
+        __rootCtx.define('readWave', readWave());
+        __rootCtx.define('makeSequencerWaveModel', makeSequencerWaveModel());
+        __rootCtx.define('addWaveModel', addWaveModel());
         __rootCtx.define('loadProject', loadProject());
         __rootCtx.define('metro', metro());
         __rootCtx.define('channel_connect', channelConnect());
