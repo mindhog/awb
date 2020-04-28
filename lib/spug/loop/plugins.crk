@@ -80,6 +80,13 @@ class Plugin {
         return _makePluginInstance(this, __rep.instantiate(sampleRate, null));
     }
 
+#    ## Gets the port parameters, consisting of mininums, maximums and defaults.
+#    void getPortParams(Array[float] min, Array[float] max,
+#                       Array[float] defaults
+#                       ) {
+#        if (min.capacity() < getNumPorts()
+#        min.grow(
+
     ## Returns an array of defaults for all ports.
     Array[float] getDefaults() {
         if (!__defaults) {
