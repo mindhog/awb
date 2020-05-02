@@ -14,8 +14,8 @@ import crack.midi.event ChannelEvent, ControlChange, EndTrack, Event,
     MidiReader, MidiWriter, ProgramChange, SeekableEventSource, Track;
 import crack.protobuf readMessageFromString, Field, ProtoReader, ProtoWriter;
 import spug.loop.instrument Instrument, Orchestra;
-import spug.loop.jack SequencerWaveModel, WaveAdapter, WaveManager, WaveModel,
-    WindowBufferAdapter;
+import spug.loop.jack SequencerWaveModel, Wave, WaveAdapter, WaveManager,
+    WaveModel, WindowBufferAdapter;
 import crack.midi.alsa Port, Sequencer;
 import crack.protobuf Message;
 import crack.serial SerialReader, SerialWriter;

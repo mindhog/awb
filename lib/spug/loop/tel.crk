@@ -2,7 +2,7 @@
 ## used to provide the interface to the "TEL" language, an early predecessor
 ## to Crash.
 
-import crack.audio.wavfile wf_readWave = readWave, ManagedWaveBuffer,
+import crack.audio.wavfile ManagedWaveBuffer,
     WaveBuffer;
 import crack.strutil StringArray;
 import crack.cont.array Array;
@@ -21,7 +21,7 @@ import spug.loop.evtrec makeEventRecorderModule;
 import spug.loop.midieng MidiDispatcher, MidiEngine;
 import spug.loop.model EventManager, Section;
 import spug.loop.instrument MidiInstrument;
-import spug.loop.jack jackCallback, SequencerWaveModel, WaveAdapter,
+import spug.loop.jack jackCallback, SequencerWaveModel, Wave, WaveAdapter,
     WaveManager, WaveModel, WindowBufferAdapter;
 
 import crash createRootContext, eval, parseBlockArg, ActiveFunc, Block, Builtin,
@@ -78,58 +78,9 @@ EventManager eventManager;
     return eventManager.mapWaveFile(filename);
 }
 
-## A WaveBuffer containing the full contents of a file and information on the
-## number of channels.
-class Wave : ManagedWaveBuffer {
-    int channels;
-
-    oper init(int channels, int cap) :
-        channels = channels,
-        ManagedWaveBuffer(cap) {
-    }
-
-    void grow(uintz newCap) {
-        # If cap is currently enpty, just create a new buffer of the specified
-        # capacity.
-        if (cap == 0) {
-            buffer = array[int16](newCap);
-            cap = newCap;
-            return;
-        }
-
-        if (newCap < cap) {
-            newBuf := array[int16](newCap);
-            for (int i = 0; i < size; ++i)
-                newBuf[i] = buffer[i];
-            free(buffer);
-            buffer = newBuf;
-        }
-    }
-
-    ## Concatenate 'other' onto the end of this wave.
-    void extend(WaveBuffer other) {
-        if (size + other.size > cap)
-            grow(cap * 2);
-        for (int i = 0; i < other.size; ++i)
-            buffer[size + i] = other.buffer[i];
-        size = size + other.size;
-    }
-
-    ## Number of frames in the wave.
-    uintz oper .frames() {
-        return size / channels;
-    }
-}
-
 ## Read an entire wave file in as a Wave buffer.
 @function Wave readWave(String filename) {
-    src := makePath(filename).reader();
-    def := wf_readWave(src);
-    buf := ManagedWaveBuffer(4096);
-    wave := Wave(def.channels, def.frameCount * def.channels);
-    while (def.read(src, buf))
-        wave.extend(buf);
-    return wave;
+    return Wave.read(makePath(filename).reader());
 }
 
 ## Create a SequencerWaveModel, a sequence of Wave objects (see readWave)
@@ -163,7 +114,7 @@ class Wave : ManagedWaveBuffer {
         return self;
     }
 
-    swm := SequencerWaveModel(2048);
+    swm := SequencerWaveModel();
     result := Obj();
     result.define('add', add(swm));
     result.define('append', append(swm));
@@ -175,6 +126,14 @@ class Wave : ManagedWaveBuffer {
 ## Add the wave model to the engine.
 @function WaveAdapter addWaveModel(WaveModel model, String trackName) {
     return eventManager.addWaveModel(model, trackName);
+}
+
+@function int addMemFile(String filename) {
+    if (!eventManager.waveMan)
+        return -1;
+
+    eventManager.waveMan.addMemFile(filename);
+    return 0;
 }
 
 ## Load the specified AWB project file.
@@ -389,14 +348,6 @@ class CrashEventProcessorCmd : Builtin {
     return 0;
 }
 
-@function int disableRead() {
-    if (!eventManager.waveMan)
-        return -1;
-
-    eventManager.waveMan.disableRead();
-    return 0;
-}
-
 @interface AppMethods {
     @abstract void setBinding(int key, Functor0[void] callback);
 }
@@ -561,6 +512,7 @@ class InterpWrapper {
         __rootCtx.define('readWave', readWave());
         __rootCtx.define('makeSequencerWaveModel', makeSequencerWaveModel());
         __rootCtx.define('addWaveModel', addWaveModel());
+        __rootCtx.define('addMemFile', addMemFile());
         __rootCtx.define('loadProject', loadProject());
         __rootCtx.define('metro', metro());
         __rootCtx.define('channel_connect', channelConnect());
@@ -581,7 +533,6 @@ class InterpWrapper {
         __rootCtx.define('app', makeAppWrapper(app));
         __rootCtx.define('callback', CallbackCmd());
         __rootCtx.define('evtrec', getEventRecModule());
-        __rootCtx.define('disableRead', disableRead());
         __rootCtx.define('getCurrentSection', getCurrentSection());
     }
 
