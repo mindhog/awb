@@ -535,7 +535,7 @@ class SequencerWaveModel : WaveModel {
 
     uint oper .frames() { return __bufs ? __bufs[-1].end : 0 }
 
-    ## Number of channesl is always 2, which is kind of lame but adequate for
+    ## Number of channels is always 2, which is kind of lame but adequate for
     ## now, since this model basically mixes everything to two channel anyway.
     uint oper .channels() { return 2 }
 
@@ -776,13 +776,11 @@ class RefreshThread : Thread {
 class WindowBufferAdapter : PCMTrackAdapter {
 
     WindowBuffer buf;
-    Mixer mixer;
     Component headComponent;
 
     oper init(WindowBuffer buf) :
         PCMTrackAdapter(buf.numTracks),
         buf = buf,
-        mixer = Mixer(buf.numTracks),
         headComponent = mixer {
     }
 
