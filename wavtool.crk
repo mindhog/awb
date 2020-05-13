@@ -450,10 +450,10 @@ class Scan {
 
     void dump() {
         for (channel :in vols)
-            cout `\$proj setVol $(channel.key) $(channel.val)\n`;
+            cout `vol $(channel.key) $(channel.val)\n`;
 
         for (channel :in pans)
-            cout `\$proj setPan $(channel.key) $(channel.val)\n`;
+            cout `pan $(channel.key) $(channel.val)\n`;
 
         cout `seek $pos\n`;
     }
