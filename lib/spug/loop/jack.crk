@@ -800,7 +800,7 @@ class WindowBufferAdapter : PCMTrackAdapter {
     }
 
     void _forward(uint frames) {
-        buf.playPos += frames;
+        buf.playPos += frames * buf.numTracks;
     }
 
     ## Returns the number of frames in the wave.
