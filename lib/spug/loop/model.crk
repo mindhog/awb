@@ -14,7 +14,8 @@ import crack.midi.event ChannelEvent, ControlChange, EndTrack, Event,
     MidiReader, MidiWriter, ProgramChange, SeekableEventSource, Track;
 import crack.protobuf readMessageFromString, Field, ProtoReader, ProtoWriter;
 import spug.loop.instrument Instrument, Orchestra;
-import spug.loop.jack WaveManager, WindowBufferAdapter;
+import spug.loop.jack SequencerWaveModel, Wave, WaveAdapter, WaveManager,
+    WaveModel, WindowBufferAdapter;
 import crack.midi.alsa Port, Sequencer;
 import crack.protobuf Message;
 import crack.serial SerialReader, SerialWriter;
@@ -926,6 +927,20 @@ class EventManager {
         curSection.tracks.append(
             Track( filename, Array[Event]![EndTrack(usecsToTicks(endTime))] )
         );
+        controller.trackAdded();
+        return result;
+    }
+
+    WaveAdapter addWaveModel(WaveModel model, String trackName) {
+        @assert(waveMan);
+        result := waveMan.addWaveModel(model);
+        spanInUSecs := int64(model.frames) * 1000000 / 44100;
+        spanInTicks := usecsToTicks(spanInUSecs);
+        curSection.tracks.append(
+            Track(trackName, Array[Event]![EndTrack(spanInTicks)])
+        );
+        if (spanInTicks > curSection.span)
+            curSection.span = spanInTicks;
         controller.trackAdded();
         return result;
     }

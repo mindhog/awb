@@ -7,7 +7,7 @@ import crack.ext._jack JackClient, JackPort, JackPosition, JackClient_open,
     JACK_TRANSPORT_ROLLING;
 import crack.fs makePath;
 import crack.functor Function1, Functor1;
-import crack.io cout, cerr, SeekableReader, SEEK_SET;
+import crack.io cout, cerr, Reader, SeekableReader, SEEK_SET;
 import crack.lang CString;
 import crack.math max, abs;
 import crack.runtime free, sleep;
@@ -16,7 +16,7 @@ import crack.time Time;
 
 import .processors bufferFrameCount, AudioBuffer, BufferVector, Component;
 
-@import crack.ann assert, impl, implements;
+@import crack.ann assert, cvars, impl, implements;
 
 @export_symbols JACK_TRANSPORT_ROLLING;
 
@@ -149,51 +149,409 @@ int jackCallback(uint32 nframes, voidptr arg) {
     return 0;
 }
 
+class Mixer @impl Component {
+    BufferVector buffers;
+
+    ## Left buffer and right buffer, these can be set directly by the client.
+    array[float] lbuf, rbuf;
+
+    float volume = 1.0, gain = 1.0;
+    bool __active = true;
+
+    ## Array of pan values, one per track.  Pan values range from -1 (totally
+    ## left) to +1 (totally right).
+    Array[float] pan;
+
+    oper init(int numTracks) : buffers(numTracks), pan(numTracks, 0) {
+        for (int i = 0; i < numTracks; ++i)
+            buffers.append(AudioBuffer(bufferFrameCount, 0));
+        if (buffers.count() == 2) {
+            pan[0] = -1;
+            pan[1] = 1;
+        }
+    }
+
+    int getInputChannelCount() {
+        return buffers.count();
+    }
+
+    BufferVector getInputBuffers() {
+        return buffers;
+    }
+
+    int getOutputChannelCount() {
+        return 2;
+    }
+
+    void setOutputBuffers(BufferVector bufs) {
+        @assert(bufs.count() == 2);
+        lbuf = bufs[0].data();
+        rbuf = bufs[1].data();
+    }
+
+    ## Sets the output buffers from the jack wrapper.
+    void setOutputBuffers(JackWrapper jack) {
+        lbuf = jack.lbuf;
+        rbuf = jack.rbuf;
+    }
+
+    void run(int frameCount) {
+        if (!__active)
+            return;
+        numTracks := buffers.count();
+        for (int i; i < frameCount; ++i) {
+            for (int j; j < numTracks; ++j) {
+                sample := buffers[j][i];
+                if (pan[j] > 1.0 || pan[j] < -1.0)
+                    cerr `\033[31mPan out of range: $(pan[j])\033[0m\n`;
+                lbuf[i] = lbuf[i] +
+                          sample * volume * gain * ((1 - pan[j]) / 2);
+                rbuf[i] = rbuf[i] +
+                          sample * volume * gain * ((1 + pan[j]) / 2);
+            }
+        }
+        if (_next)
+            _next.run(frameCount);
+    }
+
+    void activate() {
+        __active = true;
+    }
+
+    void deactivate() {
+        __active = false;
+    }
+}
+
+## A jack processor for PCM tracks.
+##
+## These have the following properties:
+## - A current position in time.  Furthermore, they are "seekable", that is,
+##   you can set the current position in time.
+## - A component chain (see the processors module).
+## - A mixer.
+@abstract class PCMTrackAdapter @impl Functor1[void, JackWrapper] {
+    Mixer mixer;
+
+    # TODO: make this private so we can enforce input/output channels.
+    Component headComponent;
+
+    # If this is set to false, the adapter is disabled.
+    bool __enabled = true;
+
+    ## channels: number of input channels of the final mixer.
+    oper init(int channels) :
+        mixer = Mixer(channels),
+        headComponent = mixer {
+    }
+
+    @abstract void process(BufferVector bufs, uint32 frameCount);
+    @abstract void _forward(uint frames);
+
+    void oper call(JackWrapper wrapper) {
+        if (__enabled) {
+            input := headComponent.getInputBuffers();
+            process(input, wrapper.frameCount);
+            mixer.setOutputBuffers(wrapper);
+            headComponent.run(wrapper.frameCount);
+        }
+
+        _forward(wrapper.frameCount);
+    }
+
+    @abstract void seek(uint frame);
+
+    ## Returns the number of frames in the wave.
+    @abstract uint getFrameCount();
+
+    ## Returns the track rate in frames per second.
+    @abstract uint getRate();
+
+    ## Return the number of sub-tracks.
+    @abstract uint getNumTracks();
+
+    @final void setPan(float pan) {
+        # TODO: support panning ranges.
+        for (int i; i < getNumTracks(); ++i)
+            mixer.pan[i] = pan;
+    }
+
+    ## Returns current "play position" (the number of frames since the wave
+    ## file origin).  This is always aligned to the beginning of a jack
+    ## buffer, but it should otherwise be fairly accurate WRT what is
+    ## currently being played.
+    @abstract intz getPos();
+
+    ## Adds a new component to the head of the component chain.
+    @final void insertComponent(Component component) {
+        component.append(headComponent);
+        headComponent = component;
+    }
+
+    ## Enable the adapter, causing it to play audio.
+    @final void enable() {
+        if (!__enabled) {
+            if (headComponent)
+                headComponent.activate();
+            __enabled = true;
+        }
+    }
+
+    ## Disable the adapter, turning off all audio from it.
+    @final void disable() {
+        if (__enabled) {
+            if (headComponent)
+                headComponent.deactivate();
+            __enabled = false;
+        }
+    }
+
+    ## Returns true if the adapter is enabled.
+    @final bool enabled() {
+        return __enabled;
+    }
+}
+
 @abstract class WaveModel {
 
-    ## Number of frames per chunk.  This must be constant for the entire model.
-    int framesPerChunk;
+    ## Read a sequence of samples into 'outputs'.
+    ##
+    ## pos: position (frame number) to read from.
+    ## out: An output buffer.  This can be expected to be of size
+    ##      frames * channels
+    ## outputs: Set of buffers to read into.  It is safe to assume that the
+    ##          number of buffers is the same as this.tracks.
+    ## frames: Number of frames to read.
+    @abstract void read(uint pos, WaveBuffer out, uint frames);
 
-    @abstract WaveBuffer getChunk(uint index);
+    ## Returns the total number of frames in the wave.
+    @abstract uint oper .frames();
+
+    ## Returns the number of channels in the wave.
+    @abstract uint oper .channels();
+}
+
+## A WaveBuffer containing the full contents of a file and information on the
+## number of channels.
+class Wave : ManagedWaveBuffer {
+    int channels;
+
+    oper init(int channels, int cap) :
+        channels = channels,
+        ManagedWaveBuffer(cap) {
+    }
+
+    void grow(uintz newCap) {
+        # If cap is currently enpty, just create a new buffer of the specified
+        # capacity.
+        if (cap == 0) {
+            buffer = array[int16](newCap);
+            cap = newCap;
+            return;
+        }
+
+        # XXX I suspect this code may have some problems, when doing the check
+        # incorrectly I'm getting memory corruption.
+        if (newCap > cap) {
+            newBuf := array[int16](newCap);
+            for (int i = 0; i < size; ++i)
+                newBuf[i] = buffer[i];
+            free(buffer);
+            buffer = newBuf;
+        }
+    }
+
+    ## Concatenate 'other' onto the end of this wave.
+    void extend(WaveBuffer other) {
+        if (size + other.size > cap)
+            grow(cap * 2);
+        for (int i = 0; i < other.size; ++i)
+            buffer[size + i] = other.buffer[i];
+        size = size + other.size;
+    }
+
+    ## Number of frames in the wave.
+    uintz oper .frames() {
+        return size / channels;
+    }
+
+    @static Wave read(Reader src) {
+        def := readWave(src);
+        buf := ManagedWaveBuffer(4096);
+        wave := Wave(def.channels, def.frameCount * def.channels);
+        while (def.read(src, buf))
+            wave.extend(buf);
+        return wave;
+    }
 }
 
 ## Jack callback processor that plays a WaveModel.
-class WaveAdapter : Object @implements Functor1[void, JackWrapper] {
+##
+##
+## Note that WaveModels are considered to be immutable once they're placed
+## into a track, so we don't have to do all of the atomic jazz that we do in
+## WindowBufferAdapter.
+class WaveAdapter : PCMTrackAdapter {
 
     uint pos;
     WaveModel model;
+    Wave __buf;
 
-    oper init(WaveModel model) : model = model {}
+    oper init(WaveModel model) :
+        PCMTrackAdapter(model.channels),
+        model = model,
+        __buf(model.channels, 4096) {
+    }
 
-    void oper call(JackWrapper wrapper) {
-        lbuf := wrapper.lbuf;
-        rbuf := wrapper.rbuf;
-        curChunk := pos / model.framesPerChunk;
-        chunk := model.getChunk(curChunk);
-        start := pos;
-        end := pos + wrapper.frameCount;
-        float maxLeft, maxRight;
-        for (; pos < end; ++pos) {
-            newChunk := pos / model.framesPerChunk;
-            if (newChunk != curChunk) {
-                curChunk = newChunk;
-                chunk = model.getChunk(curChunk);
+    void process(BufferVector bufs, uint32 frameCount) {
+        channels := model.channels;
+        __buf.grow(frameCount * channels);
+        model.read(pos, __buf, frameCount);
+        for (int ch = 0; ch < channels; ++ch) {
+            outBuf := bufs[ch];
+            for (uint i; i < frameCount; ++i) {
+                outBuf[i] = __buf[i * channels + ch] / 32768.0;
             }
-            lbuf[pos - start] =
-                chunk.buffer[pos % model.framesPerChunk * 2] / 32768.0;
-            rbuf[pos - start] =
-                chunk.buffer[pos % model.framesPerChunk * 2 + 1] / 32768.0;
         }
     }
+
+    void _forward(uint frames) {
+        pos += frames;
+    }
+
+    uint getFrameCount() { return model.frames }
+    uint getNumTracks() { return model.channels }
+    intz getPos() { return pos }
+
+    ## Right now, all waves must be 44K.  This is just how it is.
+    uint getRate() { return 44100 }
+
+    void seek(uint frame) { pos = frame }
 }
 
 ## A wave model that simply stores all of its backing buffers in memory.
 class SimpleWaveModel : WaveModel {
-    Array[WaveBuffer] buffers = {};
-    WaveBuffer getChunk(uint index) {
-        return buffers[index % buffers.count()];
+    @cvars {
+        Wave data;
+    }
+
+    void read(uint pos, WaveBuffer buf, uint frames) {
+        for (i := 0; i < frames * data.channels; ++i)
+            buf[i] = data[pos * data.channels + i];
+    }
+
+    uint oper .frames() {
+        return data.size;
+    }
+
+    uint oper .channels() {
+        return data.channels;
     }
 }
+
+## A wave model that is a proxy for a sequence of other wave buffers.
+##
+## As it stands, this is pretty simple.  The aim is for it to have a flexible
+## interface so that we can do more advanced stuff with it.
+class SequencerWaveModel : WaveModel {
+    class PositionedBuffer {
+        ## Start frame of the buffer
+        uint start;
+
+        ## Number of channels.
+        int channels;
+
+        WaveBuffer buf;
+
+        oper init(uint start, int channels, WaveBuffer buf) :
+            start = start,
+            channels = channels,
+            buf = buf {
+        }
+
+        int oper .end() { return buf.size / channels + start }
+
+        bool overlaps(int start, int end) {
+            return start < this.end && end > this.start;
+        }
+
+        @final int16 oper[](int index) {
+            return buf[index];
+        }
+
+        uint oper .frames() { return buf.size / channels }
+    }
+
+    ## An array of buffers ordered by their start positions.
+    Array[PositionedBuffer] __bufs = {};
+
+    @static void __clearOutBuf(WaveBuffer out) {
+        for (int i = 0; i < out.cap; ++i)
+            out[i] = 0;
+    }
+
+    void __mixIn(int index, uint frames, PositionedBuffer pbuf,
+                 WaveBuffer out
+                 ) {
+        offset := index - pbuf.start;
+
+        # If we're already in the pbuf, then we start copying to the beginning
+        # of the mex buf, otherwise we start from the first frame of the pbuf.
+        start := offset >= 0 ? 0 : -offset;
+
+        # If the end of the pbuf isn't until after the end of the mix buf,
+        # then we end at the end position of the mixbuf.  Otherwise we end at
+        # the last frame in the pbuf.
+        end := pbuf.end > index + frames ? frames : pbuf.end - index;
+
+        if (pbuf.channels == 1) {
+            # if this is a single channel wave, copy the sample to the left
+            # and right channels of the output buffer.
+            for (i := start; i < end; ++i) {
+                out[i * 2] = out[i * 2] + pbuf[i + offset];
+                out[i * 2 + 1] = out[i * 2 + 1] + pbuf[i + offset];
+            }
+        } else {
+            # For any other number of channels, copy the first two channels to
+            # the two output channels and ignore the rest.
+            for (i := start; i < end; ++i) {
+                out[i * 2] = out[i * 2] + pbuf[(i + offset) * pbuf.channels];
+                out[i * 2 + 1] = out[i * 2 + 1] +
+                    pbuf[(i + offset) * pbuf.channels + 1];
+            }
+        }
+    }
+
+    ## Add a new positioned buffer to the model.
+    void add(PositionedBuffer pbuf) {
+        for (iter :on __bufs) {
+            if (iter.elem().start > pbuf.start) {
+                __bufs.insert(iter.index, pbuf);
+                return;
+            }
+        }
+        __bufs.append(pbuf);
+    }
+
+    uint oper .frames() { return __bufs ? __bufs[-1].end : 0 }
+
+    ## Number of channels is always 2, which is kind of lame but adequate for
+    ## now, since this model basically mixes everything to two channel anyway.
+    uint oper .channels() { return 2 }
+
+    void read(uint pos, WaveBuffer out, uint frames) {
+        __clearOutBuf(out);
+        for (pbuf :in __bufs) {
+            # If the buffer starts after this chunk, we can quit.
+            if (pos + frames < pbuf.start)
+                break;
+
+            if (pbuf.overlaps(pos, pos + frames))
+                __mixIn(pos, frames, pbuf, out);
+        }
+    }
+}
+
 
 const BYTES_PER_SAMPLE := 2;
 
@@ -413,172 +771,51 @@ class RefreshThread : Thread {
     }
 }
 
-class Mixer @impl Component {
-    BufferVector buffers;
-
-    ## Left buffer and right buffer, these can be set directly by the client.
-    array[float] lbuf, rbuf;
-
-    float volume = 1.0, gain = 1.0;
-    bool __active = true;
-
-    ## Array of pan values, one per track.  Pan values range from -1 (totally
-    ## left) to +1 (totally right).
-    Array[float] pan;
-
-    oper init(int numTracks) : buffers(numTracks), pan(numTracks, 0) {
-        for (int i = 0; i < numTracks; ++i)
-            buffers.append(AudioBuffer(bufferFrameCount, 0));
-        if (buffers.count() == 2) {
-            pan[0] = -1;
-            pan[1] = 1;
-        }
-    }
-
-    int getInputChannelCount() {
-        return buffers.count();
-    }
-
-    BufferVector getInputBuffers() {
-        return buffers;
-    }
-
-    int getOutputChannelCount() {
-        return 2;
-    }
-
-    void setOutputBuffers(BufferVector bufs) {
-        @assert(bufs.count() == 2);
-        lbuf = bufs[0].data();
-        rbuf = bufs[1].data();
-    }
-
-    ## Sets the output buffers from the jack wrapper.
-    void setOutputBuffers(JackWrapper jack) {
-        lbuf = jack.lbuf;
-        rbuf = jack.rbuf;
-    }
-
-    void run(int frameCount) {
-        if (!__active)
-            return;
-        numTracks := buffers.count();
-        for (int i; i < frameCount; ++i) {
-            for (int j; j < numTracks; ++j) {
-                sample := buffers[j][i];
-                if (pan[j] > 1.0 || pan[j] < -1.0)
-                    cerr `\033[31mPan out of range: $(pan[j])\033[0m\n`;
-                lbuf[i] = lbuf[i] +
-                          sample * volume * gain * ((1 - pan[j]) / 2);
-                rbuf[i] = rbuf[i] +
-                          sample * volume * gain * ((1 + pan[j]) / 2);
-            }
-        }
-        if (_next)
-            _next.run(frameCount);
-    }
-
-    void activate() {
-        __active = true;
-    }
-
-    void deactivate() {
-        __active = false;
-    }
-}
-
-
 ## Allows a WindowBuffer (which maintains a ring of buffers and reads them
 ## from a wave file) to be used as a Jack processor.
-class WindowBufferAdapter : Object @implements Functor1[void, JackWrapper] {
+class WindowBufferAdapter : PCMTrackAdapter {
 
     WindowBuffer buf;
-    Mixer mixer;
     Component headComponent;
 
-    # If this is set to false, the adapter is disabled.
-    bool __enabled = true;
-
     oper init(WindowBuffer buf) :
+        PCMTrackAdapter(buf.numTracks),
         buf = buf,
-        mixer = Mixer(buf.numTracks),
         headComponent = mixer {
     }
 
-    void oper call(JackWrapper wrapper) {
-        if (__enabled) {
-            # Convert samples to floats and inject them into the input buffers.
-            input := headComponent.getInputBuffers();
-            for (int i; i < wrapper.frameCount; ++i) {
-                absPos := buf.playPos + i * buf.numTracks;
-                for (int j; j < buf.numTracks; ++j) {
-                    sample :=
-                        buf.ringBuf[(absPos + j) % buf.ringBuf.cap] / 32768.0;
-                    input[j][i] = sample;
-                }
+    void process(BufferVector bufs, uint32 frameCount) {
+        for (int i; i < frameCount; ++i) {
+            absPos := buf.playPos + i * buf.numTracks;
+            for (int j; j < buf.numTracks; ++j) {
+                sample :=
+                    buf.ringBuf[(absPos + j) % buf.ringBuf.cap] / 32768.0;
+                bufs[j][i] = sample;
             }
-
-            mixer.setOutputBuffers(wrapper);
-            headComponent.run(wrapper.frameCount);
         }
-
-        buf.playPos += wrapper.frameCount * buf.numTracks;
     }
 
     void seek(uint frame) {
         buf.seek(frame);
     }
 
-    ## Returns the number of frames in the wave.
-    @final uint getFrameCount() {
-        return buf.getFrameCount();
+    void _forward(uint frames) {
+        buf.playPos += frames;
     }
+
+    ## Returns the number of frames in the wave.
+    uint getFrameCount() { return buf.getFrameCount() }
 
     ## Returns the track rate in frames per second.
-    @final uint getRate() {
-        return buf.getRate();
-    }
+    uint getRate() { return buf.getRate() }
 
-    @final void setPan(float pan) {
-        # TODO: support panning ranges.
-        for (int i; i < buf.numTracks; ++i)
-            mixer.pan[i] = pan;
-    }
+    uint getNumTracks() { return buf.numTracks }
 
     ## Returns current "play position" (the number of frames since the wave
     ## file origin).  This is always aligned to the beginning of a jack
     ## buffer, but it should otherwise be fairly accurate WRT what is
     ## currently being played.
-    @final intz getPos() { return buf.tell() }
-
-    ## Adds a new component to the head of the component chain.
-    @final void insertComponent(Component component) {
-        component.append(headComponent);
-        headComponent = component;
-    }
-
-    ## Enable the adapter, causing it to play audio.
-    @final void enable() {
-        if (!__enabled) {
-            if (headComponent)
-                headComponent.activate();
-            __enabled = true;
-        }
-    }
-
-    ## Disable the adapter, turning off all audio from it.
-    @final void disable() {
-        if (__enabled) {
-            if (headComponent)
-                headComponent.deactivate();
-            __enabled = false;
-        }
-    }
-
-    ## Returns true if the adapter is enabled.
-    @final bool enabled() {
-        return __enabled;
-    }
+    intz getPos() { return buf.tell() }
 }
 
 ## Clears the output buffers in the Jack wrapper.
@@ -591,7 +828,7 @@ void clearOutputBuffers(JackWrapper wrapper) {
 
 class WaveManager : JackWrapper {
 
-    Array[WindowBufferAdapter] wbas = {};
+    Array[PCMTrackAdapter] adapters = {};
     RefreshThread refreshThread;
 
     oper init() {
@@ -625,20 +862,21 @@ class WaveManager : JackWrapper {
         return wm;
     }
 
-    void addMemFile(String fileName) {
+    WaveAdapter addMemFile(String fileName) {
         src := makePath(fileName).reader();
-        wd := readWave(src);
-        wave := SimpleWaveModel();
-        wave.framesPerChunk = 2048;
-        buf := ManagedWaveBuffer(4096);
-        while (wd.read(src, buf)) {
-            wave.buffers.append(buf);
-            buf = ManagedWaveBuffer(4096);
-        }
+        wave := Wave.read(src);
+        model := SimpleWaveModel(wave);
+        addProcessor(result := WaveAdapter(model));
+        adapters.append(result);
+        return result;
+    }
 
-        WaveAdapter waveAdapter = {null};
-        waveAdapter.model = wave;
-        addProcessor(waveAdapter);
+    ## Add a raw WaveModel.  This is most useful for adding a
+    ## SequenceWaveModel.
+    WaveAdapter addWaveModel(WaveModel model) {
+        addProcessor(result := WaveAdapter(model));
+        adapters.append(result);
+        return result;
     }
 
     WindowBufferAdapter addFile(String fileName) {
@@ -663,28 +901,17 @@ class WaveManager : JackWrapper {
         # Another hack to force precompilation of WindowBufferAdapter.
         adapter(this);
         addProcessor(adapter);
-        wbas.append(adapter);
+        adapters.append(adapter);
 
         return adapter;
     }
 
     void seek(uintz frame) {
-        for (adapter :in wbas)
+        for (adapter :in adapters)
             adapter.seek(frame);
     }
 
     uintz tell() {
-        return wbas ?  wbas[0].getPos() : 0;
-    }
-
-    ## Disables reads, leaving the window buffers to play from their loop.
-    void disableRead() {
-        int offset;
-        if (wbas && wbas[0].buf.disableRead)
-            offset = -1;
-        else
-            offset = 1;
-        for (a :in wbas)
-            a.buf.disableRead += offset;
+        return adapters ? adapters[0].getPos() : 0;
     }
 }
