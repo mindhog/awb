@@ -7,7 +7,7 @@ import crack.audio.wavfile ManagedWaveBuffer,
 import crack.strutil StringArray;
 import crack.cont.array Array;
 import crack.fs makePath;
-import crack.functor Functor0, Functor1;
+import crack.functor Functor0, Functor2;
 import crack.io cin, cout, cerr, FStr;
 import crack.lang CString, Exception;
 import crack.midi.alsa PortInfo, Sequencer, SND_SEQ_OPEN_OUTPUT,
@@ -19,7 +19,7 @@ import crack.midi.event ControlChange, Event, NoteOn, NoteOff, Track;
 import crack.time TimeDelta;
 import spug.loop.evtrec makeEventRecorderModule;
 import spug.loop.midieng MidiDispatcher, MidiEngine;
-import spug.loop.model EventManager, Section;
+import spug.loop.model EventContext, EventManager, Section;
 import spug.loop.instrument MidiInstrument;
 import spug.loop.jack jackCallback, SequencerWaveModel, Wave, WaveAdapter,
     WaveManager, WaveModel, WindowBufferAdapter;
@@ -31,7 +31,7 @@ import types FloatObj, IntObj;
 
 import .midifile MidiFile;
 
-@import crack.ann assert, impl, interface;
+@import crack.ann assert, cvars, impl, interface;
 @import ann function;
 
 EventManager eventManager;
@@ -96,14 +96,16 @@ EventManager eventManager;
         return 0;
     }
 
-    ## Append a new wave starting after the last wave.
+    ## Append a new wave starting after the last wave.  Returns the position
+    ## (frames since origin) that the wave was placed at.
     @function(SequencerWaveModel) int append(Wave wave) {
-        self.add(SequencerWaveModel.PositionedBuffer(self.frames,
+        pos := self.frames;
+        self.add(SequencerWaveModel.PositionedBuffer(pos,
                                                      wave.channels,
                                                      wave
                                                      )
                  );
-        return 0;
+        return pos;
     }
 
     @function(SequencerWaveModel) int frames() {
@@ -220,14 +222,14 @@ class PortDescriptor {
     return ControlChange.cast(event).value;
 }
 
-alias EventProcessor = Functor1[void, Event];
+alias EventProcessor = Functor2[void, Event, EventContext];
 
 class VolumeControl @impl EventProcessor {
     WindowBufferAdapter adapter;
 
     oper init(WindowBufferAdapter adapter) : adapter = adapter {}
 
-    void oper call(Event event) {
+    void oper call(Event event, EventContext ctx) {
         adapter.mixer.volume = ControlChange.cast(event).value / 128.0;
         cout `changing volume of $adapter to $(adapter.mixer.volume)\n`;
     }
@@ -249,7 +251,7 @@ class PanControl @impl EventProcessor {
 
     oper init(WindowBufferAdapter adapter) : adapter = adapter {}
 
-    void oper call(Event event) {
+    void oper call(Event event, EventContext ctx) {
         pan := ControlChange.cast(event).value / 64.0 - 1.0;
         adapter.setPan(pan);
         cout `changing panning of $adapter to $pan\n`;
@@ -283,7 +285,7 @@ class CrashScriptEventProcessor @impl EventProcessor {
         __func = func {
     }
 
-    void oper call(Event event) {
+    void oper call(Event event, EventContext ctx) {
         try {
             __func.invoke(__context, Array[Object]![event]);
         } catch (Exception ex) {
@@ -304,6 +306,45 @@ class CrashEventProcessorCmd : Builtin {
             throw Exception('Argument must be a function');
         return CrashScriptEventProcessor(EvalContext(context), func);
     }
+}
+
+# Value rule constants (see ControllerOffsetChange).
+const
+    ## Offset is multiplied by the controller value.
+    CVR_MULT := 1;
+
+## This processor changes the controller offset, useful for midi controllers
+## that send a sequence of events to do a single controller change.
+##
+## The parameters are the offset (a value to be added to the channel/value
+## index) and the valueRule (which determines how the value of the controller
+## affects the offset).
+class ControllerOffsetChange @impl EventProcessor {
+    @cvars {
+        uint offset;
+        int valueRule;
+    }
+
+    void oper call(Event event, EventContext ctx) {
+        cc := ControlChange.cast(event);
+        if (valueRule == CVR_MULT)
+            ctx.setControllerOffset(offset * cc.value);
+        else
+            throw Exception(FStr() `Unknown value rule type: $(valueRule)`);
+    }
+}
+
+@function ControllerOffsetChange makeControllerOffsetChange(int offset,
+                                                            int valueRule
+                                                            ) {
+    return ControllerOffsetChange(offset, valueRule);
+}
+
+## Bind an event processor to a control number (channel << 8 + controller +
+## offset).
+@function int bindController(int controlNumber, EventProcessor processor) {
+    eventManager.eventProcessors[controlNumber] = processor;
+    return 0;
 }
 
 @function int addEventProcessor(int eventSelector, EventProcessor processor) {
@@ -523,6 +564,9 @@ class InterpWrapper {
         __rootCtx.define('panControl', panControl());
         __rootCtx.define('setPan', setPan());
         __rootCtx.define('setGain', setGain());
+        __rootCtx.define('makeControllerOffsetChange',
+                         makeControllerOffsetChange());
+        __rootCtx.define('bindController', bindController());
         __rootCtx.define('addEventProcessor', addEventProcessor());
         __rootCtx.define('CrashEventProcessor', CrashEventProcessorCmd());
         __rootCtx.define('seek', seek());
@@ -534,6 +578,7 @@ class InterpWrapper {
         __rootCtx.define('callback', CallbackCmd());
         __rootCtx.define('evtrec', getEventRecModule());
         __rootCtx.define('getCurrentSection', getCurrentSection());
+        __rootCtx.define('CVR_MULT', SimpleValue(IntObj(CVR_MULT)));
     }
 
     void checkForInput() {

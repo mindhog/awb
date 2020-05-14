@@ -6,7 +6,7 @@ import crack.cont.array Array;
 import crack.cont.hashmap HashMap;
 import crack.cont.treemap TreeMap;
 import crack.fs cwd, makePath;
-import crack.functor Functor1;
+import crack.functor Functor2;
 import crack.io cerr, cout, FStr, StringReader, StringWriter;
 import crack.lang cmp, makeHashVal, CString, Exception;
 import crack.math floor;
@@ -491,8 +491,12 @@ class LoopCursor {
 const MILLION := 1000000;
 const BILLION := MILLION * 1000;
 
+@interface EventContext {
+    @abstract void setControllerOffset(uint offset);
+}
+
 ## The event manager deals with all of the scheduling and event dispatching.
-class EventManager {
+class EventManager @impl EventContext {
     Controller controller;
     Orchestra instrument;
     Sequencer sequencer;
@@ -515,10 +519,15 @@ class EventManager {
     # jack.
     WaveManager waveMan;
 
+    # This value is set by setControllerOffset() and it is added to the
+    # controller event id (see eventProcessors).
+    uint controllerOffset;
+
     # Mapping from event byte values to special processing functions for those
     # events.  Currently only control changes are supported and these are
-    # represented by an integer of form (channel << 8 | controller).
-    HashMap[uint, Functor1[void, Event]] eventProcessors = {};
+    # represented by an integer of form (channel << 8 | controller) + offset.
+    # ("offset" is the value set by setControllerOffset()).
+    HashMap[uint, Functor2[void, Event, EventContext]] eventProcessors = {};
 
     int mode;
 
@@ -742,10 +751,11 @@ class EventManager {
         # Divert bound events to the correct event processor.
         if ((cc := ControlChange.cast(event, null)) &&
             (proc :=
-                eventProcessors.get((uint(cc.channel) << 8) | cc.controller)
+                eventProcessors.get((uint(cc.channel) << 8) | cc.controller +
+                                    controllerOffset)
              )
             ) {
-            proc(cc);
+            proc(cc, this);
             return;
         }
 
@@ -957,5 +967,8 @@ class EventManager {
         return port;
     }
 
+    void setControllerOffset(uint offset) {
+        controllerOffset = offset;
+    }
 }
 

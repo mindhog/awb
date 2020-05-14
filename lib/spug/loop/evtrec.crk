@@ -3,12 +3,12 @@
 import crack.cont.array Array;
 import crack.cont.treemap TreeMap;
 import crack.fs makePath, Path;
-import crack.functor Functor1;
-import crack.io Formatter, FStr, StandardFormatter;
+import crack.functor Functor2;
+import crack.io cerr, Formatter, FStr, StandardFormatter;
 import crack.lang Exception, StaticString;
 import crack.midi.event ChannelEvent, ControlChange, Event;
 import crash parseBlockArg, Block, Builtin, EvalContext, Obj;
-import spug.loop.model EventManager;
+import spug.loop.model EventContext, EventManager;
 import spug.loop.jack WaveManager, WindowBufferAdapter;
 import types BoolObj, FloatObj, IntObj;
 import .plugins PluginInstance, PluginLibrary;
@@ -17,7 +17,7 @@ import .plugincmds makeEffectObj;
 @import ann function;
 @import crack.ann cvars, impl;
 
-alias EventProcessor = Functor1[void, Event];
+alias EventProcessor = Functor2[void, Event, EventContext];
 
 class Panner @impl EventProcessor {
     WindowBufferAdapter adapter;
@@ -33,7 +33,7 @@ class Panner @impl EventProcessor {
         out = out,
         track = track {
     }
-    void oper call(Event event) {
+    void oper call(Event event, EventContext ctx) {
         adapter.setPan(pan := ControlChange.cast(event).value / 64.0 - 1.0);
         out I`forward $(waveMan.tell())
               pan $track $(pan)
@@ -55,7 +55,7 @@ class VolumeControl @impl EventProcessor {
         out = out,
         track = track {
     }
-    void oper call(Event event) {
+    void oper call(Event event, EventContext ctx) {
         adapter.mixer.volume = float(ControlChange.cast(event).value) / 128.0;
         # TODO: only want to see the last of these for a given time position
         out I`forward $(waveMan.tell())
@@ -101,8 +101,7 @@ class ScriptProcessor @impl EventProcessor {
         Block block;
     }
 
-    void oper call(Event event) {
-        import crack.io cerr;
+    void oper call(Event event, EventContext ctx) {
         context.pushFuncFrame();
         try {
             context.define('event', wrapEvent(event));
@@ -300,12 +299,10 @@ Obj makeEventRecorderModule(EventManager eventManager) {
                    );
         obj.define('setEnabled', Project_setEnabled(proj));
         obj.define('getEnabled', Project_getEnabled(proj));
-        import crack.io cerr;
         cerr `makeProject() -> $(obj.vars)\n`;
         return obj;
     }
 
-    import crack.io cerr;
     cerr `adding a project object\n`;
     obj.define('Project', makeProject(erm));
     return obj;
