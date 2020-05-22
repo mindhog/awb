@@ -2,8 +2,7 @@
 ## used to provide the interface to the "TEL" language, an early predecessor
 ## to Crash.
 
-import crack.audio.wavfile ManagedWaveBuffer,
-    WaveBuffer;
+import crack.audio.wavfile ManagedWaveBuffer, WaveBuffer, WaveDef;
 import crack.strutil StringArray;
 import crack.cont.array Array;
 import crack.fs makePath;
@@ -116,12 +115,41 @@ EventManager eventManager;
         return self;
     }
 
+    @function(SequencerWaveModel) int writeToFile(String filename) {
+        out := makePath(filename).writer();
+        def := WaveDef(self.channels, 44100, 16);
+        def.writeHeader(out);
+
+        pos := uint(0);
+        bufSize := 1024 * self.channels;
+        buf := WaveBuffer(bufSize, array[int16](bufSize));
+        while (pos < self.frames) {
+            # Clean out the buffer.
+            for (int i; i < buf.cap; ++i)
+                buf[i] = 0;
+
+            # Read either 1K frames or as many remain from the wave model.
+            size := (self.frames - pos >= 1024) ? 1024 : self.frames - pos;
+            self.read(pos, buf, size);
+
+            # the read() method doesn't care about the buffer size, so we set
+            # it prior to writing.
+            buf.size = size * self.channels;
+            def.writeData(out,  buf);
+
+            pos += 1024;
+        }
+        def.finish(out);
+        return 0;
+    }
+
     swm := SequencerWaveModel();
     result := Obj();
     result.define('add', add(swm));
     result.define('append', append(swm));
     result.define('frames', frames(swm));
     result.define('self', getSelf(swm));
+    result.define('writeToFile', writeToFile(swm));
     return result;
 }
 
