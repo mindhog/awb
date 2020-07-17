@@ -127,13 +127,25 @@ class RemixHead {
         # Fill the input buffers.
         inbufs := track.effects.getInputBuffers();
         buf := track.readBuffer(frames * track.wave.channels);
-        for (int ch; ch < track.wave.channels && ch < inbufs.count(); ++ch) {
-            for (int i = 0; i < frames; ++i) {
-                index := i * track.wave.channels + ch;
-                if (index < buf.size)
-                    inbufs[ch][i] = buf[index] / 32768.0;
-                else
-                    inbufs[ch][i] = 0;
+        if (inbufs.count() == 2 && track.wave.channels == 1) {
+            # 1 channel -> 2 channels, split the input channel.
+            for (int ch; ch < inbufs.count(); ++ch) {
+                for (int i = 0; i < frames; ++i) {
+                    if (i < buf.size)
+                        inbufs[ch][i] = buf[i] / 32768.0;
+                    else
+                        inbufs[ch][i] = 0;
+                }
+            }
+        } else {
+            for (int ch; ch < track.wave.channels && ch < inbufs.count(); ++ch) {
+                for (int i = 0; i < frames; ++i) {
+                    index := i * track.wave.channels + ch;
+                    if (index < buf.size)
+                        inbufs[ch][i] = buf[index] / 32768.0;
+                    else
+                        inbufs[ch][i] = 0;
+                }
             }
         }
 
