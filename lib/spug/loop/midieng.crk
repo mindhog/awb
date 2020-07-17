@@ -6,13 +6,13 @@ import crack.lang Exception;
 import crack.math floor;
 import crack.midi.alsa Port, Sequencer, SND_SEQ_OPEN_OUTPUT,
     SND_SEQ_OPEN_INPUT;
-import crack.midi.event ControlChange, Event, MidiWriter, Track;
+import crack.midi.event ChannelEvent, ControlChange, Event, MidiWriter, Track;
 import crack.net Poller, PollEvent, PollEventCallback, POLLOUT, POLLIN;
 import crack.rawptr RawPtr;
 import crack.runtime sleep, PollEvt, PollSet;
 import crack.threads Thread;
 import crack.time TimeDelta;
-import spug.loop.jack JackPos, JackWrapper, JACK_TRANSPORT_ROLLING;
+import spug.loop.jack JackPos, JackWrapper, WaveManager, JACK_TRANSPORT_ROLLING;
 import spug.loop.model LoopCursor, Section;
 
 @import crack.ann cvars, impl, interface;
@@ -43,9 +43,24 @@ const int
     @abstract void start();
     @abstract void stop();
     @abstract int getTransportState(JackPos pos);
+
+    ## Set the current time position to 'secs' seconds since the beginning of
+    ## all tracks.
+    @abstract void setTime(float secs);
+
+    ## Returns the current time.
+    @abstract float getTime();
+
+    ## True if there are any tracks in the wave manager, false if it's empty.
+    @abstract bool hasTracks();
 }
 
 @final class MidiSequencer {
+
+    # If this is specified, the channel of all input events is rewritten to
+    # the value specified.
+    int inputChannel = -1;
+
     Sequencer __seq;
     Jack __jack;
 
@@ -68,7 +83,7 @@ const int
     ## Start time of the transport in microseconds (when we started jack
     ## rolling).
     ## This is currently also the start time of the first play of the section
-    ## in micronseconds, which is really more what we want.
+    ## in microseconds, which is really more what we want.
     uint64 __startTime;
 
     ## Current engine state (see the ST_* constants above).
@@ -163,8 +178,15 @@ const int
     }
 
     @final void __processEvent(Event event) {
+        if (inputChannel > -1 && event := ChannelEvent.cast(event, null))
+            event.channel = byte(inputChannel);
+
         # Some hacks to get everything working.
         if (cc := ControlChange.cast(event, null)) {
+
+            # CC 45 is the "record" button for the Korg nanokontrol.  So
+            # basically this clause starts midi recording (and switches to
+            # play mode if we're already recording)
             if (cc.controller == 45) {
 
                 # Ignore "button up" events.
@@ -174,6 +196,7 @@ const int
                 # If we're currently recording, move the record track into the
                 # current section and switch to play mode.
                 if (__recordTrack) {
+                    cerr `midieng: saving recorded track\n`;
                     t := __getTicks(0);
                     __section.markEnding(__recordTrack, t, true);
                     __section.tracks.append(__recordTrack);
@@ -188,12 +211,18 @@ const int
                 } else {
                     # Create a record track, make sure the transport is
                     # rolling.
+                    cerr `midieng: Starting record\n`;
                     __recordTrack = Track('noname');
                     if (__transportState != JACK_TRANSPORT_ROLLING) {
                         __jack.start();
                         __updateJackState();
                     }
-                    __state = ST_LATCHED;
+                    __computeStartTime();
+                    # If there are no tracks, we started out in "latched"
+                    # state, otherwise go directly to "record".
+                    __state = (__section.span || __jack.hasTracks()) ?
+                                  ST_RECORD :
+                                  ST_LATCHED;
                 }
 
                 return;
@@ -205,6 +234,7 @@ const int
                 __startTime = 0;
                 __trackCursors = null;
                 __jack.stop();
+                return;
             } else if (cc.controller == 41) {
                 # Control 41 is the "play" button, so have it toggle play.
                 if (cc.value != 127)
@@ -212,17 +242,22 @@ const int
                 if (__transportState == JACK_TRANSPORT_ROLLING) {
                     # Currently playing.  Stop.
                     __jack.stop();
+                    __state = ST_IDLE;
+                    __startTime = 0;
                 } else {
-                    __jack.stop();
+                    __jack.start();
+                    __jack.setTime(0);
                     __startTime = __pos.usecs;
                     __setTrackCursors(0);
                     for (cur :in __trackCursors)
                         __playPendingEvents(cur, /* ticks = */ 0);
                 }
+                return;
             }
         }
 
-        __processor(this, event);
+        if (__processor)
+            __processor(this, event);
 
         # This probably belongs in the event processor.
         if (!(__recordTrack is null)) {
@@ -247,7 +282,6 @@ const int
 
     class EventHandler @impl PollEventCallback {
         Sequencer __seq;
-        Array[Event] __recorded;
         RawPtr[MidiSequencer] __engine;
 
         oper init(MidiSequencer engine, Sequencer seq) :
@@ -300,10 +334,11 @@ const int
                     __playPendingEvents(cur, tick);
 
                     # Figure out how many ticks until the next event
-                    # (we do the span offset to deal with events that
+                    # (we do the span offsetting to deal with events that
                     # happen in the next iteration of the loop)
-                    diff := (cur.elem().time < tick ? cur.span : 0) +
-                            cur.elem().time - tick;
+                    spanTick := tick % cur.span;
+                    diff := (cur.elem().time < spanTick ? cur.span : 0) +
+                            cur.elem().time - spanTick;
                     if (diff < nextEventTime)
                         nextEventTime = diff;
                 }
@@ -346,6 +381,9 @@ const int
         poller := Poller();
         registerHandlers(poller);
 
+        # Set the time of the wave audio to the beginning.
+        __jack.setTime(0);
+
         # This is the TimeDelta structure that we'll populate and reuse for
         # the poll timeout.  If the transport is rolling and there are events,
         # this will be populated with the time of the next event and 'timeout'
@@ -372,35 +410,46 @@ const int
     ## event is received.
     void addProcessor(EventProcessor processor) {
         # This is totally wrong, should be adding a processor to the processor
-        # chain.
+        # chain and should be mutex protected.
         __processor = processor;
     }
-
 }
 
 @final class JackImpl @impl Jack {
     @cvars {
-        JackClient __client;
+        WaveManager __waveMan;
     }
     void start() {
-        __client.transportStart();
+        __waveMan.getClient().transportStart();
+        __waveMan.unpause();
     }
 
     void stop() {
-        __client.transportStop();
+        __waveMan.getClient().transportStop();
+        __waveMan.pause();
     }
 
     int getTransportState(JackPos pos) {
-        return __client.transportQuery(pos);
+        return __waveMan.getClient().transportQuery(pos);
     }
+
+    void setTime(float secs) {
+        __waveMan.seek(int(float(__waveMan.getSampleRate()) * secs));
+    }
+
+    float getTime() {
+        return float(__waveMan.tell()) / float(__waveMan.getSampleRate());
+    }
+
+    bool hasTracks() { return __waveMan.adapters }
 }
 
 ## Midi engine public interface.
 @final class MidiEngine {
     MidiSequencer __mseq;
 
-    oper init(JackWrapper jackWrapper, Sequencer seq) :
-        __mseq(JackImpl(jackWrapper.getClient()), seq) {
+    oper init(WaveManager waveMan, Sequencer seq) :
+        __mseq(JackImpl(waveMan), seq) {
     }
 
     void start() {
@@ -422,6 +471,10 @@ const int
     }
 
     Port oper .outPort =(Port port) { return __mseq.outPort = port }
+
+    int oper .inputChannel =(int channel) {
+        return __mseq.inputChannel = channel;
+    }
 }
 
 class MidiDispatcher @impl EventProcessor {

@@ -1,5 +1,5 @@
 
-import crack.cont.list List;
+import crack.cont.array Array;
 import crack.io cerr, FileHandle, Formatter, FStr;
 import crack.ext._jack JACK_TRANSPORT_STOPPED;
 import crack.lang cmp, Exception;
@@ -27,7 +27,7 @@ int cmpEvent(Event a, Event b) {
     }
 }
 
-class EL : List[Event] {
+class EL : Array[Event] {
     int cmp(EL other) {
         size := min(count(), other.count());
         for (int i = 0; i < size; ++i) {
@@ -62,11 +62,29 @@ class EL : List[Event] {
 class JackFake @impl Jack {
     int state;
     uint64 t;
+
+    # Time when the tracks started (in usecs)
+    uint64 startTime;
+
+    bool gotTracks;
+
     void start() { state = JACK_TRANSPORT_ROLLING }
     void stop() { state = JACK_TRANSPORT_STOPPED }
     int getTransportState(JackPos pos) {
         pos.usecs = t;
         return state;
+    }
+
+    void setTime(float time) {
+        startTime = t - uint64(time * 1000000);
+    }
+
+    float getTime() {
+        return float(t - startTime) / 1000000.0;
+    }
+
+    bool hasTracks() {
+        return gotTracks;
     }
 }
 
@@ -86,7 +104,9 @@ class SequencerFake : Sequencer {
 
     Event getEvent() {
         if (hasEvent()) {
-            return __events.popHead();
+            evt := __events[0];
+            __events.delete(0);
+            return evt;
         } else
             return null;
     }
@@ -98,7 +118,7 @@ class SequencerFake : Sequencer {
     ## source, like a controller.  Event time must be specified in absolute
     ## usecs (normally these are specified in ticks).
     void addEvent(Event event) {
-        __events.pushTail(event);
+        __events.append(event);
     }
 
     Event getCurEvent() {
@@ -122,7 +142,7 @@ class PortFake : Port {
     void send(Event event) {
         e := event.clone();
         e.time = __jack.t / 695;
-        events.pushTail(e);
+        events.append(e);
     }
 }
 
@@ -214,7 +234,7 @@ NoteOn no(int time, int note) { return NoteOn(time, 0, byte(note), 127) }
         eng.addProcessor(MidiDispatcher());
     }
 
-    ## Returns absoulte time in usecs for the current time + ticks.
+    ## Returns absolute time in usecs for the current time + ticks.
     uint64 getAbsTime(uint ticks) { return jack.t + ticks * 695 }
 
     ## Send a record event.  'ticks' is the number of relative ticks in the
