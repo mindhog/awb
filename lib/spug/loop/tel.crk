@@ -17,11 +17,11 @@ import crack.runtime free;
 import crack.midi.event ControlChange, Event, NoteOn, NoteOff, Track;
 import crack.time TimeDelta;
 import spug.loop.evtrec makeEventRecorderModule;
-import spug.loop.midieng MidiDispatcher, MidiEngine;
+import spug.loop.midieng MidiDispatcher, MidiEngine, MidiSequencer;
 import spug.loop.model EventContext, EventManager, Section;
-import spug.loop.instrument MidiInstrument;
-import spug.loop.jack jackCallback, SequencerWaveModel, Wave, WaveAdapter,
-    WaveManager, WaveModel, WindowBufferAdapter;
+import spug.loop.instrument Instrument, MidiInstrument, Orchestra;
+import spug.loop.jack jackCallback, RecordBuffer, SequencerWaveModel, Wave,
+    WaveAdapter, WaveManager, WaveModel, WindowBufferAdapter;
 
 import crash createRootContext, eval, parseBlockArg, ActiveFunc, Block, Builtin,
     EvalContext, Obj, SimpleValue;
@@ -47,6 +47,12 @@ EventManager eventManager;
 @function int set_tempo(int tempo) {
     eventManager.tempo = tempo;
     return 0;
+}
+
+## Returns the event manager's Orchestra object.  This is the object used to
+## play most midi notes from the event manager.
+@function Orchestra getOrchestra() {
+    return eventManager.instrument;
 }
 
 @function int metro(int beats) {
@@ -515,6 +521,16 @@ Obj makeTrack(Track track) {
 
 Obj _midiEngineObj;
 
+class InstrumentDispatcher @impl Functor2[void, MidiSequencer, Event] {
+    @cvars {
+        Instrument instrument;
+    }
+
+    void oper call(MidiSequencer engine, Event event) {
+        instrument.onEvent(event);
+    }
+}
+
 ## Get the midi engine, creating it if necessary.
 @function Obj getMidiEngine() {
     if (_midiEngineObj)
@@ -540,7 +556,26 @@ Obj _midiEngineObj;
         self.addProcessor(MidiDispatcher());
         return 0;
     }
+
+    ## Route all events to the given instrument object.
+    @function(MidiEngine)
+    InstrumentDispatcher routeToInstrument(Instrument instrument) {
+        self.addProcessor(result := InstrumentDispatcher(instrument));
+        return result;
+    }
+
+    ## Set the "input channel" parameter of the midi engine.  This value
+    ## overrides the channel number for all input events.  A value of -1
+    ## disables this feature and the original channel is used.
+    @function(MidiEngine)
+    int setInputChannel(int channel) {
+        return self.inputChannel = channel;
+    }
+
     o.define('routeToOutputPort', routeToOutputPort(eng));
+    o.define('routeToInstrument', routeToInstrument(eng));
+    o.define('setInputChannel', setInputChannel(eng));
+
     return _midiEngineObj;
 }
 
@@ -560,6 +595,26 @@ class ExportMidiFileCmd : Builtin {
         file.write(makePath(filename).writer());
         return IntObj(0);
     }
+}
+
+## Begin recording.  Returns a RecordBuffer object that you can call 'finish'
+## on when done.
+@function Obj recordFile(String filename) {
+    if (!eventManager.waveMan)
+        eventManager.waveMan = WaveManager.create();
+    def := WaveDef(2, 44100, 16);
+    out := makePath(filename).writer();
+    def.writeHeader(out);
+    buf := eventManager.waveMan.beginRecord(def, out);
+
+    @function(RecordBuffer) int finish() {
+        self.finish();
+        return 0;
+    }
+
+    result := Obj();
+    result.define('finish', finish(buf));
+    return result;
 }
 
 class InterpWrapper {
@@ -583,6 +638,7 @@ class InterpWrapper {
         __rootCtx.define('addWaveModel', addWaveModel());
         __rootCtx.define('addMemFile', addMemFile());
         __rootCtx.define('loadProject', loadProject());
+        __rootCtx.define('getOrchestra', getOrchestra());
         __rootCtx.define('metro', metro());
         __rootCtx.define('channel_connect', channelConnect());
         __rootCtx.define('connect', connect());
@@ -606,6 +662,7 @@ class InterpWrapper {
         __rootCtx.define('callback', CallbackCmd());
         __rootCtx.define('evtrec', getEventRecModule());
         __rootCtx.define('getCurrentSection', getCurrentSection());
+        __rootCtx.define('recordFile', recordFile());
         __rootCtx.define('CVR_MULT', SimpleValue(IntObj(CVR_MULT)));
     }
 
