@@ -1,0 +1,34 @@
+# Script to record midi tracks on top of an existing audio track.
+#
+# This illustrates a current technique for recording midi tracks against an
+# existing set of wave tracks using the new midieng module.
+#
+# Useful methods of the midi engine that are not illustrated here:
+#   $eng setPPB <int>
+#       Set pulses per beat.  This must be done before the engine contains any
+#       tracks, as PPB is a global constant for a project.
+#   $eng setTempo <float>
+#       Set the current tempo in beats per minute.
+
+# Initialize the midi engine first, we'll need to do that
+var eng [getMidiEngine]
+
+# Connect everything.
+connect fluidsynth:left system:playback_1
+connect fluidsynth:right system:playback_2
+connect awb:left system:playback_1
+connect awb:right system:playback_2
+connect 'midi:nanoKONTROL2/nanoKONTROL2 MIDI 1' 'midi:AWBX/in'
+connect 'midi:Q25/Q25 MIDI 1' 'midi:AWBX/in'
+
+var adapter [load /home/mmuller/mm/mp3/demon/me/test.wav]
+setVolume $adapter 25
+$eng routeToInstrument [getOrchestra]
+$eng setInputChannel 9
+
+# Problems:
+# - Need to play midi events through the "Orchestra" instead of just writing
+#   to an output port.
+# - Need to be able to do channel conversion on input (so I can write to drums)
+
+

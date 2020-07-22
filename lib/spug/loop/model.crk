@@ -6,7 +6,7 @@ import crack.cont.array Array;
 import crack.cont.hashmap HashMap;
 import crack.cont.treemap TreeMap;
 import crack.fs cwd, makePath;
-import crack.functor Functor2;
+import crack.functor Functor1, Functor2;
 import crack.io cerr, cout, FStr, StringReader, StringWriter;
 import crack.lang cmp, makeHashVal, CString, Exception;
 import crack.math floor;
@@ -19,6 +19,7 @@ import spug.loop.jack SequencerWaveModel, Wave, WaveAdapter, WaveManager,
 import crack.midi.alsa Port, Sequencer;
 import crack.protobuf Message;
 import crack.serial SerialReader, SerialWriter;
+import crack.threads Queue = Queue2;
 import crack.time Time_add = add, Time, TimeDelta;
 
 @import crack.ann assert, impl, implements, interface;
@@ -512,6 +513,14 @@ class EventManager @impl EventContext {
     Array[LoopCursor] trackCursors;
     TreeMap[int, Port] __portCache = {};
 
+    alias CommandQueue = Queue[Functor1[void, EventManager]];
+
+    CommandQueue __commandQueue = CommandQueue();
+
+    ## Event manager command queue.  Commands added to this queue are
+    ## evaluated during runOneCycle().
+    @final CommandQueue oper .commandQueue() { return __commandQueue }
+
     # Name of the project file.
     String projectFileName = 'noname';
 
@@ -548,8 +557,9 @@ class EventManager @impl EventContext {
     ## Global tempo in BPM.
     uint tempo = 120;
 
-    ## Global pulses-per-beat.
-    uint ppb = 96;
+    ## Global pulses-per-beat.  Setting this to 1440 (5 * 9 * 32) to
+    ## correspond to the same value in midieng.
+    uint ppb = 1440;
 
     oper init(Controller controller, Orchestra instrument,
               Sequencer sequencer,
@@ -887,6 +897,10 @@ class EventManager @impl EventContext {
                 }
             }
         }
+
+        # Run any commands on the queue.
+        while (cmd := __commandQueue.getNonBlocking())
+            cmd(this);
 
         lastTime = relTime;
     }

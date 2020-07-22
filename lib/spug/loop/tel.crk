@@ -6,7 +6,7 @@ import crack.audio.wavfile ManagedWaveBuffer, WaveBuffer, WaveDef;
 import crack.strutil StringArray;
 import crack.cont.array Array;
 import crack.fs makePath;
-import crack.functor Functor0, Functor2;
+import crack.functor Functor0, Functor1, Functor2;
 import crack.io cin, cout, cerr, FStr;
 import crack.lang CString, Exception;
 import crack.midi.alsa PortInfo, Sequencer, SND_SEQ_OPEN_OUTPUT,
@@ -17,7 +17,8 @@ import crack.runtime free;
 import crack.midi.event ControlChange, Event, NoteOn, NoteOff, Track;
 import crack.time TimeDelta;
 import spug.loop.evtrec makeEventRecorderModule;
-import spug.loop.midieng MidiDispatcher, MidiEngine, MidiSequencer;
+import spug.loop.midieng MidiDispatcher, MidiEngine, MidiSequencer,
+    ModelObserver;
 import spug.loop.model EventContext, EventManager, Section;
 import spug.loop.instrument Instrument, MidiInstrument, Orchestra;
 import spug.loop.jack jackCallback, RecordBuffer, SequencerWaveModel, Wave,
@@ -531,6 +532,22 @@ class InstrumentDispatcher @impl Functor2[void, MidiSequencer, Event] {
     }
 }
 
+class ModelObserverImpl @impl ModelObserver {
+    class AddTrackCommand @impl Functor1[void, EventManager] {
+        @cvars {
+            Track track;
+        }
+
+        void oper call(EventManager em) {
+            eventManager.addTrack(track, track[-1].time);
+        }
+    }
+
+    void addTrack(Track track) {
+        eventManager.commandQueue.add(AddTrackCommand(track));
+    }
+}
+
 ## Get the midi engine, creating it if necessary.
 @function Obj getMidiEngine() {
     if (_midiEngineObj)
@@ -542,6 +559,7 @@ class InstrumentDispatcher @impl Functor2[void, MidiSequencer, Event] {
     seq := Sequencer(SND_SEQ_OPEN_OUTPUT | SND_SEQ_OPEN_INPUT, 0);
     seq.seq.set_client_name('AWBX'.buffer);
     eng := MidiEngine(eventManager.waveMan, seq);
+    eng.setModelObserver(ModelObserverImpl());
 
     # XXX Hack.  Remove once we have a more principled way of adding ports.
     eng.outPort = seq.makeReadPort('out');
@@ -572,9 +590,29 @@ class InstrumentDispatcher @impl Functor2[void, MidiSequencer, Event] {
         return self.inputChannel = channel;
     }
 
+    ## Set pulses per beat (default value is 1440 [5 * 9 * 32]).  Note that
+    ## this needs to be set prior to recording any tracks.
+    ## This also sets the PPB in the event manager (which will likely go away
+    ## soon).
+    @function(MidiEngine)
+    int setPPB(int val) {
+        self.setPPB(val);
+        eventManager.ppb = val;
+        return 0;
+    }
+
+    ## Set the tempo (in beats per minute).
+    @function(MidiEngine)
+    int set_tempo(float bpm) {
+        self.setBPM(bpm);
+        return 0;
+    }
+
     o.define('routeToOutputPort', routeToOutputPort(eng));
     o.define('routeToInstrument', routeToInstrument(eng));
     o.define('setInputChannel', setInputChannel(eng));
+    o.define('setPPB', setPPB(eng));
+    o.define('set_tempo', set_tempo(eng));
 
     return _midiEngineObj;
 }

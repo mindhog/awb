@@ -2,7 +2,7 @@ import crack.cont.array Array;
 import crack.ext._jack JackClient;
 import crack.functor Functor2;
 import crack.io cerr, FileHandle;
-import crack.lang Exception;
+import crack.lang Exception, InvalidStateError;
 import crack.math floor;
 import crack.midi.alsa Port, Sequencer, SND_SEQ_OPEN_OUTPUT,
     SND_SEQ_OPEN_INPUT;
@@ -10,7 +10,7 @@ import crack.midi.event ChannelEvent, ControlChange, Event, MidiWriter, Track;
 import crack.net Poller, PollEvent, PollEventCallback, POLLOUT, POLLIN;
 import crack.rawptr RawPtr;
 import crack.runtime sleep, PollEvt, PollSet;
-import crack.threads Thread;
+import crack.threads Mutex, MutexLock, Thread;
 import crack.time TimeDelta;
 import spug.loop.jack JackPos, JackWrapper, WaveManager, JACK_TRANSPORT_ROLLING;
 import spug.loop.model LoopCursor, Section;
@@ -55,6 +55,18 @@ const int
     @abstract bool hasTracks();
 }
 
+## Interface for things that watch the MidiSequencer's model state.
+@interface ModelObserver {
+    @abstract void addTrack(Track track);
+}
+
+Track cloneTrack(Track track) {
+    result := Track(track.name);
+    for (event :in track)
+        result.add(event);
+    return result;
+}
+
 @final class MidiSequencer {
 
     # If this is specified, the channel of all input events is rewritten to
@@ -71,6 +83,7 @@ const int
     bool __posIsValid;
 
     EventProcessor __processor;
+    ModelObserver __modelObserver;
 
     ## The track we're currently recording.  If this is non-null and the
     ## transport is rolling, we're recording.  Otherwise we're not.
@@ -88,6 +101,13 @@ const int
 
     ## Current engine state (see the ST_* constants above).
     int __state;
+
+    ## Mutex controlling all parameters that can be set by MidiEngine.
+    Mutex __lock = Mutex();
+
+    ## Pulses per beat.  Note that this can only be set when there are
+    ## no tracks.
+    int __ppb = 1440;
 
     ## We're currently doing this based on 60bpm (1 bps) where ticks per beat
     ## is 5 * 9 * 32 (1440).
@@ -200,6 +220,13 @@ const int
                     t := __getTicks(0);
                     __section.markEnding(__recordTrack, t, true);
                     __section.tracks.append(__recordTrack);
+
+                    # Until project model gets unified across the old and new
+                    # systems, we need to copy the track and send it to the
+                    # event manager.
+                    if (__modelObserver)
+                        __modelObserver.addTrack(cloneTrack(__recordTrack));
+
                     __recordTrack = null;
                     __state = ST_PLAY;
 
@@ -308,6 +335,7 @@ const int
     ## pass one of these in from the caller to avoid having to allocate one
     ## for each cycle.
     void runOneCycle(Poller poller, TimeDelta timeoutObj) {
+        lk := MutexLock(__lock);
         __updateJackState();
 
         TimeDelta timeout;
@@ -410,9 +438,30 @@ const int
     ## event is received.
     void addProcessor(EventProcessor processor) {
         # This is totally wrong, should be adding a processor to the processor
-        # chain and should be mutex protected.
+        # chain.
+        lk := MutexLock(__lock);
         __processor = processor;
     }
+
+    ## Sets the current model observer, which is notified of changes to the
+    ## model object.
+    void setModelObserver(ModelObserver observer) {
+        lk := MutexLock(__lock);
+        __modelObserver = observer;
+    }
+
+    void setPPB(int ppb) {
+        lk := MutexLock(__lock);
+        if (__section.tracks)
+            throw InvalidStateError();
+        __ppb = ppb;
+    }
+
+    void setBPM(float bpm) {
+        lk := MutexLock(__lock);
+        __ticksPerSecond = float(__ppb) * bpm / 60.0;
+    }
+
 }
 
 @final class JackImpl @impl Jack {
@@ -468,6 +517,21 @@ const int
 
     void addProcessor(EventProcessor processor) {
         __mseq.addProcessor(processor);
+    }
+
+    void setModelObserver(ModelObserver observer) {
+        __mseq.setModelObserver(observer);
+    }
+
+    ## Set pulses per beat.  Must be called prior to adding any tracks.  If
+    ## there are already tracks, the PPB of the tracks is that of the engine.
+    void setPPB(int ppb) {
+        __mseq.setPPB(ppb);
+    }
+
+    ## Set the tempo in beats per minute.
+    void setBPM(float bpm) {
+        __mseq.setBPM(bpm);
     }
 
     Port oper .outPort =(Port port) { return __mseq.outPort = port }
