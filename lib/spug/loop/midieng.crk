@@ -388,6 +388,7 @@ Track cloneTrack(Track track) {
 
         # We're going to wait now, so invalidate the jack transport state.
         __posIsValid = false;
+        lk = null;
         poller.waitAndProcess(timeout);
     }
 
