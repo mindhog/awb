@@ -75,8 +75,10 @@ class JackWrapper {
 
     void removeProcessor(Functor1[void, JackWrapper] processor) {
         for (iter :on __processors) {
+            # Since we may be iterating over this loop, don't delete here,
+            # just null them out.
             if (iter.elem() is processor)
-                __processors.delete(iter.index);
+                __processors[iter.index] = null;
         }
     }
 
@@ -93,9 +95,20 @@ class JackWrapper {
             return;
         }
         frameCount = nframes;
+
         count := __processors.count();
-        for (int i = 0; i < count; ++i)
-            __processors[i](this);
+        for (int i = 0; i < count;) {
+            # Run any active processors, delete any nulled ones (see
+            # removeProcessors()).
+            proc := __processors[i];
+            if (proc !is null) {
+                proc(this);
+                ++i;
+            } else {
+                __processors.delete(i);
+                --count;
+            }
+        }
 
         __startFrame += frameCount;
     }
@@ -152,7 +165,12 @@ class JackWrapper {
 ## This is the jack callback.
 int jackCallback(uint32 nframes, voidptr arg) {
     jack := JackWrapper.unsafeCast(arg);
-    jack.process(nframes);
+    import crack.lang Exception;
+    try {
+        jack.process(nframes);
+    } catch (Exception ex) {
+        cerr `Exception in jack thread: $ex\n`;
+    }
     return 0;
 }
 
@@ -891,8 +909,8 @@ class Recorder @impl Functor1[void, JackWrapper] {
                 int16(lbuf[i] * 32768.0);
             outBuf.buffer[(outBuf.recordPos + i * 2 + 1) % outBuf.size] =
                 int16(rbuf[i] * 32768.0);
-            ol[i] = lbuf[i];
-            or[i] = rbuf[i];
+            ol[i] = ol[i] + lbuf[i];
+            or[i] = or[i] + rbuf[i];
 
         }
         outBuf.recordPos += jack.frameCount * 2;
