@@ -7,7 +7,7 @@ import crack.cont.hashmap HashMap;
 import crack.fs cwd;
 import crack.functor Functor0;
 import crack.lang AssertionError, CString, Exception;
-import crack.cmdline CmdOptions, Option, CMD_STR;
+import crack.cmdline CmdOptions, Option, CMD_BOOL, CMD_STR;
 import crack.sys argv, exit;
 import crack.time Time;
 import crack.cont.array Array;
@@ -29,6 +29,7 @@ import crack.strutil StringArray;
 
 import spug.loop.jack WaveManager;
 import spug.loop.tel telEventManager = eventManager, AppMethods, InterpWrapper;
+import spug.loop.textui TextController;
 import spug.loop.model programNames, ChannelMap, EventManager, Project,
     Section, Controller, IDLE, LATCHED_RECORD, PLAY, RECORD;
 import spug.loop.instrument FluidSynthInstrument, Instrument, Orchestra;
@@ -52,6 +53,7 @@ import spug.ui.piano Piano;
 
 CmdOptions cl = [
     Option('port', 'p', 'Midi port (e.g. "20:0")', '', CMD_STR),
+    Option('text', 't', 'Use text UI (not SDL)', 'false', CMD_BOOL),
 ];
 
 nonFlagArgs := cl.parse(argv);
@@ -929,7 +931,11 @@ class App : Object @implements AppMethods, KeyboardHandler, MouseButtonHandler,
         bindings[key] = callback;
     }
 
-    oper init(ChannelMap channelMap) : interp(this) {
+    void setInterp(InterpWrapper wrapper) {
+        interp = wrapper;
+    }
+
+    oper init(ChannelMap channelMap) {
 
         app.resizable = true;
         app.initialize();
@@ -1070,12 +1076,25 @@ piano.noteOff(44);
 #Process(StringArray!['./connect']).run(ProcessHandlerImpl());
 
 channelMap := ChannelMap();
-App app = {channelMap};
+App app;
+InterpWrapper interp;
+Controller controller;
+if (!cl.getBool('text')) {
+    controller = app = App(channelMap);
+    interp = InterpWrapper(app);
+    app.setInterp(interp);
+} else {
+    controller = tc := TextController();
+    interp = InterpWrapper(tc);
+}
 cout `creating event manager\n`;
-EventManager em = {app, orch, s, channelMap};
+EventManager em = {app ? Controller.cast(app) :
+                         Controller.cast(TextController()),
+                   orch, s, channelMap};
 em.waveMan = waveMan;
 telEventManager = em;
-app.setEventManager(em);
+if (app)
+    app.setEventManager(em);
 
 String projectFile;
 for (arg :in nonFlagArgs.subarray(1)) {
@@ -1088,7 +1107,7 @@ for (arg :in nonFlagArgs.subarray(1)) {
     } else if (arg.endsWith('.crash')) {
         cout `running script $arg\n`;
         try {
-            app.interp.evalScript(arg);
+            interp.evalScript(arg);
         } catch (Exception ex) {
             cerr `Got exception:\n$ex\n`;
             exit(1);
@@ -1101,7 +1120,10 @@ for (arg :in nonFlagArgs.subarray(1)) {
 }
 
 cout `running\n`;
-app.run();
+if (app)
+    app.run();
+else
+    interp.doREPL();
 
 waveMan.deactivate();
 
@@ -1116,4 +1138,3 @@ waveMan.deactivate();
 #ChordPlayer player = {FluidSynthInstrument(synth, 0)};
 #cout `running\n`;
 #player.run();
-

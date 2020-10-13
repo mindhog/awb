@@ -26,6 +26,7 @@ import spug.loop.jack jackCallback, RecordBuffer, SequencerWaveModel, Wave,
 
 import crash createRootContext, eval, parseBlockArg, ActiveFunc, Block, Builtin,
     EvalContext, Obj, SimpleValue;
+import repl repl;
 import stdlib stdlib;
 import types FloatObj, IntObj;
 
@@ -660,48 +661,56 @@ class InterpWrapper {
     EvalContext __rootCtx = createRootContext();
     Poller __poller = {};
 
+    @static void addCrashMethods(EvalContext ctx, AppMethods app) {
+        ctx.define("stdlib", stdlib());
+
+        ctx.define('play', play());
+        ctx.define('exportMidiFile', ExportMidiFileCmd());
+        ctx.define('getMidiEngine', getMidiEngine());
+        ctx.define('get_tempo', get_tempo());
+        ctx.define('set_tempo', set_tempo());
+        ctx.define('load', load());
+        ctx.define('readWave', readWave());
+        ctx.define('makeSequencerWaveModel', makeSequencerWaveModel());
+        ctx.define('addWaveModel', addWaveModel());
+        ctx.define('addMemFile', addMemFile());
+        ctx.define('loadProject', loadProject());
+        ctx.define('getOrchestra', getOrchestra());
+        ctx.define('metro', metro());
+        ctx.define('channel_connect', channelConnect());
+        ctx.define('connect', connect());
+        ctx.define('Ev_getValue', Ev_getValue());
+        ctx.define('volumeControl', volumeControl());
+        ctx.define('setVolume', setVolume());
+        ctx.define('panControl', panControl());
+        ctx.define('setPan', setPan());
+        ctx.define('setGain', setGain());
+        ctx.define('makeControllerOffsetChange',
+                         makeControllerOffsetChange());
+        ctx.define('bindController', bindController());
+        ctx.define('addEventProcessor', addEventProcessor());
+        ctx.define('CrashEventProcessor', CrashEventProcessorCmd());
+        ctx.define('seek', seek());
+        ctx.define('shell', ShellCmd());
+        ctx.define('tell', tell());
+        ctx.define('fwd', fwd());
+        ctx.define('bak', bak());
+        ctx.define('app', makeAppWrapper(app));
+        ctx.define('callback', CallbackCmd());
+        ctx.define('evtrec', getEventRecModule());
+        ctx.define('getCurrentSection', getCurrentSection());
+        ctx.define('recordFile', recordFile());
+        ctx.define('CVR_MULT', SimpleValue(IntObj(CVR_MULT)));
+    }
+
     oper init(AppMethods app) {
         __poller.add(cin, POLLIN | POLLERR);
 
-        __rootCtx.define("stdlib", stdlib());
+        addCrashMethods(__rootCtx, app);
+    }
 
-        __rootCtx.define('play', play());
-        __rootCtx.define('exportMidiFile', ExportMidiFileCmd());
-        __rootCtx.define('getMidiEngine', getMidiEngine());
-        __rootCtx.define('get_tempo', get_tempo());
-        __rootCtx.define('set_tempo', set_tempo());
-        __rootCtx.define('load', load());
-        __rootCtx.define('readWave', readWave());
-        __rootCtx.define('makeSequencerWaveModel', makeSequencerWaveModel());
-        __rootCtx.define('addWaveModel', addWaveModel());
-        __rootCtx.define('addMemFile', addMemFile());
-        __rootCtx.define('loadProject', loadProject());
-        __rootCtx.define('getOrchestra', getOrchestra());
-        __rootCtx.define('metro', metro());
-        __rootCtx.define('channel_connect', channelConnect());
-        __rootCtx.define('connect', connect());
-        __rootCtx.define('Ev_getValue', Ev_getValue());
-        __rootCtx.define('volumeControl', volumeControl());
-        __rootCtx.define('setVolume', setVolume());
-        __rootCtx.define('panControl', panControl());
-        __rootCtx.define('setPan', setPan());
-        __rootCtx.define('setGain', setGain());
-        __rootCtx.define('makeControllerOffsetChange',
-                         makeControllerOffsetChange());
-        __rootCtx.define('bindController', bindController());
-        __rootCtx.define('addEventProcessor', addEventProcessor());
-        __rootCtx.define('CrashEventProcessor', CrashEventProcessorCmd());
-        __rootCtx.define('seek', seek());
-        __rootCtx.define('shell', ShellCmd());
-        __rootCtx.define('tell', tell());
-        __rootCtx.define('fwd', fwd());
-        __rootCtx.define('bak', bak());
-        __rootCtx.define('app', makeAppWrapper(app));
-        __rootCtx.define('callback', CallbackCmd());
-        __rootCtx.define('evtrec', getEventRecModule());
-        __rootCtx.define('getCurrentSection', getCurrentSection());
-        __rootCtx.define('recordFile', recordFile());
-        __rootCtx.define('CVR_MULT', SimpleValue(IntObj(CVR_MULT)));
+    void doREPL() {
+        repl(__rootCtx);
     }
 
     void checkForInput() {
