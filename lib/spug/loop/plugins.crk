@@ -70,6 +70,10 @@ class Plugin {
         return String(__rep.getName().asString());
     }
 
+    String getURI() {
+        return String(__rep.getURI().asString());
+    }
+
     uint32 getNumPorts() { return __rep.getNumPorts() }
 
     PortIter iterPorts() {

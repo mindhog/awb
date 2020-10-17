@@ -41,6 +41,7 @@ if (false) {
     lib := PluginLibrary();
     for (p :in lib) {
         cout `$(p.getName())\n`;
+        cout `  uri: $(p.getURI())\n`;
         for (port :in p.iterPorts())
             cout `  $(port.getName())\n`;
     }
