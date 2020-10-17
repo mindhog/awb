@@ -261,6 +261,7 @@ Track cloneTrack(Track track) {
                 __startTime = 0;
                 __trackCursors = null;
                 __jack.stop();
+                __jack.setTime(0);
                 return;
             } else if (cc.controller == 41) {
                 # Control 41 is the "play" button, so have it toggle play.
