@@ -1,0 +1,6 @@
+# Script containing useful stuff for running in command line mode.
+
+import [evalfile lib.crash] connect_aud
+connect_aud
+
+print 'Finished running clawb.crash\n'
