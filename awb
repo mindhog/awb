@@ -1,5 +1,5 @@
 #!/bin/sh
 crackdir=/home/mmuller/w/crack
 mydir=$(dirname $0)
-$crackdir/crack -l $crackdir/lib:$mydir/lib:$mydir/../crash \
+$crackdir/crack -l $crackdir/lib:$mydir/lib:$mydir/..:$mydir/../crash \
     $(dirname $0)/awb.crk "$@"

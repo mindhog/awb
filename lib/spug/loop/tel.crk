@@ -25,7 +25,7 @@ import spug.loop.jack jackCallback, RecordBuffer, SequencerWaveModel, Wave,
     WaveAdapter, WaveManager, WaveModel, WindowBufferAdapter;
 
 import crash createRootContext, eval, parseBlockArg, ActiveFunc, Block, Builtin,
-    EvalContext, Obj, SimpleValue;
+    EvalContext, Obj, SimpleValue, Value;
 import repl repl;
 import stdlib stdlib;
 import types FloatObj, IntObj;
@@ -712,6 +712,12 @@ class InterpWrapper {
     void doREPL() {
         repl(__rootCtx);
     }
+
+    void define(String name, Value value) {
+        __rootCtx.define(name, value);
+    }
+
+    EvalContext getRootContext() { return __rootCtx; }
 
     void checkForInput() {
         if (__poller.wait(TimeDelta(0, 0))) {

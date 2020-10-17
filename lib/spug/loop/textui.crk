@@ -1,0 +1,202 @@
+
+import crack.cont.array Array;
+import crack.cont.hashmap HashMap;
+import crack.exp.termui Event, KeyEvent, TermApp, Window, KEY_UP, KEY_DOWN,
+    KEY_LEFT, KEY_RIGHT, KEY_PGUP, KEY_PGDN, KEY_BACKSPACE, KEY_ENTER,
+    KEY_ESC, KEY_SPACE;
+import crack.functor Functor0, Functor1;
+import crack.io cerr, cout;
+import crack.lang Exception;
+import crash createRootContext, eval, parseString, Builtin, EvalContext,
+    SimpleValue;
+import deadly.layout Column, Container, Row;
+import deadly.termlist List;
+import repl repl;
+import .model Controller;
+import .tel eventManager, AppMethods, CrashCallback, InterpWrapper;
+
+import types IntObj;
+@import ann function;
+
+@import crack.ann cvars, impl, implements;
+
+class AppContext {}
+
+alias BindingMap = HashMap[int, Functor1[bool, AppContext]];
+
+BindingMap appBindings = BindingMap();
+
+class App : TermApp {
+    AppContext __context;
+
+    oper init(AppContext context) : __context = context {}
+
+    void onEvent(Event event) {
+        if (ke := KeyEvent.cast(event, null)) {
+            if ((cb := appBindings.get(ke.key)) && cb(__context))
+                return;
+            else if (ke.key == b'q')
+                terminate();
+        }
+
+        TermApp.onEvent(event);
+    }
+}
+
+class Status : Window {
+
+    byte normalAttr = 7;
+
+    oper init(Window parent) : Window(parent) {}
+
+    void paint() {
+        gc := getGraphicsContext();
+        gc.fillRect(0, 0, width, height, normalAttr, b' ');
+        gc.write(0, 0, normalAttr, 'AWB');
+    }
+}
+
+class TrackList : List {
+    @final void reloadTracks() {
+        model = Array[String]();
+        for (track :in eventManager.curSection.tracks)
+            model.append(track.name);
+    }
+
+    oper init(Window parent) : List(parent, Array[String]()) {
+        reloadTracks();
+    }
+
+    void trackAdded() {
+        model.append(eventManager.curSection.tracks[-1].name);
+    }
+
+    void trackDeleted() {
+        reloadTracks();
+    }
+}
+
+class CallbackWrapper @impl Functor1[bool, AppContext] {
+    @cvars {
+        Functor0[void] callback;
+    }
+    bool oper call(AppContext ctx) {
+        callback();
+        return true;
+    }
+}
+
+class TextController : Object @implements Controller, AppMethods {
+    InterpWrapper __interp;
+
+    ## List of track list windows.
+    Array[TrackList] __trackLists = {};
+
+    void changeState(int oldState, int newState) {
+        cout `Changing state from $oldState to $newState\n`;
+    }
+
+    void trackAdded() {
+        for (tl :in __trackLists)
+            tl.trackAdded();
+    }
+
+    void trackDeleted(uint index) {
+        for (tl :in __trackLists)
+            tl.trackDeleted();
+    }
+
+    void sectionCreated() {
+        cout `section created\n`;
+    }
+
+    void sectionChanged() {
+        cout `section changed\n`;
+    }
+
+    void setBinding(int key, Functor0[void] callback) {
+        appBindings[key] = CallbackWrapper(callback);
+    }
+
+    void setInterp(InterpWrapper interp) {
+
+        ## Run the user interface.
+        ##
+        ## 'block' is a crash block to execute in a subcontext that exists for
+        ## the duration of the time that the user interface is running.
+        @function(TextController) int runUI(String block) {
+            app := App(AppContext());
+            app.start();
+            col := Column(app);
+            stat := Status(col);
+            col.addChild(stat, 1);
+
+            rootCtx := self.__interp.getRootContext();
+            Exception error;
+            try {
+                rootCtx.define('mainColumn', SimpleValue(col));
+                rootCtx.pushFuncFrame();
+                eval(block, rootCtx);
+                app.run();
+            } catch (Exception ex) {
+                error = ex;
+            }
+
+            rootCtx.popFuncFrame();
+            self.__trackLists.clear();
+            app.showCursor(true);
+            app.stop();
+
+            if (error)
+                cerr `$error\n`;
+            return 0;
+        }
+
+        @function(TextController)
+        TrackList makeTrackList(Window parent, int size) {
+            list := TrackList(parent);
+            if (cont := Container.cast(parent, null))
+                cont.addChild(list, size);
+            self.__trackLists.append(list);
+            return list;
+        }
+
+        @function(InterpWrapper) int bind(int key, String command) {
+            appBindings[key] = CallbackWrapper(
+                CrashCallback(self.getRootContext(), parseString(command))
+            );
+            return 0;
+        }
+
+        ## Returns the ascii character number for the first character in 'name'
+        @function int char(String name) {
+            if (!name)
+                throw Exception('Key name must not be null or empty.');
+            return name[0];
+        }
+
+        SimpleValue ival(int value) {
+            return SimpleValue(IntObj(value));
+        }
+
+        __interp = interp;
+        __interp.define('runUI', runUI(this));
+        __interp.define('TrackList', makeTrackList(this));
+        __interp.define('bind', bind(__interp));
+        __interp.define('char', char());
+        __interp.define('KEY_UP', ival(KEY_UP));
+        __interp.define('KEY_DOWN', ival(KEY_DOWN));
+        __interp.define('KEY_LEFT', ival(KEY_LEFT));
+        __interp.define('KEY_RIGHT', ival(KEY_RIGHT));
+        __interp.define('KEY_PGUP', ival(KEY_PGUP));
+        __interp.define('KEY_PGDN', ival(KEY_PGDN));
+        __interp.define('KEY_BACKSPACE', ival(KEY_BACKSPACE));
+        __interp.define('KEY_ENTER', ival(KEY_ENTER));
+        __interp.define('KEY_ESC', ival(KEY_ESC));
+        __interp.define('KEY_SPACE', ival(KEY_SPACE));
+    }
+
+    void run() {
+        __interp.doREPL();
+    }
+}

@@ -1078,19 +1078,19 @@ piano.noteOff(44);
 channelMap := ChannelMap();
 App app;
 InterpWrapper interp;
+TextController textui;
 Controller controller;
 if (!cl.getBool('text')) {
     controller = app = App(channelMap);
     interp = InterpWrapper(app);
     app.setInterp(interp);
 } else {
-    controller = tc := TextController();
-    interp = InterpWrapper(tc);
+    controller = textui = TextController();
+    interp = InterpWrapper(textui);
+    textui.setInterp(interp);
 }
 cout `creating event manager\n`;
-EventManager em = {app ? Controller.cast(app) :
-                         Controller.cast(TextController()),
-                   orch, s, channelMap};
+EventManager em = {controller, orch, s, channelMap};
 em.waveMan = waveMan;
 telEventManager = em;
 if (app)
@@ -1123,7 +1123,7 @@ cout `running\n`;
 if (app)
     app.run();
 else
-    interp.doREPL();
+    textui.run();
 
 waveMan.deactivate();
 
