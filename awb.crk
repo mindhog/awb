@@ -4,7 +4,7 @@
 #    SDL_RESIZABLE;
 import crack.ascii parseInt;
 import crack.cont.hashmap HashMap;
-import crack.fs cwd;
+import crack.fs cwd, makePath;
 import crack.functor Functor0;
 import crack.lang AssertionError, CString, Exception;
 import crack.cmdline CmdOptions, Option, CMD_BOOL, CMD_STR;
@@ -25,6 +25,8 @@ import crack.midi.event merge, ChannelEvent, Event, MidiReader, MidiWriter,
 import crack.midi.fluidsynth FluidSettings, FluidSynth;
 import crack.process Process, ProcessHandlerImpl;
 import crack.strutil StringArray;
+import crack.sys env;
+import crash SimpleValue;
 #import crack.ccl CCLInterpreter;
 
 import spug.loop.jack WaveManager;
@@ -1084,10 +1086,12 @@ if (!cl.getBool('text')) {
     controller = app = App(channelMap);
     interp = InterpWrapper(app);
     app.setInterp(interp);
+    interp.define('UI_MODE', SimpleValue('sdl', 'User interface mode.'));
 } else {
     controller = textui = TextController();
     interp = InterpWrapper(textui);
     textui.setInterp(interp);
+    interp.define('UI_MODE', SimpleValue('text', 'User interface mode.'));
 }
 cout `creating event manager\n`;
 EventManager em = {controller, orch, s, channelMap};
@@ -1095,6 +1099,11 @@ em.waveMan = waveMan;
 telEventManager = em;
 if (app)
     app.setEventManager(em);
+
+# Evaluate the user's .awb.crash script
+userConfig := makePath(env['HOME'])/'.awb.crash';
+if (userConfig.exists())
+    interp.evalScript(userConfig.getFullName());
 
 String projectFile;
 for (arg :in nonFlagArgs.subarray(1)) {
