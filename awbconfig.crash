@@ -14,7 +14,17 @@ connect awb:right system:playback_2
 # Connect a midi device to AWB's midi input (this depends on selected midi
 # device numbers and therefore sucks).
 #shell aconnect 28:0 128:0
-connect 'midi:nanoKONTROL2/nanoKONTROL2 MIDI 1'  'midi:AWB/in'
+if {== $UI_MODE text} {
+    # In text mode, we have to make sure we have a midi engine and we route
+    # all events received by the engine to the event manager.  This way all of
+    # the existing control bindings still work.  Then connect the midi
+    # controller to the AWBX device (which goes to the midi engine) instead of
+    # the AWB device (which goes to the event manager).
+    [getMidiEngine] routeToEventManager
+    connect 'midi:nanoKONTROL2/nanoKONTROL2 MIDI 1'  'midi:AWBX/in'
+} else {
+    connect 'midi:nanoKONTROL2/nanoKONTROL2 MIDI 1'  'midi:AWB/in'
+}
 
 # 899833 stray_mark
 # 2181881 101_brain_damaged.wav

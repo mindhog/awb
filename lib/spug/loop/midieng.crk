@@ -13,7 +13,7 @@ import crack.runtime sleep, PollEvt, PollSet;
 import crack.threads Mutex, MutexLock, Thread;
 import crack.time TimeDelta;
 import spug.loop.jack JackPos, JackWrapper, WaveManager, JACK_TRANSPORT_ROLLING;
-import spug.loop.model LoopCursor, Section;
+import spug.loop.model EventManager, LoopCursor, Section;
 
 @import crack.ann cvars, impl, interface;
 
@@ -546,5 +546,21 @@ Track cloneTrack(Track track) {
 class MidiDispatcher @impl EventProcessor {
     void oper call(MidiSequencer engine, Event event) {
         engine.outPort.send(event);
+    }
+}
+
+## Dispatch to the event manager.
+##
+## This is provided as an adapter so I can continue to use the event manager
+## functionality in applications that don't use EventManager (which is driven
+## from the UI loop).  It would be better to get rid of the EventManager
+## entirely and move its functionality to midi engine.
+class EventManagerDispatcher @impl EventProcessor {
+    @cvars {
+        EventManager __eventManager;
+    }
+
+    void oper call(MidiSequencer engine, Event event) {
+        __eventManager.onInputEvent(event);
     }
 }

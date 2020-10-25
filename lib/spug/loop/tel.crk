@@ -17,13 +17,14 @@ import crack.runtime free;
 import crack.midi.event ControlChange, Event, NoteOn, NoteOff, Track;
 import crack.time TimeDelta;
 import spug.loop.evtrec makeEventRecorderModule;
-import spug.loop.midieng MidiDispatcher, MidiEngine, MidiSequencer,
-    ModelObserver;
+import spug.loop.midieng EventManagerDispatcher, MidiDispatcher, MidiEngine,
+    MidiSequencer, ModelObserver;
 import spug.loop.model EventContext, EventManager, Section;
 import spug.loop.instrument Instrument, MidiInstrument, Orchestra;
 import spug.loop.jack jackCallback, RecordBuffer, SequencerWaveModel, Wave,
     WaveAdapter, WaveManager, WaveModel, WindowBufferAdapter;
 
+import collections collections;
 import crash createRootContext, eval, parseBlockArg, ActiveFunc, Block, Builtin,
     EvalContext, Obj, SimpleValue, Value;
 import repl repl;
@@ -37,11 +38,13 @@ import .midifile MidiFile;
 
 EventManager eventManager;
 
+## Toggles "play" in the event manager.
 @function int play() {
     eventManager.togglePlay();
     return 0;
 }
 
+## Returns the current midi tempo.
 @function int get_tempo() {
     return eventManager.tempo;
 }
@@ -583,6 +586,12 @@ class ModelObserverImpl @impl ModelObserver {
         return result;
     }
 
+    ## Route all events to the EventManager.
+    @function(MidiEngine) int routeToEventManager() {
+        self.addProcessor(EventManagerDispatcher(eventManager));
+        return 0;
+    }
+
     ## Set the "input channel" parameter of the midi engine.  This value
     ## overrides the channel number for all input events.  A value of -1
     ## disables this feature and the original channel is used.
@@ -611,6 +620,7 @@ class ModelObserverImpl @impl ModelObserver {
 
     o.define('routeToOutputPort', routeToOutputPort(eng));
     o.define('routeToInstrument', routeToInstrument(eng));
+    o.define('routeToEventManager', routeToEventManager(eng));
     o.define('setInputChannel', setInputChannel(eng));
     o.define('setPPB', setPPB(eng));
     o.define('set_tempo', set_tempo(eng));
@@ -662,6 +672,7 @@ class InterpWrapper {
     Poller __poller = {};
 
     @static void addCrashMethods(EvalContext ctx, AppMethods app) {
+        ctx.define('collections', collections());
         ctx.define("stdlib", stdlib());
 
         ctx.define('play', play());
