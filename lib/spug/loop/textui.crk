@@ -5,7 +5,7 @@ import crack.exp.termui Event, KeyEvent, TermApp, Window, KEY_UP, KEY_DOWN,
     KEY_LEFT, KEY_RIGHT, KEY_PGUP, KEY_PGDN, KEY_BACKSPACE, KEY_ENTER,
     KEY_ESC, KEY_SPACE;
 import crack.functor Functor0, Functor1;
-import crack.io cerr, cout;
+import crack.io cerr, cout, StandardFormatter, StringFormatter;
 import crack.lang Exception;
 import crash createRootContext, eval, parseString, Builtin, EvalContext,
     SimpleValue;
@@ -126,10 +126,15 @@ class TextController : Object @implements Controller, AppMethods {
         ## the duration of the time that the user interface is running.
         @function(TextController) int runUI(String block) {
             app := App(AppContext());
+            app.showCursor(false);
             app.start();
             col := Column(app);
             stat := Status(col);
             col.addChild(stat, 1);
+
+            StandardFormatter tempOut = cout, tempErr = cerr;
+            cout = StringFormatter();
+            cerr = StringFormatter();
 
             rootCtx := self.__interp.getRootContext();
             Exception error;
@@ -141,6 +146,9 @@ class TextController : Object @implements Controller, AppMethods {
             } catch (Exception ex) {
                 error = ex;
             }
+
+            cout = tempOut;
+            cerr = tempErr;
 
             rootCtx.popFuncFrame();
             self.__trackLists.clear();
