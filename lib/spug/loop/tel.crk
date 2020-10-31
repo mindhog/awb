@@ -26,10 +26,11 @@ import spug.loop.jack jackCallback, RecordBuffer, SequencerWaveModel, Wave,
 
 import collections collections;
 import crash createRootContext, eval, parseBlockArg, ActiveFunc, Block, Builtin,
-    EvalContext, Obj, SimpleValue, Value;
+    EvalContext, Obj, ObjOf, SimpleValue, Value;
 import repl repl;
 import stdlib stdlib;
 import types FloatObj, IntObj;
+import collections wrapIterator, Iter;
 
 import .midifile MidiFile;
 
@@ -187,6 +188,33 @@ EventManager eventManager;
     inst := MidiInstrument(eventManager.getOutPort(client, port), byte(channel));
     eventManager.instrument[channel] = inst;
     return 0;
+}
+
+@function(Track) String Track_getName() {
+    return self.name;
+}
+
+ObjOf[Track] makeTrackObj(Track track) {
+    result := ObjOf[Track](track);
+    result.define('getName', Track_getName(track));
+    return result;
+}
+
+## Returns an iterator over the tracks in the current section (an iterator
+## over ObjOf[Track]).
+##
+@function Obj getTracks() {
+    alias TrackArrayIter = Array[Track].ArrayIter;
+    class TrackIter : Iter {
+        @cvars {
+            TrackArrayIter __rep;
+        }
+        Object elem() { return makeTrackObj(__rep.elem()) }
+        bool next() { return __rep.next() }
+        bool isTrue() { return __rep }
+    }
+
+    return wrapIterator(TrackIter(eventManager.curSection.tracks.iter()));
 }
 
 # Port modes.
@@ -685,6 +713,7 @@ class InterpWrapper {
         ctx.define('makeSequencerWaveModel', makeSequencerWaveModel());
         ctx.define('addWaveModel', addWaveModel());
         ctx.define('addMemFile', addMemFile());
+        ctx.define('getTracks', getTracks());
         ctx.define('loadProject', loadProject());
         ctx.define('getOrchestra', getOrchestra());
         ctx.define('metro', metro());
