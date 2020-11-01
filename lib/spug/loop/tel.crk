@@ -3,12 +3,12 @@
 ## to Crash.
 
 import crack.audio.wavfile ManagedWaveBuffer, WaveBuffer, WaveDef;
-import crack.strutil StringArray;
+import crack.strutil split, StringArray;
 import crack.cont.array Array;
 import crack.fs makePath;
 import crack.functor Functor0, Functor1, Functor2;
 import crack.io cin, cout, cerr, FStr;
-import crack.lang CString, Exception;
+import crack.lang AppendBuffer, CString, Exception;
 import crack.midi.alsa PortInfo, Sequencer, SND_SEQ_OPEN_OUTPUT,
     SND_SEQ_OPEN_INPUT;
 import crack.net Poller, POLLIN, POLLERR, POLLOUT;
@@ -694,6 +694,42 @@ class ExportMidiFileCmd : Builtin {
     return result;
 }
 
+## Returns a pathname form of 'path' expressed relative to 'dir'.  Both should
+## be normalized absolute paths.
+@function String getRelativePath(String dir, String path) {
+    dirComponents := split(dir, b'/').subarray(1);
+    pathComponents := split(path, b'/').subarray(1);
+
+    # Deal with an empty root path.
+    if (!dirComponents[0])
+        dirComponents.delete(0);
+
+    # Find the common root.
+    int min(int a, int b) { return a < b ? a : b }
+    minLen := min(pathComponents.count(), dirComponents.count());
+    int common;
+    for (; common < minLen; ++common) {
+        if (dirComponents[common] != pathComponents[common])
+            break;
+    }
+
+    # Get the relative portion of the path.
+    pathComponents = pathComponents.subarray(common);
+
+    # Insert ".." to back out any portions of the directory that are not
+    # common to the path.
+    for (; common < dirComponents.count(); ++common)
+        pathComponents.insert(0, '..');
+
+    buf := AppendBuffer(path.count());
+    for (iter :on pathComponents) {
+        if (iter.index)
+            buf.append(b'/');
+        buf.extend(iter.elem());
+    }
+    return String(buf, true);
+}
+
 class InterpWrapper {
 
     EvalContext __rootCtx = createRootContext();
@@ -740,6 +776,7 @@ class InterpWrapper {
         ctx.define('evtrec', getEventRecModule());
         ctx.define('getCurrentSection', getCurrentSection());
         ctx.define('recordFile', recordFile());
+        ctx.define('getRelativePath', getRelativePath());
         ctx.define('CVR_MULT', SimpleValue(IntObj(CVR_MULT)));
     }
 
