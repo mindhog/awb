@@ -310,8 +310,10 @@ class Mixer @impl Component {
     @final void setPan(float pan) {
         numTracks := getNumTracks();
         __pan = pan;
-        if (numTracks == 1)
+        if (numTracks == 1) {
             mixer.pan[0] = pan;
+            return;
+        }
 
         for (int i; i < numTracks; ++i) {
 
