@@ -19,4 +19,26 @@ def project {name} {
     }
 }
 
+var HEADER \
+{import [evalfile /home/mmuller/w/awb/awbconfig.crash] makeProject track vol pan gain
+var proj [makeProject]
+var project $proj
+}
+
+def saveProject {} {
+    var out [open unnamed.awb.crash w]
+    out write $HEADER
+    [getTracks] each track {
+        out write [format 'track ' [track getName] '\n']
+    }
+
+    var i 0
+    [getTracks] each track {
+        out write [format 'gain ' [project getGain $i] '\n']
+        out write [format 'vol ' [project getVol $i] '\n']
+        out write [format 'pan ' [project getPan $i] '\n']
+        set i [+ $i 1]
+    }
+}
+
 print 'Finished running clawb.crash\n'

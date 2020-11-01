@@ -264,6 +264,18 @@ class Mixer @impl Component {
     # If this is set to false, the adapter is disabled.
     bool __enabled = true;
 
+    # The current "pan" value of the track.  This is really just a nominal
+    # value, as the pan of individual channels can ultimately be overriden
+    # through the mixer.  However, when setPan() is called, this value is
+    # set (so that it can be returned through getPan()) and all of the
+    # mixer channel pan values are overriden according to the panning
+    # algorithm (currently just assigning channels a range of pan values
+    # evenly spanning -__panRadius to +__panRadius).
+    float __pan;
+
+    # When panning a multi-channel track, the pan radius is
+    float __panRadius = 1.0;
+
     ## channels: number of input channels of the final mixer.
     oper init(int channels) :
         mixer = Mixer(channels),
@@ -296,10 +308,26 @@ class Mixer @impl Component {
     @abstract uint getNumTracks();
 
     @final void setPan(float pan) {
-        # TODO: support panning ranges.
-        for (int i; i < getNumTracks(); ++i)
-            mixer.pan[i] = pan;
+        numTracks := getNumTracks();
+        __pan = pan;
+        if (numTracks == 1)
+            mixer.pan[0] = pan;
+
+        for (int i; i < numTracks; ++i) {
+
+            # Compute the pan for the channel based on its position in the
+            # range.
+            p := pan - __panRadius +
+                float(i) * __panRadius * 2 / float(numTracks - 1);
+            if (p < -1.0)
+                p = -1.0;
+            else if (p > 1.0)
+                p = 1.0;
+            mixer.pan[i] = p;
+        }
     }
+
+    @final float getPan() { return __pan }
 
     ## Returns current "play position" (the number of frames since the wave
     ## file origin).  This is always aligned to the beginning of a jack

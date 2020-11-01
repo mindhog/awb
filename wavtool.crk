@@ -207,6 +207,8 @@ class RemixHead {
             # Very simple panning algorithm: if we're panning left, pan the
             # right channel into the left, if we're panning right pan the left
             # channel into the right.
+            # This isn't the same as the algorithm used by awb.  However, I
+            # believe it should produce identical results.
             if (track.pan < 0) {
                 left = (sampleLeft + sampleRight * -track.pan);
                 right = sampleRight * (track.pan + 1);

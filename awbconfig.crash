@@ -66,12 +66,24 @@ def pan {track val} {
     $project setPan $track $val
 }
 
+def getPan {track} {
+    $project getPan $track
+}
+
 def vol {track val} {
     $project setVol $track $val
 }
 
+def getVol {track} {
+    $project getVol $track
+}
+
 def gain {track val} {
     $project setGain $track $val
+}
+
+def getGain {track} {
+    $project getGain $track
 }
 
 # Bindings for Korg Nanokontrol (channel,controller):

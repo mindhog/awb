@@ -171,17 +171,26 @@ class Project {
         out `gain $index $gain\n`;
     }
 
+    ## Get the gain for the channel at the index.
+    float getGain(int index) { return __channels[index].mixer.gain }
+
     ## Set the volume for the channel at the index.
     void setVol(int index, float volume) {
         __channels[index].mixer.volume = volume;
         out `volume $index $volume\n`;
     }
 
+    ## Return the current volume for the channel at the index.
+    float getVol(int index) { return __channels[index].mixer.volume }
+
     ## Set the pan for the channel at the index.
     void setPan(int index, float pan) {
         __channels[index].setPan(pan);
         out `pan $index $pan\n`;
     }
+
+    ## Return the current pan for the channel at the index.
+    float getPan(int index) { return __channels[index].getPan() }
 
     ## Enable or diable the channel.
     void setEnabled(int index, bool enabled) {
@@ -226,9 +235,17 @@ class Project {
     return 0;
 }
 
+@function(Project) float Project_getGain(int index) {
+    return self.getGain(index);
+}
+
 @function(Project) int Project_setPan(int index, float pan) {
     self.setPan(index, pan);
     return 0;
+}
+
+@function(Project) float Project_getPan(int index) {
+    return self.getPan(index);
 }
 
 @function(Project) Obj Project_insertEffect(int index, String pluginName) {
@@ -259,6 +276,10 @@ class Project_bindControllerScriptCmd : Builtin {
     return 0;
 }
 
+@function(Project) float Project_getVol(int index) {
+    return self.getVol(index);
+}
+
 @function(Project) int Project_writeLog(String text) {
     self.writeLog(text);
     return 0;
@@ -271,6 +292,11 @@ class Project_bindControllerScriptCmd : Builtin {
 
 @function(Project) bool Project_getEnabled(int index) {
     return self.getEnabled(index);
+}
+
+## Return the project directory.
+@function(Project) String Project_getDir() {
+    return self.dir.getFullName();
 }
 
 class EventRecorderModule {
@@ -290,8 +316,11 @@ Obj makeEventRecorderModule(EventManager eventManager) {
         proj := Project(self.eventManager, dir);
         obj.define('addTrack', Project_addTrack(proj));
         obj.define('setGain', Project_setGain(proj));
+        obj.define('getGain', Project_getGain(proj));
         obj.define('setPan', Project_setPan(proj));
+        obj.define('getPan', Project_getPan(proj));
         obj.define('setVol', Project_setVol(proj));
+        obj.define('getVol', Project_getVol(proj));
         obj.define('writeLog', Project_writeLog(proj));
         obj.define('insertEffect', Project_insertEffect(proj));
         obj.define('bindControllerScript',
@@ -299,6 +328,7 @@ Obj makeEventRecorderModule(EventManager eventManager) {
                    );
         obj.define('setEnabled', Project_setEnabled(proj));
         obj.define('getEnabled', Project_getEnabled(proj));
+        obj.define('getDir', Project_getDir(proj));
         cerr `makeProject() -> $(obj.vars)\n`;
         return obj;
     }
