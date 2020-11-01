@@ -29,14 +29,15 @@ def saveProject {} {
     var out [open unnamed.awb.crash w]
     out write $HEADER
     [getTracks] each track {
-        out write [format 'track ' [track getName] '\n']
+        var filename [getRelativePath [project getDir] [track getName]]
+        out write [format 'track ' $filename '\n']
     }
 
     var i 0
     [getTracks] each track {
-        out write [format 'gain ' [project getGain $i] '\n']
-        out write [format 'vol ' [project getVol $i] '\n']
-        out write [format 'pan ' [project getPan $i] '\n']
+        out write [format 'gain ' $i ' ' [project getGain $i] '\n']
+        out write [format 'vol ' $i ' ' [project getVol $i] '\n']
+        out write [format 'pan ' $i ' ' [project getPan $i] '\n']
         set i [+ $i 1]
     }
 }
