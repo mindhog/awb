@@ -8,14 +8,14 @@ import crack.functor Functor0, Functor1;
 import crack.io cerr, cout, StandardFormatter, StringFormatter;
 import crack.lang Exception;
 import crash createRootContext, eval, parseString, Builtin, EvalContext,
-    SimpleValue;
+    Obj, ObjOf, SimpleValue;
 import deadly.layout Column, Container, Row;
 import deadly.termlist List;
 import repl repl;
 import .model Controller;
 import .tel eventManager, AppMethods, CrashCallback, InterpWrapper;
 
-import types IntObj;
+import types FloatObj, IntObj;
 @import ann function;
 
 @import crack.ann cvars, impl, implements;
@@ -74,6 +74,69 @@ class TrackList : List {
     void trackDeleted() {
         reloadTracks();
     }
+}
+
+## The BarSlider is a horizontal single bar graph window that displays two
+## ranges: the value range (using the value attribute, red by default) and
+## the controller range (using the controller attribute, blue by default).
+## If the two values are equal they are displayed in the sync attribute
+## (green by default).
+class BarSlider : Window {
+
+    float __value, __controller;
+    byte backgroundAttr = 0,
+        valueAttr = 0x10,
+        controllerAttr = 0x40,
+        syncAttr = 0x20;
+
+    oper init(Window parent) : Window(parent) {}
+
+    float oper .value=(float value) { return __value = value }
+    float oper .controller=(float controller) {
+        return __controller = controller;
+    }
+
+    void paint() {
+        gc := getGraphicsContext();
+        gc.fillRect(0, 0, width, height, backgroundAttr, b' ');
+
+        # Paint the bars from largest to smallest so that we
+        if (__value == __controller) {
+            gc.fillRect(0, 0, int(__value * width), height, syncAttr, b' ');
+        } else if (__value < __controller) {
+            gc.fillRect(0, 0, int(__controller * width), height,
+                        controllerAttr,
+                        b' '
+                        );
+            gc.fillRect(0, 0, int(__value * width), height, valueAttr, b' ');
+        } else {
+            gc.fillRect(0, 0, int(__value * width), height, valueAttr, b' ');
+            gc.fillRect(0, 0, int(__controller * width), height,
+                        controllerAttr,
+                        b' '
+                        );
+        }
+    }
+}
+
+@function Obj makeBarSlider(Window parent, int size) {
+    @function(BarSlider) float setValue(float value) {
+        self.value = value;
+        return value;
+    }
+
+    @function(BarSlider) float setController(float controller) {
+        self.controller = controller;
+        return controller;
+    }
+
+    self := BarSlider(parent);
+    if (container := Container.cast(parent, null))
+        container.addChild(self, size);
+    result := ObjOf[BarSlider](self);
+    result.define('setValue', setValue(self));
+    result.define('setController', setController(self));
+    return result;
 }
 
 class CallbackWrapper @impl Functor1[bool, AppContext] {
@@ -190,6 +253,7 @@ class TextController : Object @implements Controller, AppMethods {
         __interp = interp;
         __interp.define('runUI', runUI(this));
         __interp.define('TrackList', makeTrackList(this));
+        __interp.define('BarSlider', makeBarSlider());
         __interp.define('bind', bind(__interp));
         __interp.define('char', char());
         __interp.define('KEY_UP', ival(KEY_UP));
