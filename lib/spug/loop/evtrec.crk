@@ -13,54 +13,75 @@ import spug.loop.jack WaveManager, WindowBufferAdapter;
 import types BoolObj, FloatObj, IntObj;
 import .plugins PluginInstance, PluginLibrary;
 import .plugincmds makeEffectObj;
+import .processors Component;
 
 @import ann function;
 @import crack.ann cvars, impl;
 
 alias EventProcessor = Functor2[void, Event, EventContext];
 
-class Panner @impl EventProcessor {
-    WindowBufferAdapter adapter;
-    WaveManager waveMan;
-    Formatter out;
-    int track;
-    oper init(WindowBufferAdapter adapter, WaveManager waveMan,
-              Formatter out,
-              int track
-              ) :
-        adapter = adapter,
-        waveMan = waveMan,
-        out = out,
-        track = track {
+@abstract class ControllerProcessor @impl EventProcessor {
+
+    @cvars {
+        WaveManager waveMan;
+        Formatter out;
     }
+
+    @abstract float oper .value=(float val);
+
+    @abstract float convertControllerValue(int val);
+
     void oper call(Event event, EventContext ctx) {
-        adapter.setPan(pan := ControlChange.cast(event).value / 64.0 - 1.0);
-        out I`forward $(waveMan.tell())
-              pan $track $(pan)
-              `;
+        # TODO: only want to see the last of these for a given time position
+        out I`forward $(waveMan.tell())\n`;
+        value = convertControllerValue(ControlChange.cast(event).value);
     }
 }
 
-class VolumeControl @impl EventProcessor {
+class Panner : ControllerProcessor {
     WindowBufferAdapter adapter;
     WaveManager waveMan;
-    Formatter out;
     int track;
     oper init(WindowBufferAdapter adapter, WaveManager waveMan,
               Formatter out,
               int track
               ) :
+        ControllerProcessor(waveMan, out),
         adapter = adapter,
-        waveMan = waveMan,
-        out = out,
         track = track {
     }
-    void oper call(Event event, EventContext ctx) {
-        adapter.mixer.volume = float(ControlChange.cast(event).value) / 128.0;
-        # TODO: only want to see the last of these for a given time position
-        out I`forward $(waveMan.tell())
-              volume $track $(adapter.mixer.volume)
-              `;
+
+    float oper .value=(float pan) {
+        adapter.setPan(pan);
+        out I`pan $track $pan\n`;
+        return pan;
+    }
+
+    float convertControllerValue(int val) {
+        return float(val) / 64.0 - 1.0;
+    }
+}
+
+class VolumeControl : ControllerProcessor {
+    WindowBufferAdapter adapter;
+    int track;
+    oper init(WindowBufferAdapter adapter, WaveManager waveMan,
+              Formatter out,
+              int track
+              ) :
+        ControllerProcessor(waveMan, out),
+        adapter = adapter,
+        track = track {
+    }
+
+    float oper .value=(float vol) {
+        adapter.mixer.volume = vol;
+        out `volume $track $(adapter.mixer.volume)\n`;
+        return vol;
+    }
+
+    float convertControllerValue(int val) {
+        return float(val) / 128.0;
     }
 }
 
@@ -114,6 +135,87 @@ class ScriptProcessor @impl EventProcessor {
     }
 }
 
+## SmartController wraps an existing EventProcessor to provide
+## smart-synchronization and subscribability.
+##
+## "Smart-synchronization" is what we're calling the behavior where a current
+## controller value is only applied to the parameter that it controls if
+## either 1) the last controller value is equal to the current parameter value
+## or 2) the current parameter value is between the last controller value and
+## the current controller value.  In this way, the user must bring the
+## controller to or beyond the level of the parameter value before the two
+## become synchronized.
+##
+## Subscribers are in the form of Functor2[void, int, int] objects, they are
+## passed two integers: the current parameter value and the current
+## controller value.
+class SmartController @impl EventProcessor {
+
+    alias Subscriber = Functor2[void, float, float];
+
+    int __lastController = -1, __param;
+    float __paramVal;
+    Array[Subscriber] __subscribers = {};
+    @cvars {
+        ControllerProcessor __rep;
+    }
+
+    void __notifySubscribers() {
+        for (sub :in __subscribers)
+            sub(__paramVal, __rep.convertControllerValue(__lastController));
+    }
+
+    void addSubscriber(Subscriber sub) {
+        __subscribers.append(sub);
+    }
+
+    void removeSubscriber(Subscriber sub) {
+        for (iter :on __subscribers) {
+            if (iter.elem() is sub) {
+                __subscribers.delete(iter.index);
+                return;
+            }
+        }
+    }
+
+    float oper .value=(float val) {
+        __rep.value = val;
+        __notifySubscribers();
+        return val;
+    }
+
+    void oper call(Event event, EventContext ctx) {
+        cur := ControlChange.cast(event).value;
+
+        # Deal with the case where we haven't gotten a controller value yet.
+        # In this case, if the current value is close to the parameter value,
+        # synchronize them, otherwise just set the last controller value and
+        # leave.
+        if (__lastController == -1) {
+            int abs(int val) { return val >= 0 ? val : -val }
+            if (abs(cur - __param) > 3) {
+                __lastController = cur;
+                __notifySubscribers();
+                return;
+            } else {
+                __lastController = __param;
+            }
+        }
+
+        if (__lastController == __param ||
+            __lastController < __param && cur >= __param ||
+            __lastController > __param && cur <= __param
+            ) {
+
+            __param = cur;
+            __rep(event, ctx);
+            __paramVal = __rep.convertControllerValue(cur);
+        }
+        __notifySubscribers();
+        __lastController = cur;
+    }
+}
+
 ## A representation of a project, which is a base directory containing a bunch
 ## of synchronized wave files and into which an output logfile is written,
 ## describing all of the mixer events for the project.
@@ -129,7 +231,40 @@ class Project {
 
     PluginLibrary __plugins = {};
 
-    Array[WindowBufferAdapter] __channels = {};
+    class Channel {
+        @cvars {
+            WindowBufferAdapter __adapter;
+            SmartController __vol;
+            SmartController __pan;
+        }
+
+        void setVol(float volume) {
+            __vol.value = volume;
+        }
+
+        float oper .volume() { return __adapter.mixer.volume }
+
+        void setPan(float pan) {
+            __pan.value = pan;
+        }
+
+        float oper .pan() { return __adapter.getPan() }
+
+        float oper .gain=(float val) {
+            return __adapter.mixer.gain = val;
+        }
+
+        float oper .gain() { return __adapter.mixer.gain }
+
+        void enable() { __adapter.enable() }
+        void disable() { __adapter.disable() }
+        bool enabled() { return __adapter.enabled() }
+        void insertComponent(Component component) {
+            __adapter.insertComponent(component);
+        }
+    }
+
+    Array[Channel] __channels = {};
 
     oper init(EventManager eventManager, String dir) :
         eventManager = eventManager,
@@ -147,13 +282,19 @@ class Project {
             eventManager.waveMan = WaveManager.create();
         adapter := eventManager.mapWaveFile((dir/filename).getFullName());
 
-        eventManager.eventProcessors[panController] =
-            Panner(adapter, eventManager.waveMan, out, __trackIndex);
-        eventManager.eventProcessors[volumeController] =
-            VolumeControl(adapter, eventManager.waveMan,  out, __trackIndex);
+        eventManager.eventProcessors[panController] = pan :=
+            SmartController(Panner(adapter, eventManager.waveMan, out,
+                                   __trackIndex
+                                   )
+                            );
+        eventManager.eventProcessors[volumeController] = vol :=
+            SmartController(VolumeControl(adapter, eventManager.waveMan,  out,
+                                          __trackIndex
+                                          )
+                            );
 
         ++__trackIndex;
-        __channels.append(adapter);
+        __channels.append(Channel(adapter, vol, pan));
 
         # Add the new track to the log.
         out `load $(dir/filename)\n`;
@@ -167,30 +308,28 @@ class Project {
 
     ## Set the gain for the channel at the index.
     void setGain(int index, float gain) {
-        __channels[index].mixer.gain = gain;
+        __channels[index].gain = gain;
         out `gain $index $gain\n`;
     }
 
     ## Get the gain for the channel at the index.
-    float getGain(int index) { return __channels[index].mixer.gain }
+    float getGain(int index) { return __channels[index].gain }
 
     ## Set the volume for the channel at the index.
     void setVol(int index, float volume) {
-        __channels[index].mixer.volume = volume;
-        out `volume $index $volume\n`;
+        __channels[index].setVol(volume);
     }
 
     ## Return the current volume for the channel at the index.
-    float getVol(int index) { return __channels[index].mixer.volume }
+    float getVol(int index) { return __channels[index].volume }
 
     ## Set the pan for the channel at the index.
     void setPan(int index, float pan) {
         __channels[index].setPan(pan);
-        out `pan $index $pan\n`;
     }
 
     ## Return the current pan for the channel at the index.
-    float getPan(int index) { return __channels[index].getPan() }
+    float getPan(int index) { return __channels[index].pan }
 
     ## Enable or diable the channel.
     void setEnabled(int index, bool enabled) {
@@ -270,8 +409,8 @@ class Project_bindControllerScriptCmd : Builtin {
 @function(Project) int Project_setVol(int index, float volume) {
     if (volume > 1)
         volume = 1;
-    else if (volume < -1)
-        volume = -1;
+    else if (volume < 0)
+        volume = 0;
     self.setVol(index, volume);
     return 0;
 }
