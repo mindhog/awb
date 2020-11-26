@@ -1,0 +1,270 @@
+## Code to render a wave-file exactly as it was recorded.
+
+import crack.audio.wavfile readWave, ManagedWaveBuffer, WaveBuffer, WaveDef;
+import crack.cont.array Array;
+import crack.fs makePath, Path;
+import crack.functor Functor1;
+import crack.io cerr, cout, SeekableReader, SeekableWriter, StandardFormatter,
+    SEEK_END, SEEK_SET;
+import crack.lang Exception;
+import crash createRootContext, eval, Builtin, EvalContext, Obj;
+import types FloatObj, IntObj;
+
+import .jack JackWrapper, WaveAdapter, WaveModel;
+import .plugincmds makeEffectObj;
+import .plugins PluginInstance, PluginLibrary;
+
+@import ann function;
+@import crack.ann assert, cvars, impl;
+
+const BYTES_PER_SAMPLE := 2;
+
+class FileSource : WaveModel {
+
+    WaveDef wave;
+    SeekableReader src;
+    int64 __dataStart;
+
+    oper init(Path file) {
+        wave = readWave(src = file.reader());
+        __dataStart = src.tell();
+
+        # Verify that the frame count appears accurate.
+        src.seek(0, SEEK_END);
+        expectedCount :=
+            (src.tell() - __dataStart) / (BYTES_PER_SAMPLE * wave.channels);
+        if (expectedCount != wave.frameCount) {
+            cerr I`bad frame count, expected $expectedCount, got \
+                   $(wave.frameCount)\n`;
+            wave.frameCount = expectedCount;
+        }
+        src.seek(int64(__dataStart), SEEK_SET);
+    }
+
+    void read(uint pos, WaveBuffer out, uint frames) {
+        sampleCount := frames * wave.channels;
+        @assert(out.cap >= sampleCount);
+        src.seek(__dataStart + int64(pos) * BYTES_PER_SAMPLE * wave.channels,
+                 SEEK_SET
+                 );
+        wave.read(src, WaveBuffer(sampleCount, out.buffer));
+    }
+
+    ## Returns the total number of frames in the wave.
+    uint oper .frames() {
+        return wave.frameCount;
+    }
+
+    ## Returns the number of channels in the wave.
+    uint oper .channels() {
+        return wave.channels;
+    }
+}
+
+const uint32 SAMPLES_PER_CHUNK = 1024;
+
+class Renderer {
+
+    JackWrapper __jack = {};
+
+    ## Current position in frames.
+    uint32 __cur;
+
+    SeekableWriter __outFile;
+    WaveDef __outDef;
+
+    class Track {
+        @cvars {
+            FileSource model;
+            WaveAdapter adapter;
+        }
+
+        float oper .volume=(float val) {
+            return adapter.mixer.volume = val;
+        }
+
+        float oper .gain=(float val) {
+            return adapter.mixer.gain = val;
+        }
+
+        float oper .pan=(float val) {
+            adapter.setPan(val);
+            return val;
+        }
+
+        int oper .rate() { return model.wave.rate }
+        uint oper .frames() { return model.wave.frameCount }
+        void insertPlugin(PluginInstance plugin) {
+            adapter.insertComponent(plugin);
+        }
+    }
+
+    Array[Track] __trackInfo = {};
+
+    int oper .rate() {
+        return __trackInfo[0].rate;
+    }
+
+    oper init() {
+        __jack.initDumb(1024);
+    }
+
+    void insertPlugin(int track, PluginInstance plugin) {
+        __trackInfo[track].insertPlugin(plugin);
+    }
+
+    void openOutput(Path file) {
+        if (__outDef)
+            __outDef.finish(__outFile);
+        __outFile = file.writer();
+        __outDef = WaveDef(2, __trackInfo[0].rate, 16);
+        __outDef.writeHeader(__outFile);
+    }
+
+    void addTrack(Path filename) {
+        model := FileSource(filename);
+        adapter := WaveAdapter(model);
+        __jack.addProcessor(adapter);
+        __trackInfo.append(Track(model, adapter));
+    }
+
+    void writeBuffers(uint32 frames) {
+
+        int16 clip(float sample) {
+            if (sample > 1.0)
+                return 32767;
+            else if (sample < -1.0)
+                return -32767;
+            else
+                return int16(sample * 32767);
+        }
+
+        outBuf := ManagedWaveBuffer(frames * 2);
+        for (uint32 i; i < frames; ++i) {
+            outBuf.append(clip(__jack.lbuf[i]));
+            outBuf.append(clip(__jack.rbuf[i]));
+        }
+
+        if (__outDef)
+            __outDef.writeData(__outFile, outBuf);
+    }
+
+    void forwardTo(uint32 pos) {
+        while (__cur < pos) {
+            size := __cur - pos > SAMPLES_PER_CHUNK ? SAMPLES_PER_CHUNK :
+                                                      __cur - pos;
+            __jack.processDumb(size);
+            writeBuffers(size);
+            __cur += size;
+        }
+    }
+
+    void setVolume(int track, float volume) {
+        __trackInfo[track].volume = volume;
+    }
+
+    void setPan(int track, float pan) {
+        __trackInfo[track].pan = pan;
+    }
+
+    void setGain(int track, float gain) {
+        __trackInfo[track].gain = gain;
+    }
+
+    ## Finish writing the current file from the remainder of all track data.
+    void finish() {
+        # Find the longest track.
+        uint frames;
+        for (track :in __trackInfo) {
+            if (track.frames > frames)
+                frames = track.frames;
+        }
+
+        cerr `forwarding to $frames\n`;
+        forwardTo(uint32(frames));
+        if (__outDef)
+            __outDef.finish(__outFile);
+    }
+
+    void closeFile() {
+        if (__outDef)
+            __outDef.finish(__outFile);
+        else
+            throw Exception('"finish" called without an outfile');
+    }
+}
+
+PluginLibrary plugins;
+
+## Move forward to the specified position, writing to the output file if
+## "outfile" has been called
+@function(Renderer) int forward(int pos) {
+    @assert(pos > 0);
+    self.forwardTo(uint32(pos));
+    return 0;
+}
+
+## Start a new output file.
+@function(Renderer) int outfile(String filename) {
+    self.openOutput(makePath(filename));
+    return 0;
+}
+
+## Load 'filename' into the project.  Returns the new track index.
+@function(Renderer) int load(String filename) {
+    self.addTrack(makePath(filename));
+    return 0;
+}
+
+## Set the panning for a given track index.
+@function (Renderer)int pan(int track, float val) {
+    self.setPan(track, val);
+    return 0;
+}
+
+## Set the volume for a given track index.
+@function(Renderer) int volume(int track, float val) {
+    self.setVolume(track, val);
+    return 0;
+}
+
+@function(Renderer) int gain(int track, float val) {
+    self.setGain(track, val);
+    return 0;
+}
+
+## Inserts a new effects plugin.
+@function(Renderer) Obj insertEffect(int track, String name) {
+    if (!plugins)
+         plugins = PluginLibrary();
+    plugin := plugins.getPluginByName(name);
+    if (!plugin)
+        throw Exception('No plugin with the specified name');
+    inst := plugin.makeInstance(self.rate);
+    self.insertPlugin(track, inst);
+    return makeEffectObj(inst);
+}
+
+## Close the file ("pen up").
+@function(Renderer) int close() {
+    self.closeFile();
+    return 0;
+}
+
+@function(Renderer) int finish() {
+    self.finish();
+    return 0;
+}
+
+void defineRendererFuncs(EvalContext ctx) {
+    renderer := Renderer();
+    ctx.define('forward', forward(renderer));
+    ctx.define('outfile', outfile(renderer));
+    ctx.define('load', load(renderer));
+    ctx.define('pan', pan(renderer));
+    ctx.define('volume', volume(renderer));
+    ctx.define('gain', gain(renderer));
+    ctx.define('insertEffect', insertEffect(renderer));
+    ctx.define('close', close(renderer));
+    ctx.define('finish', finish(renderer));
+}

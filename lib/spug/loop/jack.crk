@@ -69,6 +69,12 @@ class JackWrapper {
         free(status);
     }
 
+    void initDumb(uint32 nframes) {
+        lbuf = array[float](nframes);
+        rbuf = array[float](nframes);
+        frameCount = nframes;
+    }
+
     void addProcessor(Functor1[void, JackWrapper] processor) {
         __processors.append(processor);
     }
@@ -82,14 +88,18 @@ class JackWrapper {
         }
     }
 
-    @final void process(uint32 nframes) {
-        lbuf = left.getBuffer(nframes);
-        rbuf = right.getBuffer(nframes);
-
+    @final void clearBuffers(uint32 nframes) {
         for (int i; i < nframes; ++i) {
             lbuf[i] = 0;
             rbuf[i] = 0;
         }
+    }
+
+    @final void process(uint32 nframes) {
+        lbuf = left.getBuffer(nframes);
+        rbuf = right.getBuffer(nframes);
+
+        clearBuffers(nframes);
         if (__paused) {
             # Clear both buffers and return.
             return;
@@ -111,6 +121,20 @@ class JackWrapper {
         }
 
         __startFrame += frameCount;
+    }
+
+    ## Run all processors but without a connection to jackd.
+    ##
+    ## This exists to allow us to do audio rendering to a wave file without
+    ## actually playing to the audio hardware.  This requires that the
+    ## JackWrapper be initialized using initDumb() (you will get an
+    ## AssertionError if not).
+    @final void processDumb(uint32 nframes) {
+        @assert(lbuf && rbuf);
+        clearBuffers(nframes);
+        for (p :in __processors)
+            p(this);
+        __startFrame += nframes;
     }
 
     @final void activate() {
@@ -413,6 +437,7 @@ class Wave : ManagedWaveBuffer {
                 newBuf[i] = buffer[i];
             free(buffer);
             buffer = newBuf;
+            cap = newCap;
         }
     }
 
