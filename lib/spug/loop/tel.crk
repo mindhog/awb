@@ -646,12 +646,39 @@ class ModelObserverImpl @impl ModelObserver {
         return 0;
     }
 
+    ## Toggle record mode.
+    @function(MidiEngine)
+    int toggleRecord() {
+        self.toggleRecord();
+        return 0;
+    }
+
+    ## Toggle play/idle.
+    @function(MidiEngine)
+    int togglePlay() {
+        self.togglePlay();
+        return 0;
+    }
+
+    ## Seek the specified position (in midi ticks).
+    ##
+    ## If the position is greater than the current end, it is wrapped around
+    ## to be within range.
+    @function(MidiEngine)
+    int setPos(int pos) {
+        self.setPos(pos);
+        return 0;
+    }
+
     o.define('routeToOutputPort', routeToOutputPort(eng));
     o.define('routeToInstrument', routeToInstrument(eng));
     o.define('routeToEventManager', routeToEventManager(eng));
     o.define('setInputChannel', setInputChannel(eng));
     o.define('setPPB', setPPB(eng));
     o.define('set_tempo', set_tempo(eng));
+    o.define('toggleRecord', toggleRecord(eng));
+    o.define('togglePlay', togglePlay(eng));
+    o.define('setPos', setPos(eng));
 
     return _midiEngineObj;
 }

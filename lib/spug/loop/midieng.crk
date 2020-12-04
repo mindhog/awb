@@ -7,7 +7,8 @@ import crack.math floor;
 import crack.midi.alsa Port, Sequencer, SND_SEQ_OPEN_OUTPUT,
     SND_SEQ_OPEN_INPUT;
 import crack.midi.event ChannelEvent, ControlChange, Event, MidiWriter, Track;
-import crack.net Poller, PollEvent, PollEventCallback, POLLOUT, POLLIN;
+import crack.net Pipe, Poller, PollEvent, PollEventCallback, POLLERR,
+    POLLHUP, POLLOUT, POLLIN;
 import crack.rawptr RawPtr;
 import crack.runtime sleep, PollEvt, PollSet;
 import crack.threads Mutex, MutexLock, Thread;
@@ -15,7 +16,7 @@ import crack.time TimeDelta;
 import spug.loop.jack JackPos, JackWrapper, WaveManager, JACK_TRANSPORT_ROLLING;
 import spug.loop.model EventManager, LoopCursor, Section;
 
-@import crack.ann cvars, impl, interface;
+@import crack.ann assert, cvars, impl, interface;
 
 class MidiSequencer;
 
@@ -67,6 +68,30 @@ Track cloneTrack(Track track) {
     return result;
 }
 
+class Interrupter @impl PollEventCallback {
+    Pipe __pipe = {};
+
+    int oper call(Poller poller, PollEvent event) {
+        if (event.revents & POLLIN) {
+            __pipe.read(1024);
+        } else if (event.revents) {
+            cerr `Interrupter pipe error\n`;
+            __pipe.close();
+            poller.remove(__pipe);
+        }
+
+        return POLLIN | POLLERR | POLLHUP;
+    }
+
+    void registerHandlers(Poller poller) {
+        poller.add(__pipe, this);
+    }
+
+    void signal() {
+        __pipe.write('x');
+    }
+}
+
 @final class MidiSequencer {
 
     # If this is specified, the channel of all input events is rewritten to
@@ -99,6 +124,9 @@ Track cloneTrack(Track track) {
     ## in microseconds, which is really more what we want.
     uint64 __startTime;
 
+    ## The jack time (in microseconds) where we last went into idle mode.
+    uint64 __lastTime;
+
     ## Current engine state (see the ST_* constants above).
     int __state;
 
@@ -112,6 +140,8 @@ Track cloneTrack(Track track) {
     ## We're currently doing this based on 60bpm (1 bps) where ticks per beat
     ## is 5 * 9 * 32 (1440).
     float __ticksPerSecond = 1440;
+
+    Interrupter __interrupter = {};
 
     # Temporary hack so I can get ports working.
     Port outPort;
@@ -139,6 +169,12 @@ Track cloneTrack(Track track) {
         if (span)
             absTicks = absTicks % span;
         return absTicks;
+    }
+
+    ## Returns the number of microseconds necessary for the specified number
+    ## of ticks.
+    @final uint64 __ticksToUsecs(uint ticks) {
+        return uint64(1000000.0 * float(ticks) / __ticksPerSecond);
     }
 
     ## Compute the new start time to use at the beginning of a record.
@@ -197,6 +233,44 @@ Track cloneTrack(Track track) {
         }
     }
 
+    void __beginRecord() {
+        @assert(!__recordTrack);
+        # Create a record track, make sure the transport is rolling.
+        cerr `midieng: Starting record\n`;
+        __recordTrack = Track('noname');
+        if (__transportState != JACK_TRANSPORT_ROLLING) {
+            __jack.start();
+            __updateJackState();
+        }
+        __computeStartTime();
+        # If there are no tracks, we started out in "latched" state,
+        # otherwise go directly to "record".
+        __state = (__section.span || __jack.hasTracks()) ? ST_RECORD :
+                                                           ST_LATCHED;
+    }
+
+    void __endRecord() {
+        cerr `midieng: saving recorded track\n`;
+        t := __getTicks(0);
+        __section.markEnding(__recordTrack, t, true);
+        __section.tracks.append(__recordTrack);
+
+        # Until project model gets unified across the old and new
+        # systems, we need to copy the track and send it to the
+        # event manager.
+        if (__modelObserver)
+            __modelObserver.addTrack(cloneTrack(__recordTrack));
+
+        __recordTrack = null;
+        __state = ST_PLAY;
+
+        # Update the track cursors now that we have a new one, then
+        # deal with any events that now need to be played immediately.
+        __setTrackCursors(__getTicks(__section.span));
+        for (cur :in __trackCursors)
+            __playPendingEvents(cur, t);
+    }
+
     @final void __processEvent(Event event) {
         if (inputChannel > -1 && event := ChannelEvent.cast(event, null))
             event.channel = byte(inputChannel);
@@ -213,44 +287,10 @@ Track cloneTrack(Track track) {
                 if (cc.value != 127)
                     return;
 
-                # If we're currently recording, move the record track into the
-                # current section and switch to play mode.
-                if (__recordTrack) {
-                    cerr `midieng: saving recorded track\n`;
-                    t := __getTicks(0);
-                    __section.markEnding(__recordTrack, t, true);
-                    __section.tracks.append(__recordTrack);
-
-                    # Until project model gets unified across the old and new
-                    # systems, we need to copy the track and send it to the
-                    # event manager.
-                    if (__modelObserver)
-                        __modelObserver.addTrack(cloneTrack(__recordTrack));
-
-                    __recordTrack = null;
-                    __state = ST_PLAY;
-
-                    # Update the track cursors now that we have a new one, then
-                    # deal with any events that now need to be played immediately.
-                    __setTrackCursors(__getTicks(__section.span));
-                    for (cur :in __trackCursors)
-                        __playPendingEvents(cur, t);
-                } else {
-                    # Create a record track, make sure the transport is
-                    # rolling.
-                    cerr `midieng: Starting record\n`;
-                    __recordTrack = Track('noname');
-                    if (__transportState != JACK_TRANSPORT_ROLLING) {
-                        __jack.start();
-                        __updateJackState();
-                    }
-                    __computeStartTime();
-                    # If there are no tracks, we started out in "latched"
-                    # state, otherwise go directly to "record".
-                    __state = (__section.span || __jack.hasTracks()) ?
-                                  ST_RECORD :
-                                  ST_LATCHED;
-                }
+                if (__recordTrack)
+                    __endRecord();
+                else
+                    __beginRecord();
 
                 return;
             } else if (cc.controller == 43) {
@@ -385,8 +425,6 @@ Track cloneTrack(Track track) {
             }
         }
 
-
-
         # We're going to wait now, so invalidate the jack transport state.
         __posIsValid = false;
         lk = null;
@@ -404,6 +442,8 @@ Track cloneTrack(Track track) {
             cerr `fd $(evt.fd) events $(evt.events)\n`;
             poller.add(FileHandle(evt.fd), EventHandler(this, __seq));
         }
+
+        __interrupter.registerHandlers(poller);
     }
 
     void _run() {
@@ -464,6 +504,53 @@ Track cloneTrack(Track track) {
         __ticksPerSecond = float(__ppb) * bpm / 60.0;
     }
 
+    ## Toggle record mode.
+    void toggleRecord() {
+        lk := MutexLock(__lock);
+        if (__recordTrack)
+            __endRecord();
+        else
+            __beginRecord();
+        __interrupter.signal();
+    }
+
+    ## Toggle play mode.
+    void togglePlay() {
+        lk := MutexLock(__lock);
+        if (__recordTrack)
+            __endRecord();
+
+        __state = __state == ST_IDLE ? ST_PLAY : ST_IDLE;
+        if (__state == ST_PLAY) {
+            __posIsValid = false;
+            __updateJackState();
+
+            __startTime += __pos.usecs - __lastTime;
+            __jack.start();
+
+        } else {
+            __jack.stop();
+
+            __posIsValid = false;
+            __updateJackState();
+            __lastTime = __pos.usecs;
+            cerr `xxx time on stop is $(__pos.usecs)\n`;
+        }
+        __interrupter.signal();
+    }
+
+    ## Set the current position (specified in ticks).
+    void setPos(int pos) {
+        lk := MutexLock(__lock);
+        __setTrackCursors(pos);
+
+        # Force a reload of jack state so we can reset the start position to
+        # the current time.
+        __posIsValid = false;
+        __updateJackState();
+        __startTime = __pos.usecs - __ticksToUsecs(uint(pos));
+        __interrupter.signal();
+    }
 }
 
 @final class JackImpl @impl Jack {
@@ -534,6 +621,21 @@ Track cloneTrack(Track track) {
     ## Set the tempo in beats per minute.
     void setBPM(float bpm) {
         __mseq.setBPM(bpm);
+    }
+
+    ## Toggle record mode.
+    void toggleRecord() {
+        __mseq.toggleRecord();
+    }
+
+    ## Toggle play mode.
+    void togglePlay() {
+        __mseq.togglePlay();
+    }
+
+    ## Set the current position.
+    void setPos(int pos) {
+        __mseq.setPos(pos);
     }
 
     Port oper .outPort =(Port port) { return __mseq.outPort = port }

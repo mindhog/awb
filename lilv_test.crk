@@ -43,7 +43,7 @@ if (false) {
         cout `$(p.getName())\n`;
         cout `  uri: $(p.getURI())\n`;
         for (port :in p.iterPorts())
-            cout `  $(port.getName())\n`;
+            cout `  $(port.getName()) $(port.getSymbol())\n`;
     }
 }
 

@@ -99,6 +99,9 @@
         @cname lilv_port_get_name
         LilvNode getPortName(LilvPort port);
 
+        @cname lilv_port_get_symbol
+        LilvNode getSymbol(LilvPort port);
+
         @cname lilv_port_get_index
         uint32 getPortIndex(LilvPort port);
 

@@ -1099,6 +1099,8 @@ em.waveMan = waveMan;
 telEventManager = em;
 if (app)
     app.setEventManager(em);
+else
+    em.start();
 
 # Evaluate the user's .awb.crash script
 userConfig := makePath(env['HOME'])/'.awb.crash';

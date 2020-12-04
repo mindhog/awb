@@ -19,10 +19,10 @@ import spug.loop.jack SequencerWaveModel, Wave, WaveAdapter, WaveManager,
 import crack.midi.alsa Port, Sequencer;
 import crack.protobuf Message;
 import crack.serial SerialReader, SerialWriter;
-import crack.threads Queue = Queue2;
+import crack.threads Queue = Queue2, Thread;
 import crack.time Time_add = add, Time, TimeDelta;
 
-@import crack.ann assert, impl, implements, interface;
+@import crack.ann assert, cvars, impl, implements, interface;
 @import crack.protobuf.ann protobuf;
 
 ## Defines a midi bank.  This can be applied to an Orchestra object to change
@@ -903,6 +903,28 @@ class EventManager @impl EventContext {
             cmd(this);
 
         lastTime = relTime;
+    }
+
+    ## Start a thread to process only the EventManager queue.
+    ##
+    ## This is just a shim to keep some of
+    ## the pieces of functionality of the old system working while we write
+    ## the new one.  Eventually, EventManager should go away.
+    void start() {
+        class MyThread : Thread {
+            @cvars {
+                EventManager em;
+            }
+
+            void run() {
+                while (true) {
+                    cmd := em.__commandQueue.get();
+                    cmd(em);
+                }
+            }
+        }
+
+        MyThread(this).start();
     }
 
     ## Returns the fraction of time position / section span as of the last

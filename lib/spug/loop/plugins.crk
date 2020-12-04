@@ -31,6 +31,10 @@ class Port {
         return String(__plugin.getPortName(__port).asString());
     }
 
+    String getSymbol() {
+        return String(__plugin.getSymbol(__port).asString());
+    }
+
     bool isOfType(LilvNode type) {
         return __plugin.portIsA(__port, type);
     }
