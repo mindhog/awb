@@ -847,4 +847,3 @@ class InterpWrapper {
         eval(path.readAll(), __rootCtx);
     }
 }
-

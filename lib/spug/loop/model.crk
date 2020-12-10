@@ -63,6 +63,22 @@ class WavePlayerBank : Object @implements Bank {
     }
 }
 
+class WaveTrack {
+    WaveModel model;
+    int channel;
+    String __name;
+
+    oper init(WaveModel model, int channel, String name) :
+        model = model,
+        channel = channel,
+        __name = name {
+    }
+
+    String getName() {
+        return __name;
+    }
+}
+
 ## This is a "section" of the piece.  A section consists of a group of tracks
 ## that are played in parallel.  A section consists of one or more "measures"
 ## which should normally be the size of the shortest track.  Every track
@@ -81,6 +97,9 @@ class Section {
 
     ## The set of all tracks in the section.
     Array[Track] tracks;
+
+    ## The set of all waves in the section.
+    Array[WaveTrack] waves = {};
 
     oper init() : tracks() {}
     oper init(Array[Track] tracks, uint measure, uint span) :
@@ -125,7 +144,8 @@ class Section {
             time = span;
         }
 
-        lastTrack.add(EndTrack(time));
+        if (lastTrack)
+            lastTrack.add(EndTrack(time));
     }
 
     @final void deleteTrack(uint index) {
@@ -272,6 +292,7 @@ class Project {
 @interface Controller {
     @abstract void changeState(int oldState, int newState);
     @abstract void trackAdded();
+    @abstract void waveAdded();
     @abstract void trackDeleted(uint index);
     @abstract void sectionCreated();
     @abstract void sectionChanged();
@@ -621,6 +642,23 @@ class EventManager @impl EventContext {
         curSection.markEnding(track, endTime, true);
         curSection.tracks.append(track);
         controller.trackAdded();
+    }
+
+    ## Adds a wave file track to the current section, notifies the controller.
+    void addWaveTrack(WaveModel wave, String name) {
+        # XXX need to convert from number of frames to midi pulses.  This also
+        # locks in the section size.
+        curSection.markEnding(null, wave.frames, false);
+        for (int channel = 0; channel < wave.channels; ++channel) {
+            trackName := FStr() `$(name.substr(0, 7))$(channel ? 'R' : 'L')`;
+            curSection.waves.append(WaveTrack(wave, channel, trackName));
+            controller.waveAdded();
+        }
+    }
+
+    ## Add a new wave file to the set of wave tracks.
+    void addWaveFile(String filename) {
+        addWaveTrack(waveMan.addMemFile(filename).model, filename);
     }
 
     void endRecord() {

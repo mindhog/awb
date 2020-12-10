@@ -71,6 +71,10 @@ class TrackList : List {
         model.append(eventManager.curSection.tracks[-1].name);
     }
 
+    void waveAdded() {
+        model.append(eventManager.curSection.waves[-1].getName());
+    }
+
     void trackDeleted() {
         reloadTracks();
     }
@@ -162,6 +166,11 @@ class TextController : Object @implements Controller, AppMethods {
     void trackAdded() {
         for (tl :in __trackLists)
             tl.trackAdded();
+    }
+
+    void waveAdded() {
+        for (tl :in __trackLists)
+            tl.waveAdded();
     }
 
     void trackDeleted(uint index) {

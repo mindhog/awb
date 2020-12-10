@@ -3,6 +3,7 @@
 #    SDL_PollEvent, SDL_SetVideoMode, SDL_Quit, SDL_INIT_EVERYTHING,
 #    SDL_RESIZABLE;
 import crack.ascii parseInt;
+import crack.audio.wavfile ManagedWaveBuffer;
 import crack.cont.hashmap HashMap;
 import crack.fs cwd, makePath;
 import crack.functor Functor0;
@@ -33,7 +34,7 @@ import spug.loop.jack WaveManager;
 import spug.loop.tel telEventManager = eventManager, AppMethods, InterpWrapper;
 import spug.loop.textui TextController;
 import spug.loop.model programNames, ChannelMap, EventManager, Project,
-    Section, Controller, IDLE, LATCHED_RECORD, PLAY, RECORD;
+    Section, Controller, WaveTrack, IDLE, LATCHED_RECORD, PLAY, RECORD;
 import spug.loop.instrument FluidSynthInstrument, Instrument, Orchestra;
 import spug.ui.base Widget;
 import spug.ui.piano Piano;
@@ -273,17 +274,40 @@ class TrackCanvas {
                  (curTime >= startTime && curTime < endTime) ? GREEN : YELLOW
                  );
     }
+
+    ## Draw a vertical line representing the low and high values for a range of
+    ## samples.
+    void drawSampleLine(int x, int low, int high) {
+        x += labelColWidth;
+        lowY := uint16(pos.y + size.y - 1 -
+                        float(low + 32768) / 65536.0 * size.y
+                       );
+        highY := uint16(pos.y + size.y - 1 -
+                         float(high + 32768) / 65536.0 * size.y
+                        );
+        drawLine(surface, Coord(x, lowY), Coord(x, highY), GREEN);
+    }
 }
 
-## Track widgets display a graphical representation of a track and its events.
-class TrackWidget {
-    Track model;
-
+## Track widgets display a graphical representation of a track and its contents.
+@abstract class TrackWidget {
     ## True if the track is selected (multiple tracks can be selected)
     bool selected;
 
     ## True if the track is active (only one track can be active)
     bool active;
+
+    @abstract void draw(TrackCanvas canvas);
+
+    void activate(TrackCanvas canvas, bool active) {
+        this.active = active;
+        draw(canvas);
+    }
+}
+
+## Widget to display a midi track.
+class MIDITrackWidget : TrackWidget {
+    Track model;
 
     oper init(Track model, uint endTime) :
         model = model {
@@ -333,9 +357,60 @@ class TrackWidget {
         }
     }
 
-    void activate(TrackCanvas canvas, bool active) {
-        this.active = active;
-        draw(canvas);
+}
+
+class WaveTrackWidget : TrackWidget {
+    WaveTrack track;
+    String name;
+
+    ## This is a map of twice the size of the area where we display the wave
+    ## in the canvas.  It contains alternating low/high values for each x
+    ## coordinate in the canvas.  It must be recalculated when the canvas size
+    ## changes or the portion of the wave that we are displaying changes.
+    Array[int] sampleMap;
+
+    oper init(WaveTrack track, String name) : track = track, name = name {}
+
+    void draw(TrackCanvas canvas) {
+        canvas.fill(TRACK_BACKGROUND | (active ? TRACK_ACTIVE : 0) |
+                     (selected ? TRACK_SELECTED : 0)
+                    );
+        canvas.drawLabel(name);
+
+        # Recalculate the sample map if necessary.
+        # This is a costly operation that should really be done in a
+        # background thread.
+        width := canvas.size.x - canvas.labelColWidth;
+        if (!sampleMap ||
+             sampleMap.count() / 2 != width
+            ) {
+            nframes := track.model.frames;
+            interval := nframes / width;
+            sampleMap = Array[int]();
+            int max, min;
+            for (int i = 0; i < width; ++i) {
+                buf := ManagedWaveBuffer(interval * track.model.channels);
+                track.model.read(i * interval, buf, interval);
+                for (int j = 0; j < interval; ++j) {
+                    val := buf.buffer[i * track.model.channels + track.channel];
+                    val = int16(int(val) - 32768);
+#                    if (val > max)
+#                        max = val;
+#                    if (val < min)
+#                        min = val;
+                    if (val > 0)
+                        max = (max * j + val) / (j + 1);
+                    else
+                        min = (min * j + val) / (j + 1);
+                }
+                sampleMap.append(min);
+                sampleMap.append(max);
+            }
+        }
+
+        # Draw the sample map.
+        for (int i = 0; i < width; ++i)
+            canvas.drawSampleLine(i, sampleMap[i * 2], sampleMap[i * 2 + 1]);
     }
 }
 
@@ -517,7 +592,7 @@ class TrackPanel : Widget {
     TrackCanvas __makeTrackCanvas(Surface surface, Coord trackSize,
                                   int index
                                   ) {
-        ts := trackSize ? trackSize : Coord(size.x - 1, TRACK_HEIGHT);
+        ts := trackSize ? trackSize : Coord(size.x - 2, TRACK_HEIGHT);
         Coord trackPos = {pos.x + 1, pos.y + index * TRACK_HEIGHT + 1};
         return TrackCanvas(surface, trackPos,
                            ts,
@@ -539,16 +614,26 @@ class TrackPanel : Widget {
         }
     }
 
-    ## Add a new track, creating a new track widget.
-    ## If 'surface is not null, draws the track.
-    TrackWidget addTrack(Track track, uint endTime, Surface surface) {
-        w := TrackWidget(track,
-                         endTime
-                         );
+    void __addTrackWidget(TrackWidget w, Surface surface) {
         __elems.append(w);
         __activeIndex = __elems.count() - 1;
         if (!(surface is null))
             w.draw(__makeTrackCanvas(surface, null, __activeIndex));
+    }
+
+    ## Add a new track, creating a new track widget.
+    ## If 'surface is not null, draws the track.
+    TrackWidget addTrack(Track track, uint endTime, Surface surface) {
+        w := MIDITrackWidget(track, endTime);
+        __addTrackWidget(w, surface);
+        return w;
+    }
+
+    ## Adds a wave track, creating a new track widget.  If 'surface' is not
+    ## null, draws the track.
+    TrackWidget addTrack(WaveTrack track, uint endTime, Surface surface) {
+        w := WaveTrackWidget(track, track.getName());
+        __addTrackWidget(w, surface);
         return w;
     }
 
@@ -603,7 +688,7 @@ class TrackPanel : Widget {
         if (!count())
             return;
 
-        Coord trackSize = {size.x - 1, TRACK_HEIGHT};
+        Coord trackSize = {size.x - 2, TRACK_HEIGHT};
         this[__activeIndex].activate(__makeTrackCanvas(surface, trackSize,
                                                        __activeIndex
                                                        ),
@@ -630,7 +715,8 @@ class TrackPanel : Widget {
         } else if (event.sym == b't') {
             selectActiveTrack(surface);
         } else if (event.sym == SDLK_RETURN) {
-            userQueue.append(StartPianoRollEvent(this[__activeIndex].model));
+            if (widget := MIDITrackWidget.cast(this[__activeIndex], null))
+                userQueue.append(StartPianoRollEvent(widget.model));
         } else {
             return false;
         }
@@ -641,8 +727,10 @@ class TrackPanel : Widget {
     Array[Track] getSelectedTracks() {
         Array[Track] selected = {};
         for (trackWidget :in __elems) {
-            if (trackWidget.selected)
-                selected.append(trackWidget.model);
+            if (trackWidget.selected &&
+                 (widg := MIDITrackWidget.cast(trackWidget, null))
+                )
+                selected.append(widg.model);
         }
 
         return selected;
@@ -761,6 +849,13 @@ class App : Object @implements AppMethods, KeyboardHandler, MouseButtonHandler,
                             null
                             );
         app.flip();
+    }
+
+    void waveAdded() {
+        trackPanel.addTrack(eventManager.curSection.waves[-1],
+                            eventManager.curSection.span,
+                            null
+                            );
     }
 
     void trackDeleted(uint index) {
