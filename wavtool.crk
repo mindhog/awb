@@ -149,6 +149,7 @@ class RemixHead {
                 }
             }
         }
+        # TODO: also deal with 2 -> 1.
 
         # Run the effects chain.
         track.effects.run(frames);
