@@ -670,6 +670,13 @@ class ModelObserverImpl @impl ModelObserver {
         return 0;
     }
 
+    ## Copy the current section in the event manager to the midi engine.
+    @function(MidiEngine)
+    int copySection() {
+        self.setSection(eventManager.curSection.clone());
+        return 0;
+    }
+
     o.define('routeToOutputPort', routeToOutputPort(eng));
     o.define('routeToInstrument', routeToInstrument(eng));
     o.define('routeToEventManager', routeToEventManager(eng));
@@ -679,6 +686,7 @@ class ModelObserverImpl @impl ModelObserver {
     o.define('toggleRecord', toggleRecord(eng));
     o.define('togglePlay', togglePlay(eng));
     o.define('setPos', setPos(eng));
+    o.define('copySection', copySection(eng));
 
     return _midiEngineObj;
 }

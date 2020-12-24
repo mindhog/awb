@@ -177,6 +177,10 @@ class Interrupter @impl PollEventCallback {
         return uint64(1000000.0 * float(ticks) / __ticksPerSecond);
     }
 
+    @final uint __usecsToTicks(uint64 usecs) {
+        return uint((float(usecs) / 1000000.0) * __ticksPerSecond);
+    }
+
     ## Compute the new start time to use at the beginning of a record.
     ## This modifies __startTime to be the new start time.
     @final void __computeStartTime() {
@@ -380,7 +384,7 @@ class Interrupter @impl PollEventCallback {
         __updateJackState();
 
         TimeDelta timeout;
-        if (__transportState == JACK_TRANSPORT_ROLLING) {
+        if (__state != ST_IDLE) {
             # See if we need to play anything.
             if (__section.tracks) {
                 # if we don't currently have a set of cursors, generate
@@ -551,6 +555,29 @@ class Interrupter @impl PollEventCallback {
         __startTime = __pos.usecs - __ticksToUsecs(uint(pos));
         __interrupter.signal();
     }
+
+    ## Set the current section.  Note that once the Section has been set it
+    ## basically becomes a shared resource and should really be treated
+    ## as immutable.
+    void setSection(Section section) {
+        lk := MutexLock(__lock);
+        __section = section;
+
+        # Fix the track cursors so that the current position is converted to
+        # the new section.
+        uint64 t;
+        if (__state == ST_IDLE) {
+            # Transport is IDLE.  Use lastTime - startTime.
+            t = __lastTime - __startTime;
+        } else {
+            # Transport is rolling.  Use current time - startTime.
+            __updateJackState();
+            t = __pos.usecs - __startTime;
+        }
+        __setTrackCursors(__usecsToTicks(t) % __section.span);
+
+        __interrupter.signal();
+    }
 }
 
 @final class JackImpl @impl Jack {
@@ -636,6 +663,11 @@ class Interrupter @impl PollEventCallback {
     ## Set the current position.
     void setPos(int pos) {
         __mseq.setPos(pos);
+    }
+
+    ## Set the current section.
+    void setSection(Section section) {
+        __mseq.setSection(section);
     }
 
     Port oper .outPort =(Port port) { return __mseq.outPort = port }

@@ -219,6 +219,29 @@ class Section {
         optionalData = SectionOptionalData();
         readMessageFromString(optionalData, optionalDataString);
     }
+
+    Section clone() {
+        newTracks := Array[Track]();
+        for (track :in tracks) {
+            newTrack := Track(track.name);
+            newTracks.append(track);
+            for (event :in track)
+                newTrack.append(event.clone());
+        }
+        result := Section(newTracks, measure, span);
+
+        # We treat WaveTracks as immutable (they seem to effectively be so).
+        # The array, however, is not.
+        result.waves = waves.clone();
+
+        if (optionalData) {
+            # Clone optional data by serializing and deserializing.
+            result.optionalData = SectionOptionalData();
+            readMessageFromString(result.optionalData, optionalData.toString());
+        }
+
+        return result;
+    }
 }
 
 ## Global play modes.
