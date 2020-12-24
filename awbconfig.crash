@@ -6,8 +6,8 @@ app bind 45 [callback { bak }]
 # bind '=' (under '+') to fwd
 app bind 61 [callback { fwd }]
 
-connect fluidsynth:r_00 system:playback_1
-connect fluidsynth:l_00 system:playback_2
+connect fluidsynth:left system:playback_1
+connect fluidsynth:right system:playback_2
 connect awb:left system:playback_1
 connect awb:right system:playback_2
 
