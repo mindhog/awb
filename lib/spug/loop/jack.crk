@@ -923,21 +923,14 @@ class RecordBuffer {
         ## has been written to a file.
         savedPos,
 
-        ## States are: RECORD_RECORDING, RECORD_FINISH_REQUESTED and
-        ## RECORD_FINISHED.  When in RECORD_FINISH_REQUESTED or
-        ## RECORD_FINISHED (the two non-zero states) the Recorder stops
-        ## recording.  When "finished," the WriteThread stops writing and
-        ## closes the processor and output stream.
-        state;
+        ## Set to nonzero when we're finished recording.
+        finished;
 
     uint size = 1024 * 1024;
     array[int16] buffer = array[int16](1024 * 1024);
 
     void finish() {
-        # We only want to change state if we haven't already requested to
-        # finish (or have finished).
-        if (!state)
-            state += 1;
+        finished += 1;
     }
 }
 
@@ -948,8 +941,7 @@ class Recorder @impl Functor1[void, JackWrapper] {
     }
 
     void oper call(JackWrapper jack) {
-        if (outBuf.state) {
-            outBuf.state += 1;
+        if (outBuf.finished) {
             jack.removeProcessor(this);
             return;
         }
@@ -996,15 +988,14 @@ class WriteThread : Thread {
 
     void run() {
         while (true) {
-            while ((x := buf.recordPos - buf.savedPos >=
-                    int64(writeFrame.size)) ||
-                   buf.state == RECORD_FINISHED
+            while ((buf.recordPos - buf.savedPos >= int64(writeFrame.size)) ||
+                   buf.finished
                    ) {
                 if (buf.recordPos - buf.savedPos >= int64(writeFrame.size)) {
                     __fetch(writeFrame.cap);
                     def.writeData(out, writeFrame);
                     buf.savedPos += writeFrame.size;
-                } else if (buf.state == RECORD_FINISHED) {
+                } else if (buf.finished) {
                     if (buf.recordPos < buf.savedPos) {
                         # Record the remaining chunk.  Note that we'll only
                         # ever get here if we end up with a partial buffer.
