@@ -677,6 +677,19 @@ class ModelObserverImpl @impl ModelObserver {
         return 0;
     }
 
+    ## Load the midi file and add all tracks to the engine.
+    @function(MidiEngine)
+    int loadMidiFile(String filename) {
+        file := MidiFile.read(makePath(filename).reader());
+
+        for (track :in file.tracks)
+            eventManager.addTrack(track, track[-1].time);
+        self.setSection(eventManager.curSection.clone());
+
+        # TODO: set ticks per quarter note.
+        return 0;
+    }
+
     o.define('routeToOutputPort', routeToOutputPort(eng));
     o.define('routeToInstrument', routeToInstrument(eng));
     o.define('routeToEventManager', routeToEventManager(eng));
@@ -687,6 +700,7 @@ class ModelObserverImpl @impl ModelObserver {
     o.define('togglePlay', togglePlay(eng));
     o.define('setPos', setPos(eng));
     o.define('copySection', copySection(eng));
+    o.define('loadMidiFile', loadMidiFile(eng));
 
     return _midiEngineObj;
 }

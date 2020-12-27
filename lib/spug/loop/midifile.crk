@@ -1,8 +1,22 @@
 
 import crack.cont.array Array;
-import crack.io StringWriter, Writer;
-import crack.lang AppendBuffer;
-import crack.midi.event Event, MidiWriter, Track;
+import crack.io FStr, StringWriter, Reader, Writer;
+import crack.lang AppendBuffer, Buffer, Exception;
+import crack.midi.event Event, MidiReader, MidiWriter, Track;
+
+class RBuf = Buffer {
+    uint32 read4(uint pos) {
+        return (uint32(this[pos]) << 24) |
+               (uint32(this[pos + 1]) << 16) |
+               (uint32(this[pos + 2]) << 8) |
+               uint32(this[pos + 3]);
+    }
+
+    uint32 read2(uint pos) {
+        return (uint32(this[pos]) << 8) |
+               uint32(this[pos + 1]);
+    }
+}
 
 class Buf = AppendBuffer {
     void write4(uint32 val) {
@@ -16,6 +30,10 @@ class Buf = AppendBuffer {
         append(byte(val >> 8));
         append(byte(val));
     }
+}
+
+class BadFileFormat : Exception {
+    oper init(String text) : Exception(text) {}
 }
 
 class MidiFile {
@@ -35,6 +53,11 @@ class MidiFile {
     void append(Track track) {
         __tracks.append(track);
     }
+
+    ## Returns the set of tracks in the file.
+    ##
+    ## The returned array should be treated as immutable.
+    Array[Track] oper .tracks() { return __tracks }
 
     ## Write a midi file.
     void write(Writer out) {
@@ -74,5 +97,84 @@ class MidiFile {
 
         # Finally, write the buffer.
         out.write(buf);
+    }
+
+    ## Read a midi file.
+    @static MidiFile read(Reader src) {
+        header := RBuf(src.read(14));
+        if (!header.startsWith('MThd'))
+            throw BadFileFormat("Doesn't start with an MThd header");
+
+        if (header.read4(4) != 6)
+            throw BadFileFormat('Invalid chunk size (expecting 6)');
+
+        if (header.read2(8) != 1)
+            throw BadFileFormat('Invalid midi file format (we only support '
+                                'format 1)');
+
+        numTracks := header.read2(10);
+        ticksPerQN := header.read2(12);
+        int msecsPerBeat = -1;
+        result := MidiFile(ticksPerQN, 0);
+
+        for (int i = 0; i < numTracks; ++i) {
+            header := src.read(8);
+            if (!header.startsWith('MTrk'))
+                throw BadFileFormat(
+                    FStr() `Track header expected, got $(header.getRepr())`
+                );
+
+            # TODO: read the entire track into a StringReader based on its
+            # size.
+
+            reader := MidiReader(src);
+
+            # See if we've got a set tempo event, read it if we've got it.
+            reader.needByte();
+            if (reader.buf.size >= 6 && reader.buf.startsWith('\0\xff\x51')) {
+                reader.readByte();  # Read and ignore the time.
+                b := reader.readByte();
+                if (b != 0xff)
+                    throw BadFileFormat(
+                        FStr() `Expected 0xff for synthetic event, got $b`
+                    );
+
+                b = reader.readByte();
+                if (b != 0x51)
+                    throw BadFileFormat(
+                        FStr() `Expected synthetic event 0x51, got $b`
+                    );
+
+                b = reader.readByte();
+                if (b != 3)
+                    throw BadFileFormat(
+                        FStr() `Expected set tempo event size of 3, got $b`
+                    );
+
+                tempo := (uint(reader.readByte()) << 24) |
+                         (uint(reader.readByte()) << 16) |
+                         uint(reader.readByte());
+                if (msecsPerBeat == -1) {
+                    msecsPerBeat = tempo;
+                } else if (msecsPerBeat != tempo) {
+                    throw BadFileFormat(
+                        FStr() I`Mismatched tempo specified for track $i, \
+                                 previously got $msecsPerBeat, new values is \
+                                 $tempo`
+                    );
+                }
+            }
+
+            # Make sure we got at least one set-tempo event.
+            if (msecsPerBeat == -1)
+                throw BadFileFormat('No set-tempo event found in first track');
+
+            result.append(reader.readTrack(FStr() `$i`));
+            import crack.io cerr;
+            cerr `xxx track read: $(result.__tracks)\n`;
+        }
+
+        result.bpm = 6e+7 / float(msecsPerBeat);
+        return result;
     }
 }
