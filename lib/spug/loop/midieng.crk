@@ -6,7 +6,8 @@ import crack.lang Exception, InvalidStateError;
 import crack.math floor;
 import crack.midi.alsa Port, Sequencer, SND_SEQ_OPEN_OUTPUT,
     SND_SEQ_OPEN_INPUT;
-import crack.midi.event ChannelEvent, ControlChange, Event, MidiWriter, Track;
+import crack.midi.event ChannelEvent, ControlChange, EndTrack, Event,
+    MidiWriter, Track;
 import crack.net Pipe, Poller, PollEvent, PollEventCallback, POLLERR,
     POLLHUP, POLLOUT, POLLIN;
 import crack.rawptr RawPtr;
@@ -220,6 +221,10 @@ class Interrupter @impl PollEventCallback {
         for (cur :in __trackCursors) {
             # Find the first event that is after 'pos'.
             startIndex := cur.index;
+            if (!cur.span) {
+                cerr `ERROR: track $(cur.track.name) has a zero length span\n`;
+                continue;
+            }
             while (cur.elem().time < pos % cur.span) {
                 cur.next();
                 if (cur.index == startIndex) {
@@ -232,8 +237,10 @@ class Interrupter @impl PollEventCallback {
 
     void __playPendingEvents(LoopCursor cur, uint pos) {
         while (cur && !cur.immediatelyFollows(pos % cur.span)) {
-            # Send it off to the processor.
-            __processor(this, cur.next());
+            # Send it off to the processor (if it's not an EndTrack)
+            evt := cur.next();
+            if (!EndTrack.cast(evt, null))
+                __processor(this, evt);
         }
     }
 
@@ -241,7 +248,7 @@ class Interrupter @impl PollEventCallback {
         @assert(!__recordTrack);
         # Create a record track, make sure the transport is rolling.
         cerr `midieng: Starting record\n`;
-        __recordTrack = Track('noname');
+        __recordTrack = Track('midi-record-track');
         if (__transportState != JACK_TRANSPORT_ROLLING) {
             __jack.start();
             __updateJackState();
@@ -538,7 +545,6 @@ class Interrupter @impl PollEventCallback {
             __posIsValid = false;
             __updateJackState();
             __lastTime = __pos.usecs;
-            cerr `xxx time on stop is $(__pos.usecs)\n`;
         }
         __interrupter.signal();
     }
