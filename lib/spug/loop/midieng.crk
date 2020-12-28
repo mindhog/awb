@@ -254,8 +254,10 @@ class Interrupter @impl PollEventCallback {
             __updateJackState();
         }
         __computeStartTime();
-        # If there are no tracks, we started out in "latched" state,
-        # otherwise go directly to "record".
+        # If there are no tracks here or in jack, we started out in "latched"
+        # state, otherwise go directly to "record".  TODO: maybe allow the
+        # user to disable latched in the case where they are just recording a
+        # midi track.
         __state = (__section.span || __jack.hasTracks()) ? ST_RECORD :
                                                            ST_LATCHED;
     }
@@ -612,7 +614,9 @@ class Interrupter @impl PollEventCallback {
         return float(__waveMan.tell()) / float(__waveMan.getSampleRate());
     }
 
-    bool hasTracks() { return __waveMan.adapters }
+    bool hasTracks() {
+        return __waveMan.hasTracks();
+    }
 }
 
 ## Midi engine public interface.

@@ -184,6 +184,14 @@ class JackWrapper {
     @final JackClient getClient() {
         return __client;
     }
+
+    ## Returns the array of processors.  These should be treated as immutable.
+    ##
+    ## TODO: These are currently accessed from non-jack threads, both here
+    ## and from addProcessors().  This is dangerous and should be fixed.
+    Array[Functor1[void, JackWrapper]] oper .processors() {
+        return __processors;
+    }
 }
 
 ## This is the jack callback.
@@ -962,6 +970,8 @@ class Recorder @impl Functor1[void, JackWrapper] {
         }
         outBuf.recordPos += jack.frameCount * 2;
     }
+
+    bool oper .finished() { return outBuf.finished }
 }
 
 const WriteThread_BUFSIZE := 4096;
@@ -1113,5 +1123,18 @@ class WaveManager : JackWrapper {
         addProcessor(Recorder(buf));
 
         return buf;
+    }
+
+    ## Returns true if there are any active adapters or recorders.
+    bool hasTracks() {
+        if (adapters)
+            return true;
+
+        for (proc :in processors) {
+            if ((rec := Recorder.cast(proc, null)) && !rec.finished)
+                return true;
+        }
+
+        return false;
     }
 }
