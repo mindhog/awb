@@ -46,13 +46,14 @@ class App : TermApp {
 class Status : Window {
 
     byte normalAttr = 7;
+    String text = 'AWB';
 
     oper init(Window parent) : Window(parent) {}
 
     void paint() {
         gc := getGraphicsContext();
         gc.fillRect(0, 0, width, height, normalAttr, b' ');
-        gc.write(0, 0, normalAttr, 'AWB');
+        gc.write(0, 0, normalAttr, text);
     }
 }
 
@@ -159,6 +160,12 @@ class TextController : Object @implements Controller, AppMethods {
     ## List of track list windows.
     Array[TrackList] __trackLists = {};
 
+    ## The app.
+    App __app;
+
+    ## The status bar.
+    Status __status;
+
     void changeState(int oldState, int newState) {
         cout `Changing state from $oldState to $newState\n`;
     }
@@ -197,12 +204,12 @@ class TextController : Object @implements Controller, AppMethods {
         ## 'block' is a crash block to execute in a subcontext that exists for
         ## the duration of the time that the user interface is running.
         @function(TextController) int runUI(String block) {
-            app := App(AppContext());
-            app.showCursor(false);
-            app.start();
-            col := Column(app);
-            stat := Status(col);
-            col.addChild(stat, 1);
+            self.__app = App(AppContext());
+            self.__app.showCursor(false);
+            self.__app.start();
+            col := Column(self.__app);
+            self.__status = Status(col);
+            col.addChild(self.__status, 1);
 
             StandardFormatter tempOut = cout, tempErr = cerr;
             cout = StringFormatter();
@@ -214,7 +221,7 @@ class TextController : Object @implements Controller, AppMethods {
                 rootCtx.define('mainColumn', SimpleValue(col));
                 rootCtx.pushFuncFrame();
                 eval(block, rootCtx);
-                app.run();
+                self.__app.run();
             } catch (Exception ex) {
                 error = ex;
             }
@@ -224,8 +231,10 @@ class TextController : Object @implements Controller, AppMethods {
 
             rootCtx.popFuncFrame();
             self.__trackLists.clear();
-            app.showCursor(true);
-            app.stop();
+            self.__app.showCursor(true);
+            self.__app.stop();
+            self.__status = null;
+            self.__app = null;
 
             if (error)
                 cerr `$error\n`;
@@ -239,6 +248,19 @@ class TextController : Object @implements Controller, AppMethods {
                 cont.addChild(list, size);
             self.__trackLists.append(list);
             return list;
+        }
+
+        @function(TextController)
+        int setStatusText(String text) {
+            if (self.__status)
+                self.__status.text = text;
+            return 0;
+        }
+
+        @function(TextController)
+        int terminate() {
+            self.__app.terminate();
+            return 0;
         }
 
         @function(InterpWrapper) int bind(int key, String command) {
@@ -263,6 +285,8 @@ class TextController : Object @implements Controller, AppMethods {
         __interp.define('runUI', runUI(this));
         __interp.define('TrackList', makeTrackList(this));
         __interp.define('BarSlider', makeBarSlider());
+        __interp.define('setStatusText', setStatusText(this));
+        __interp.define('terminate', terminate(this));
         __interp.define('bind', bind(__interp));
         __interp.define('char', char());
         __interp.define('KEY_UP', ival(KEY_UP));
