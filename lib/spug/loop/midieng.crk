@@ -3,6 +3,7 @@ import crack.ext._jack JackClient;
 import crack.functor Functor2;
 import crack.io cerr, FileHandle;
 import crack.lang Exception, InvalidStateError;
+import crack.logger debug, error, info;
 import crack.math floor;
 import crack.midi.alsa Port, Sequencer, SND_SEQ_OPEN_OUTPUT,
     SND_SEQ_OPEN_INPUT;
@@ -76,7 +77,7 @@ class Interrupter @impl PollEventCallback {
         if (event.revents & POLLIN) {
             __pipe.read(1024);
         } else if (event.revents) {
-            cerr `Interrupter pipe error\n`;
+            error `Interrupter pipe error`;
             __pipe.close();
             poller.remove(__pipe);
         }
@@ -204,15 +205,18 @@ class Interrupter @impl PollEventCallback {
 
     @final void __initializeTrackCursors() {
         __trackCursors = Array[LoopCursor](__section.tracks.count());
+        debug `midieng: initializing track cursors`;
         for (track :in __section.tracks) {
             __trackCursors.append(cur := LoopCursor(track));
-            cur.setPos(__getTicks(cur.span));
+            cur.setPos(pos := __getTicks(cur.span));
+            debug `midieng: track $(track.name) set to position $pos`;
         }
     }
 
     ## Set all track cursors so that the next event is the event to be played
     ## at or after 'pos'.  'pos'
     @final void __setTrackCursors(uint pos) {
+        debug `midieng: setting track cursors to $pos`;
         # Recreate the track cursors (this should be refactored out).
         __trackCursors = Array[LoopCursor](__section.tracks.count());
         for (track :in __section.tracks)
@@ -222,7 +226,7 @@ class Interrupter @impl PollEventCallback {
             # Find the first event that is after 'pos'.
             startIndex := cur.index;
             if (!cur.span) {
-                cerr `ERROR: track $(cur.track.name) has a zero length span\n`;
+                error `track $(cur.track.name) has a zero length span`;
                 continue;
             }
             while (cur.elem().time < pos % cur.span) {
@@ -232,6 +236,8 @@ class Interrupter @impl PollEventCallback {
                     break;
                 }
             }
+            debug I`midieng: set cursor for track $(cur.track.name) to \
+                    event at $(cur.elem().time)`;
         }
     }
 
@@ -239,15 +245,17 @@ class Interrupter @impl PollEventCallback {
         while (cur && !cur.immediatelyFollows(pos % cur.span)) {
             # Send it off to the processor (if it's not an EndTrack)
             evt := cur.next();
-            if (!EndTrack.cast(evt, null))
+            if (!EndTrack.cast(evt, null)) {
+                info `midieng: playing event $evt`;
                 __processor(this, evt);
+            }
         }
     }
 
     void __beginRecord() {
         @assert(!__recordTrack);
         # Create a record track, make sure the transport is rolling.
-        cerr `midieng: Starting record\n`;
+        info `midieng: Starting record`;
         __recordTrack = Track('midi-record-track');
         if (__transportState != JACK_TRANSPORT_ROLLING) {
             __jack.start();
@@ -263,7 +271,7 @@ class Interrupter @impl PollEventCallback {
     }
 
     void __endRecord() {
-        cerr `midieng: saving recorded track\n`;
+        info `midieng: saving recorded track`;
         t := __getTicks(0);
         __section.markEnding(__recordTrack, t, true);
         __section.tracks.append(__recordTrack);
@@ -375,10 +383,10 @@ class Interrupter @impl PollEventCallback {
                 evt := __seq.getEvent();
                 if (evt) {
                     evt.time = __engine.__getTicks(0);
-                    cerr `got midi event $evt, time is $(evt ? evt.time : 0)\n`;
+                    info `got midi event $evt, time is $(evt ? evt.time : 0)`;
                     __engine.__processEvent(evt);
                 } else {
-                    cerr `got null event\n`;
+                    info `got null event`;
                 }
             }
             return POLLIN;
@@ -452,7 +460,7 @@ class Interrupter @impl PollEventCallback {
         evt := PollEvt();
         for (int i = 0; i < count; ++i) {
             fds.get(i, evt);
-            cerr `fd $(evt.fd) events $(evt.events)\n`;
+            debug `fd $(evt.fd) events $(evt.events)`;
             poller.add(FileHandle(evt.fd), EventHandler(this, __seq));
         }
 
@@ -475,12 +483,11 @@ class Interrupter @impl PollEventCallback {
         timeoutObj := TimeDelta();
 
         # The main event loop.
-        cerr `starting loop\n`;
         while (true) {
             try {
                 runOneCycle(poller, timeoutObj);
             } catch (Exception ex) {
-                cerr `Got exception in run thread:\n$ex\n`;
+                error `Got exception in run thread:\n$ex`;
             }
         }
     }

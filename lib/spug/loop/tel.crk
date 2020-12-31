@@ -9,6 +9,7 @@ import crack.fs makePath;
 import crack.functor Functor0, Functor1, Functor2;
 import crack.io cin, cout, cerr, FStr;
 import crack.lang AppendBuffer, CString, Exception;
+import crack.logger levelNames, setLogLevel, DEBUG, ERROR, FATAL, INFO, WARN;
 import crack.midi.alsa PortInfo, Sequencer, SND_SEQ_OPEN_OUTPUT,
     SND_SEQ_OPEN_INPUT;
 import crack.net Poller, POLLIN, POLLERR, POLLOUT;
@@ -779,6 +780,20 @@ class ExportMidiFileCmd : Builtin {
     return String(buf, true);
 }
 
+## Set the "log level" (the minimum priority level that is displayed to the
+## console).
+##
+## Levels are DEBUG, INFO, WARN, ERROR and FATAL.
+@function int setLogLevel_(String level) {
+    for (i :on levelNames) {
+        if (i.elem() == level) {
+            setLogLevel(i.index);
+            return i.index;
+        }
+    }
+    throw Exception(FStr() `Unknown log level: $level`);
+}
+
 class InterpWrapper {
 
     EvalContext __rootCtx = createRootContext();
@@ -826,6 +841,7 @@ class InterpWrapper {
         ctx.define('getCurrentSection', getCurrentSection());
         ctx.define('recordFile', recordFile());
         ctx.define('getRelativePath', getRelativePath());
+        ctx.define('setLogLevel', setLogLevel_());
         ctx.define('CVR_MULT', SimpleValue(IntObj(CVR_MULT)));
     }
 
