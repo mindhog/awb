@@ -9,7 +9,7 @@ import crack.lang Exception, StaticString;
 import crack.midi.event ChannelEvent, ControlChange, Event;
 import crash parseBlockArg, Block, Builtin, EvalContext, Obj;
 import spug.loop.model EventContext, EventManager;
-import spug.loop.jack WaveManager, WindowBufferAdapter;
+import spug.loop.jack WaveManager, PCMTrackAdapter;
 import types BoolObj, FloatObj, IntObj;
 import .plugins PluginInstance, PluginLibrary;
 import .plugincmds makeEffectObj;
@@ -39,10 +39,10 @@ alias EventProcessor = Functor2[void, Event, EventContext];
 }
 
 class Panner : ControllerProcessor {
-    WindowBufferAdapter adapter;
+    PCMTrackAdapter adapter;
     WaveManager waveMan;
     int track;
-    oper init(WindowBufferAdapter adapter, WaveManager waveMan,
+    oper init(PCMTrackAdapter adapter, WaveManager waveMan,
               Formatter out,
               int track
               ) :
@@ -63,9 +63,9 @@ class Panner : ControllerProcessor {
 }
 
 class VolumeControl : ControllerProcessor {
-    WindowBufferAdapter adapter;
+    PCMTrackAdapter adapter;
     int track;
-    oper init(WindowBufferAdapter adapter, WaveManager waveMan,
+    oper init(PCMTrackAdapter adapter, WaveManager waveMan,
               Formatter out,
               int track
               ) :
@@ -233,7 +233,7 @@ class Project {
 
     class Channel {
         @cvars {
-            WindowBufferAdapter __adapter;
+            PCMTrackAdapter __adapter;
             SmartController __vol;
             SmartController __pan;
         }
@@ -276,12 +276,9 @@ class Project {
         out = StandardFormatter((this.dir/'logfile.crash').writer());
     }
 
-    ## Adds a track given the name of a wave file.
-    void addTrack(String filename, int volumeController, int panController) {
-        if (!eventManager.waveMan)
-            eventManager.waveMan = WaveManager.create();
-        adapter := eventManager.mapWaveFile((dir/filename).getFullName());
-
+    void __addChannel(PCMTrackAdapter adapter, int volumeController,
+                      int panController
+                      ) {
         eventManager.eventProcessors[panController] = pan :=
             SmartController(Panner(adapter, eventManager.waveMan, out,
                                    __trackIndex
@@ -295,9 +292,26 @@ class Project {
 
         ++__trackIndex;
         __channels.append(Channel(adapter, vol, pan));
+    }
+
+    ## Adds a track given the name of a wave file.
+    void addTrack(String filename, int volumeController, int panController) {
+        if (!eventManager.waveMan)
+            eventManager.waveMan = WaveManager.create();
+        adapter := eventManager.mapWaveFile((dir/filename).getFullName());
+        __addChannel(adapter, volumeController, panController);
 
         # Add the new track to the log.
         out `load $(dir/filename)\n`;
+    }
+
+    void addPassThrough(Array[String] inputs, int volumeController,
+                        int panController
+                        ) {
+        if (!eventManager.waveMan)
+            eventManager.waveMan = WaveManager.create();
+        adapter := eventManager.waveMan.addPassThrough(inputs);
+        __addChannel(adapter, volumeController, panController);
     }
 
     ## Write 'text' to the logfile.  Note that this does not add a newline,
@@ -366,6 +380,19 @@ class Project {
                                         int volumeController
                                         ) {
     self.addTrack(filename, panController, volumeController);
+    return 0;
+}
+
+alias ObjectArray = Array[Object];
+
+@function(Project) int Project_addPassThrough(ObjectArray inputs,
+                                              int panController,
+                                              int volumeController
+                                              ) {
+    realInputs := Array[String]();
+    for (input :in inputs)
+        realInputs.append(String.cast(input));
+    self.addPassThrough(realInputs, panController, volumeController);
     return 0;
 }
 
@@ -454,6 +481,7 @@ Obj makeEventRecorderModule(EventManager eventManager) {
         obj := Obj();
         proj := Project(self.eventManager, dir);
         obj.define('addTrack', Project_addTrack(proj));
+        obj.define('addPassThrough', Project_addPassThrough(proj));
         obj.define('setGain', Project_setGain(proj));
         obj.define('getGain', Project_getGain(proj));
         obj.define('setPan', Project_setPan(proj));

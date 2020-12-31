@@ -7,8 +7,9 @@ import crack.ext._jack JackClient, JackPort, JackPosition, JackClient_open,
     JACK_TRANSPORT_ROLLING;
 import crack.fs makePath;
 import crack.functor Function1, Functor1;
-import crack.io cout, cerr, Reader, SeekableReader, SeekableWriter, SEEK_SET;
-import crack.lang Buffer, CString;
+import crack.io cout, cerr, FStr, Reader, SeekableReader, SeekableWriter,
+    SEEK_SET;
+import crack.lang Buffer, CString, Exception;
 import crack.math max, abs;
 import crack.runtime free, sleep;
 import crack.threads Mutex, MutexLock, Thread;
@@ -197,7 +198,6 @@ class JackWrapper {
 ## This is the jack callback.
 int jackCallback(uint32 nframes, voidptr arg) {
     jack := JackWrapper.unsafeCast(arg);
-    import crack.lang Exception;
     try {
         jack.process(nframes);
     } catch (Exception ex) {
@@ -397,6 +397,50 @@ class Mixer @impl Component {
     @final bool enabled() {
         return __enabled;
     }
+}
+
+## A pass through adapter just adds a jack input to the mix (with volume,
+## panning and effects like any other PCMTrackAdapter).
+##
+## This is a bit of an abuse of the PCMTrackAdapter concept, as it doesn't
+## have a "position."  Don't add it as the first adapter along with real
+## PCMTrackAdapaters.
+class PassThroughAdapter : PCMTrackAdapter {
+    Array[int] __inputIndex = Array[int]();
+    JackWrapper __jack;
+
+    oper init(JackWrapper jack, Array[String] inputs) :
+        PCMTrackAdapter(inputs.count()),
+        __jack = jack {
+
+        for (input :in inputs) {
+            if (input == 'left_in') {
+                __inputIndex.append(0);
+            } else if (input == 'right_in') {
+                __inputIndex.append(1);
+            } else {
+                throw Exception(FStr() `Unknown input $input`);
+            }
+        }
+    }
+
+    void process(BufferVector bufs, uint32 frameCount) {
+        for (inputIter :on __inputIndex) {
+            buf := bufs[inputIter.index];
+            inbuf := inputIter.elem() ?
+                         __jack.right_in.getBuffer(frameCount) :
+                         __jack.left_in.getBuffer(frameCount);
+            for (uint32 i; i < frameCount; ++i)
+                buf[i] = inbuf[i];
+        }
+    }
+
+    void _forward(uint frames) {}
+    void seek(uint frame) {}
+    uint getFrameCount() { return 0 }
+    uint getRate() { return __jack.getSampleRate() }
+    uint getNumTracks() { return __inputIndex.count() }
+    intz getPos() { return 0 }
 }
 
 @abstract class WaveModel {
@@ -1101,6 +1145,15 @@ class WaveManager : JackWrapper {
         addProcessor(adapter);
         adapters.append(adapter);
 
+        return adapter;
+    }
+
+    ## Add a "pass-through" adapter for the given jack inputs.
+    PassThroughAdapter addPassThrough(Array[String] inputs) {
+        adapter := PassThroughAdapter(this, inputs);
+        adapter(this);
+        addProcessor(adapter);
+        adapters.append(adapter);
         return adapter;
     }
 

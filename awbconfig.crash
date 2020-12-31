@@ -62,6 +62,15 @@ def track {file} {
     set trackNum [+ $trackNum 1]
 }
 
+# Adds a new "bus" (pass-through).
+def bus {inputs} {
+    var volCC [+ [* 256 $trackNum] $trackNum]
+    var panCC [+ $volCC 16]
+    $project addPassThrough $inputs $volCC $panCC
+    set trackNum [+ $trackNum 1]
+}
+
+
 def pan {track val} {
     $project setPan $track $val
 }
