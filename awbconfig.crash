@@ -95,6 +95,14 @@ def getGain {track} {
     $project getGain $track
 }
 
+def v {} 'Bring up the text panel UI.' {
+    runUI {
+        TrackList $mainColumn -1
+        bind $KEY_SPACE play
+        setStatusText 'AWB -- <Space> toggle play, <q> to quit'
+    }
+}
+
 # Bindings for Korg Nanokontrol (channel,controller):
 # << - 0,43
 # >> - 0,44

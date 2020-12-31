@@ -66,7 +66,6 @@ class JackWrapper {
                                          JACK_PORT_IS_INPUT,
                                          4096
                                          );
-        cout `client is $__client\n`;
         free(status);
     }
 
@@ -139,12 +138,7 @@ class JackWrapper {
     }
 
     @final void activate() {
-        cout `activating, client is $__client\n`;
         __client.activate();
-    }
-
-    @final void _showClient() {
-        cout `showClient: client is $__client\n`;
     }
 
     @final void deactivate() {
@@ -1098,9 +1092,7 @@ class WaveManager : JackWrapper {
         jackCallback(0, wm);
 
         wm.pause();
-        wm._showClient();
         wm.activate();
-        wm._showClient();
         return wm;
     }
 

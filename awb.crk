@@ -55,16 +55,19 @@ import spug.ui.piano Piano;
 #SDL_Quit();
 
 CmdOptions cl = [
-    Option('port', 'p', 'Midi port (e.g. "20:0")', '', CMD_STR),
-    Option('text', 't', 'Use text UI (not SDL)', 'false', CMD_BOOL),
+    Option('port', 'p',
+           'Midi port (e.g. "20:0").  If provided, this is a midi port to '
+           'connect to our input port.',
+           '', CMD_STR),
+    Option('legacy-ui', 'u',
+           'Use the legacy SDL UI instead of the new text UI.',
+           'false', CMD_BOOL),
 ];
 
 nonFlagArgs := cl.parse(argv);
 String filename;
 if (nonFlagArgs.count() > 1)
     filename = nonFlagArgs[1];
-else
-    cout `args = $nonFlagArgs\n`;
 
 int clientNum, portNum;
 portName := cl['port'].value;
@@ -83,7 +86,6 @@ options)\n`;
     clientNum = parseInt(portName.slice(0, colonPos));
     portNum = parseInt(portName.slice(colonPos + 1));
 }
-cout `client num = $clientNum, port num = $portNum\n`;
 
 Array[byte] MAJ_CHORD = [0, 4, 7];
 
@@ -1135,10 +1137,8 @@ outPort := s.makeReadPort('out');
 if (clientNum)
     port.connectTo(clientNum, portNum);
 
-cout `creating wave manager\n`;
 waveMan := WaveManager.create();
 
-cout `creating fluid synth\n`;
 FluidSynth synth = {FluidSettings()};
 synth.loadFont('/usr/share/sounds/sf2/FluidR3_GM.sf2', true);
 
@@ -1177,7 +1177,7 @@ App app;
 InterpWrapper interp;
 TextController textui;
 Controller controller;
-if (!cl.getBool('text')) {
+if (cl.getBool('legacy-ui')) {
     controller = app = App(channelMap);
     interp = InterpWrapper(app);
     app.setInterp(interp);
@@ -1188,7 +1188,6 @@ if (!cl.getBool('text')) {
     textui.setInterp(interp);
     interp.define('UI_MODE', SimpleValue('text', 'User interface mode.'));
 }
-cout `creating event manager\n`;
 EventManager em = {controller, orch, s, channelMap};
 em.waveMan = waveMan;
 telEventManager = em;
@@ -1225,22 +1224,19 @@ for (arg :in nonFlagArgs.subarray(1)) {
     }
 }
 
-cout `running\n`;
+const B := '\033[34;40m';
+const E := '\033[37;40;1m';
+const N := '\033[0m';
+const H := '\033[33;40m';
+const T := '\033[36;40;0m';
+const mindhog := '\033[32;40mmind\033[33;40mHog';
+cout `$B=============================================$N\n`;
+cout `$B| $(H)AWB$N - $mindhog$T's Audio Workbench.          $B|$N\n`;
+cout `$B| $T"$(E)help$T" to list commands,  "$(E)v$T" for panel.  $B|$N\n`;
+cout `$B=============================================$N\n`;
 if (app)
     app.run();
 else
     textui.run();
 
 waveMan.deactivate();
-
-#Sequencer s = {SND_SEQ_OPEN_OUTPUT, 0};
-#port := s.makeReadPort(CString('Crack Port'));
-#port.connectTo(clientNum, portNum);
-
-#cout `creating fluid synth\n`;
-#FluidSynth synth = {FluidSettings()};
-#synth.loadFont('/usr/share/sounds/sf2/FluidR3_GM.sf2', true);
-#cout `creating player\n`;
-#ChordPlayer player = {FluidSynthInstrument(synth, 0)};
-#cout `running\n`;
-#player.run();
