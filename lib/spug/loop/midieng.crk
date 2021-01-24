@@ -1,6 +1,7 @@
 import crack.cont.array Array;
+import crack.cont.hashmap HashMap;
 import crack.ext._jack JackClient;
-import crack.functor Functor2;
+import crack.functor Functor1, Functor2;
 import crack.io cerr, FileHandle;
 import crack.lang Exception, InvalidStateError;
 import crack.logger debug, error, info;
@@ -18,7 +19,9 @@ import crack.time TimeDelta;
 import spug.loop.jack JackPos, JackWrapper, WaveManager, JACK_TRANSPORT_ROLLING;
 import spug.loop.model EventManager, LoopCursor, Section;
 
-@import crack.ann assert, cvars, impl, interface;
+@import crack.ann assert, cvars, impl, interface, struct;
+
+@export_symbols TimeCallback;
 
 class MidiSequencer;
 
@@ -94,6 +97,19 @@ class Interrupter @impl PollEventCallback {
     }
 }
 
+# Time events are sent periodically from the midi sequencer (no less than
+# every 0.1 second when the sequencer is active).
+@struct TimeEvent {
+
+    ## Time in microseconds since the start of the current section.
+    uint64 usecs;
+
+    ## Time in midi ticks since the start of the current section.
+    uint ticks;
+}
+
+alias TimeCallback = Functor1[void, TimeEvent];
+
 @final class MidiSequencer {
 
     # If this is specified, the channel of all input events is rewritten to
@@ -144,6 +160,9 @@ class Interrupter @impl PollEventCallback {
     float __ticksPerSecond = 1440;
 
     Interrupter __interrupter = {};
+
+    # The subscriber callbacks.
+    HashMap[uintz, TimeCallback] __timeCallbacks = {};
 
     # Temporary hack so I can get ports working.
     Port outPort;
@@ -393,15 +412,24 @@ class Interrupter @impl PollEventCallback {
         }
     }
 
-    ## timeoutObj: this is neither an input nor an output parameter, we just
+    ## timeout: this is neither an input nor an output parameter, we just
     ## pass one of these in from the caller to avoid having to allocate one
     ## for each cycle.
-    void runOneCycle(Poller poller, TimeDelta timeoutObj) {
+    void runOneCycle(Poller poller, TimeDelta timeout) {
         lk := MutexLock(__lock);
         __updateJackState();
 
-        TimeDelta timeout;
         if (__state != ST_IDLE) {
+            # Get the current tick.
+            tick := __getTicks(__section.span);
+
+            # Send a time event.
+            if (__timeCallbacks) {
+                event := TimeEvent(__pos.usecs - __startTime, tick);
+                for (item :in __timeCallbacks)
+                    item.val(event);
+            }
+
             # See if we need to play anything.
             if (__section.tracks) {
                 # if we don't currently have a set of cursors, generate
@@ -409,9 +437,6 @@ class Interrupter @impl PollEventCallback {
                 if (!__trackCursors) {
                     __initializeTrackCursors();
                 }
-
-                # Get the current tick.
-                tick := __getTicks(__section.span);
 
                 # Play all events that are due to be played.
                 uint nextEventTime = MAX_TIME;
@@ -438,10 +463,13 @@ class Interrupter @impl PollEventCallback {
                 if (nextEventTime < MAX_TIME) {
                     # Figure out the duration of a tick.
                     delta := float(nextEventTime) / __ticksPerSecond;
-                    timeoutObj.secs = int32(delta);
-                    timeoutObj.nsecs = int32((delta - floor(delta)) *
+                    timeout.secs = int32(delta);
+                    timeout.nsecs = int32((delta - floor(delta)) *
                                              1000000000.0);
-                    timeout = timeoutObj;
+                } else {
+                    # Trigger an event for 0.1 seconds from now.
+                    timeout.secs = 0;
+                    timeout.nsecs = 100000000;
                 }
             }
         }
@@ -593,6 +621,12 @@ class Interrupter @impl PollEventCallback {
 
         __interrupter.signal();
     }
+
+    void subscribeTimeEvent(TimeCallback callback) {
+        lk := MutexLock(__lock);
+        __timeCallbacks[uintz(callback)] = callback;
+        __interrupter.signal();
+    }
 }
 
 @final class JackImpl @impl Jack {
@@ -685,6 +719,11 @@ class Interrupter @impl PollEventCallback {
     ## Set the current section.
     void setSection(Section section) {
         __mseq.setSection(section);
+    }
+
+    ## Subscribe to the time callback.
+    void subscribeTimeEvent(TimeCallback callback) {
+        __mseq.subscribeTimeEvent(callback);
     }
 
     Port oper .outPort =(Port port) { return __mseq.outPort = port }

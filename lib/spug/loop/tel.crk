@@ -600,7 +600,7 @@ class ModelObserverImpl @impl ModelObserver {
 
     eng.start();
 
-    _midiEngineObj = o := Obj();
+    _midiEngineObj = o := ObjOf[MidiEngine](eng);
 
     ## Create an output port that all events are sent to.
     @function(MidiEngine) int routeToOutputPort() {

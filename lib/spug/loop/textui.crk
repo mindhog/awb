@@ -5,20 +5,23 @@ import crack.exp.termui Event, KeyEvent, TermApp, Window, KEY_UP, KEY_DOWN,
     KEY_LEFT, KEY_RIGHT, KEY_PGUP, KEY_PGDN, KEY_BACKSPACE, KEY_ENTER,
     KEY_ESC, KEY_SPACE;
 import crack.functor Functor0, Functor1;
-import crack.io cerr, cout, StandardFormatter, StringFormatter;
+import crack.io cerr, cout, FStr, StandardFormatter, StringFormatter;
 import crack.lang Exception;
+import crack.net Poller;
+import crack.net.pollqueue PollQueue;
 import crash createRootContext, eval, parseString, Builtin, EvalContext,
     Obj, ObjOf, SimpleValue;
 import deadly.layout Column, Container, Row;
 import deadly.termlist List;
 import repl repl;
 import .model Controller;
+import .midieng MidiEngine, TimeCallback, TimeEvent;
 import .tel eventManager, AppMethods, CrashCallback, InterpWrapper;
 
 import types FloatObj, IntObj;
 @import ann function;
 
-@import crack.ann cvars, impl, implements;
+@import crack.ann cvars, impl, implements, interface;
 
 class AppContext {}
 
@@ -144,6 +147,62 @@ class BarSlider : Window {
     return result;
 }
 
+## A message sent to the text controller with "send()".  These can be used to
+## safely make changes to textui objects from other threads.
+@interface Message {
+    @abstract void run();
+}
+
+alias MessageQueue = PollQueue[Message];
+
+class TimeBar : Window {
+
+    byte normalAttr = 7;
+
+    uint time;
+
+    void onTimeEvent(TimeEvent event);
+
+    class TimeMessage @impl Message {
+        @cvars {
+            TimeBar timeBar;
+            TimeEvent event;
+        }
+
+        void run() { timeBar.onTimeEvent(event) }
+    }
+
+    class MyTimeCallback @impl TimeCallback {
+        @cvars {
+            TimeBar timeBar;
+            MessageQueue __queue;
+        }
+
+        void oper call(TimeEvent event) {
+            __queue.add(TimeMessage(timeBar, event));
+        }
+    }
+
+    oper init(Window parent) : Window(parent) {}
+
+    @static TimeBar create(Window parent, MessageQueue queue,
+                           MidiEngine midiEng) {
+        result := TimeBar(parent);
+        midiEng.subscribeTimeEvent(MyTimeCallback(result, queue));
+        return result;
+    }
+
+    void paint() {
+        gc := getGraphicsContext();
+        gc.fillRect(0, 0, width, height, normalAttr, b' ');
+        gc.write(0, 0, normalAttr, FStr() `$time`);
+    }
+
+    void onTimeEvent(TimeEvent event) {
+        time = uint(event.usecs / 1000);
+    }
+}
+
 class CallbackWrapper @impl Functor1[bool, AppContext] {
     @cvars {
         Functor0[void] callback;
@@ -153,6 +212,8 @@ class CallbackWrapper @impl Functor1[bool, AppContext] {
         return true;
     }
 }
+
+alias MQCallback = MessageQueue.Callback;
 
 class TextController : Object @implements Controller, AppMethods {
     InterpWrapper __interp;
@@ -165,6 +226,22 @@ class TextController : Object @implements Controller, AppMethods {
 
     ## The status bar.
     Status __status;
+
+    ## The poller for the UI.
+    Poller __poller = Poller();
+
+    ## The messge queue for communicating with UI components.
+    MessageQueue __controlQueue;
+
+    @static void __processMessage(Message message) {
+        message.run();
+    }
+
+    oper init() {
+        __controlQueue =
+            MessageQueue(MessageQueue.Callback.Wrap(__processMessage));
+        __controlQueue.addTo(__poller);
+    }
 
     void changeState(int oldState, int newState) {
         cout `Changing state from $oldState to $newState\n`;
@@ -221,7 +298,7 @@ class TextController : Object @implements Controller, AppMethods {
                 rootCtx.define('mainColumn', SimpleValue(col));
                 rootCtx.pushFuncFrame();
                 eval(block, rootCtx);
-                self.__app.run();
+                self.__app.run(self.__poller);
             } catch (Exception ex) {
                 error = ex;
             }
@@ -248,6 +325,16 @@ class TextController : Object @implements Controller, AppMethods {
                 cont.addChild(list, size);
             self.__trackLists.append(list);
             return list;
+        }
+
+        @function(TextController)
+        TimeBar makeTimeBar(Window parent, int size,
+                            MidiEngine midiEng
+                            ) {
+            timeBar := TimeBar.create(parent, self.__controlQueue, midiEng);
+            if (cont := Container.cast(parent, null))
+                cont.addChild(timeBar, size);
+            return timeBar;
         }
 
         @function(TextController)
@@ -284,6 +371,7 @@ class TextController : Object @implements Controller, AppMethods {
         __interp = interp;
         __interp.define('runUI', runUI(this));
         __interp.define('TrackList', makeTrackList(this));
+        __interp.define('TimeBar', makeTimeBar(this));
         __interp.define('BarSlider', makeBarSlider());
         __interp.define('setStatusText', setStatusText(this));
         __interp.define('terminate', terminate(this));
