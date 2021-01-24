@@ -365,6 +365,7 @@ class Project {
         # TODO: need to get the rate from somewhere in the system.
         inst := plugin.makeInstance(44100);
         __channels[index].insertComponent(inst);
+        out `insertEffect $index '$pluginName'\n`;
         return inst;
     }
 
