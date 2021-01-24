@@ -1,0 +1,743 @@
+## Terminal based user-interface. Like curses but hopefully with a cleaner
+## interface.
+
+import crack.ascii parseInt, wsplit, strip;
+import crack.cont.array Array;
+import crack.fs makePath;
+import crack.io cin, cerr, cout, FDReader, FDWriter, Formatter, FStr, Writer;
+import crack.lang AppendBuffer, Buffer;
+import crack.process Process, ProcessHandlerImpl, CRK_PIPE_STDOUT,
+    CRK_PIPE_STDERR;
+import crack.runtime sigaction, SigAction, SigInfo, SA_SIGINFO, SIGWINCH;
+import crack.strutil StringArray;
+import crack.net Poller, PollEvent, PollEventCallback, POLLIN;
+
+@import crack.ann impl;
+
+bool _gotSigwinch;
+void _sigwinchHandler(int signal, SigInfo si, voidptr data) {
+    _gotSigwinch = true;
+}
+
+class Event {
+}
+
+const int
+    KEY_UP = 256,
+    KEY_DOWN = 257,
+    KEY_LEFT = 258,
+    KEY_RIGHT = 259,
+    KEY_PGUP = 260,
+    KEY_PGDN = 261,
+    KEY_BACKSPACE = 8,
+    KEY_ENTER = 13,
+    KEY_ESC = 27,
+    KEY_SPACE = b' ';
+
+class KeyEvent : Event {
+    String data;
+    int key;
+
+    oper init(String data) : data = data {
+        if (data == '\033[A')
+            key = KEY_UP;
+        else if (data == '\033[B')
+            key = KEY_DOWN;
+        else if (data == '\033[D')
+            key = KEY_LEFT;
+        else if (data == '\033[C')
+            key = KEY_RIGHT;
+        else if (data == '\033[5~')
+            key = KEY_PGUP;
+        else if (data == '\033[6~')
+            key = KEY_PGDN;
+
+        # Add this just to key escape sequences from being treated as a naked
+        # escape.
+        else if (data == '\033')
+            key = KEY_ESC;
+        else
+            key = data[0];
+    }
+}
+
+class Coord {
+    int x, y;
+    oper init(int x, int y) : x = x, y = y {}
+    void formatTo(Formatter out) {
+        out `Coord($x, $y)`;
+    }
+
+    Coord oper +(Coord other) {
+        return Coord(x + other.x, y + other.y);
+    }
+
+    Coord oper -(Coord other) {
+        return Coord(x - other.x, y - other.y);
+    }
+
+    int cmp(Object other) {
+        if (o := Coord.cast(other)) {
+            rc := y - o.y; if (rc) return rc;
+            rc = x - o.x;
+            return rc;
+        } else {
+            return Object.cmp(other);
+        }
+    }
+
+    @final bool isOrigin() {
+        return x == 0 && y == 0;
+    }
+
+    Coord clone() {
+        return Coord(x, y);
+    }
+}
+
+@abstract class SimpleTermUI {
+    ## Clear clears the buffer as well as the screen.
+    @abstract void clear(uint backgroundColor);
+    @abstract void scrollUp(uint lines);
+    @abstract void scrollDown(uint lines);
+    @abstract void write(Coord pos, String text);
+    @abstract void setPos(int x, int y);
+    @abstract void setAttr(int i);
+    @abstract void write(Buffer text);
+    @abstract Coord getSize();
+    @abstract Event getEvent();
+    @abstract void setRawMode(bool rawMode);
+    @abstract void showCursor(bool show);
+    @abstract void saveScreen();
+    @abstract void restoreScreen();
+}
+
+
+class ANSITermUI : SimpleTermUI {
+    FDReader __src;
+    FDWriter __dst;
+
+    oper init(FDWriter dst, FDReader src) :
+        __src = src,
+        __dst = dst {
+    }
+
+    void clear(uint backgroundColor) {
+        __dst.write('\033c');
+    }
+
+    void scrollUp(uint lines) {
+        __dst.write(FStr() `\033[$(lines)S`);
+    }
+
+    void scrollDown(uint lines) {
+        __dst.write(FStr() `\033[$(lines)T`);
+    }
+
+    void write(Coord pos, String text) {
+        __dst.write(FStr() `\033[$(pos.y + 1);$(pos.x + 1)f$text`);
+    }
+
+    void setPos(int x, int y) {
+        __dst.write(FStr() `\033[$(y + 1);$(x + 1)f`);
+    }
+
+    void setAttr(int i) {
+        # 1 is bold, 4 is underline.
+        int extra;
+        if (i & 0x8)
+            extra = 1;
+        if (i & 0x80)
+            extra |= 4;
+
+        # We do this in two separate escape sequences, unfortunately CSI 0m
+        # clears the background color as well as the text attribute
+        __dst.write(
+            FStr() `\033[$(extra)m\033[4$((i >> 4) & 0x7);3$(i & 0x7)m`
+        );
+    }
+
+    void write(Buffer text) {
+        __dst.write(text);
+    }
+
+    Coord getSize() {
+        # TODO: we need to do this by repositioning far off-screen and then
+        # getting the current cursor pos.
+        p := Process(StringArray!['/bin/stty', 'size'],
+                     CRK_PIPE_STDOUT | CRK_PIPE_STDERR);
+        data := p.getStdOut();
+        fields := wsplit(data);
+        return Coord(parseInt(fields[1]), parseInt(fields[0]));
+    }
+
+    Event getEvent() { return null; }
+
+    void setRawMode(bool rawMode) {
+        StringArray cmd = ['/bin/stty'];
+        if (rawMode) {
+            cmd.append('raw');
+            cmd.append('-echo');
+        } else {
+            cmd.append('sane');
+        }
+        p := Process(cmd);
+        p.run();
+    }
+
+    void showCursor(bool show) {
+        if (show)
+            __dst.write('\033[?25h');
+        else
+            __dst.write('\033[?25l');
+    }
+
+    void saveScreen() {
+        # The "ti" sequence for the termcap entry, preceded by Esc-7 to save
+        # the cursor position and followed by "clear screen."
+        __dst.write('\0337\033[?1048h\033[?1047h\033[2J');
+    }
+
+    void restoreScreen() {
+        # The "te" sequence for the termcap entry, followed by Esc-8 to
+        # restore the cursor position.
+        __dst.write('\033[?1047l\033[?1048l\0338');
+    }
+
+}
+
+## Terminal interface that writes information instead of escape sequences so
+## you can see what would be getting written.
+class TestTermUI : SimpleTermUI {
+    Formatter __out;
+
+    oper init(Formatter out) : __out = out {}
+
+    void clear(uint backgroundColor) {
+        __out `clear\n`;
+    }
+
+    void scrollUp(uint lines) {
+        __out `scroll up $lines\n`;
+    }
+
+    void scrollDown(uint lines) {
+        __out `scroll down $lines\n`;
+    }
+
+    void write(Coord pos, String text) {
+        __out `write $pos, [$text]\n`;
+    }
+
+    void setPos(int x, int y) {
+        __out `set pos $x, $y\n`;
+    }
+
+    void setAttr(int i) {
+        __out `set attr $i\n`;
+    }
+
+    void write(Buffer text) {
+        __out `write: [$text]\n`;
+    }
+
+    Coord getSize() {
+        return Coord(80, 40);
+    }
+
+    Event getEvent() { return null; }
+
+    void setRawMode(bool rawMode) {
+        __out `setting raw: $rawMode\n`;
+    }
+
+    void showCursor(bool show) {
+        __out `showCursor: $show\n`;
+    }
+
+    void saveScreen() {
+        __out `save screen\n`;
+    }
+
+    void restoreScreen() {
+        __out `restore screen\n`;
+    }
+}
+
+# The number of unchanged characters in the buffer before we decide that a
+# given delta is complete and that it's better to just start a new delta at
+# the next location if difference.  The current value of this is based on the
+# usual upper-bound of the "change location" sequence (8 chars, assuming 2
+# chars of location).
+const END_DELTA := 8;
+
+Array[uint16] _makeArray(Coord size) {
+    count := size.x * size.y;
+    result := Array[uint16](count);
+    for (int i = 0; i < count; ++i)
+        result.append(0);
+    return result;
+}
+
+@abstract class BaseWindow {
+    @abstract BaseWindow getParent();
+    @abstract void paint();
+    @abstract bool onEvent(Event event);
+    @abstract void onResize(uint width, uint height);
+    @abstract void setFocus(bool focus);
+}
+
+## Returns the TermUI object for a given named terminal device.
+ANSITermUI getTermUI(String ttyName) {
+    reader := makePath(ttyName).reader();
+    writer := makePath(ttyName).writer();
+    return ANSITermUI(FDWriter.cast(writer), FDReader.cast(reader));
+}
+
+class TermApp {
+
+    SimpleTermUI __term;
+    bool inRawMode;
+
+    # We maintain two buffers of size width*height: __cur contains the current
+    # conents of the screen, __new is the place where we write stuff.  When we
+    # flush, we construct output to write to the terminal to get it to reflect
+    # the contents of __new and then copy __new to __cur.
+    Array[uint16] __cur, __new;
+
+    int __width, __height;
+
+    # Lets the application signal termination.
+    bool __terminate;
+
+    # Toplevel windows.
+    Array[BaseWindow] __toplevels = {};
+
+    BaseWindow __focus;
+
+    oper init() :
+        __term = ANSITermUI(FDWriter.cast(cout.rep.oper from Writer()),
+                            cin
+                            ) {
+    }
+    oper init(String ttyName) : __term = getTermUI(ttyName) {}
+
+    ## Construct from your own term instance.
+    oper init(SimpleTermUI term) : __term = term {}
+
+    @final void __resize(Coord size) {
+        # resizes the underlying canvas.
+        __width = size.x;
+        __height = size.y;
+        __cur = _makeArray(size);
+        __new = _makeArray(size);
+    }
+
+    ## Start running the app.
+    void start() {
+        __resize(__term.getSize());
+        __term.saveScreen();
+        __term.setRawMode(true);
+        inRawMode = true;
+
+        sa := SigAction();
+        sa.sa_sigaction = _sigwinchHandler;
+        sa.sa_flags = SA_SIGINFO;
+        sigaction(SIGWINCH, sa, null);
+    }
+
+    void onEvent(Event event) {
+        if (__focus) {
+            cur := __focus;
+            while (!cur.onEvent(event) && (cur = cur.getParent())) ;
+        }
+    }
+
+    class EventHandler @impl PollEventCallback {
+        TermApp app;
+        oper init(TermApp app) : app = app {}
+
+        int oper call(Poller poller, PollEvent event) {
+            if (event.revents & POLLIN)
+                app.onEvent(KeyEvent(cin.read(16)));
+            return POLLIN;
+        }
+    }
+
+    void flush();
+    void write(int x, int y, int attr, Buffer text);
+
+    ## Run the event loop against a provided Poller.
+    ##
+    void run(Poller poller) {
+        poller.add(cin, EventHandler(this));
+        while (!__terminate) {
+            for (toplevel :in __toplevels)
+                toplevel.paint();
+            flush();
+            poller.waitAndProcess(null);
+
+            if (_gotSigwinch) {
+                _gotSigwinch = false;
+
+                size := __term.getSize();
+                __resize(size);
+
+                for (toplevel :in __toplevels)
+                    toplevel.onResize(size.x, size.y);
+            }
+        }
+
+        __toplevels = null;
+    }
+
+    ## Run the event loop.
+    ## At the end of this, all toplevel windows are removed to break the
+    ## reference cycle.
+    void run() {
+        Poller poller = {};
+        run(poller);
+    }
+
+    void stop() {
+        if (inRawMode) {
+            inRawMode = false;
+            __term.setPos(0, 0);
+            __term.restoreScreen();
+            __term.setRawMode(false);
+        }
+    }
+
+    int __findDiffEnd(int pos) {
+        int i;
+        for (i = pos; i < __cur.count(); ++i) {
+
+            # When we find a common character, see if it's part of a span long
+            # enough to end the diff.
+            if (__cur[i] == __new[i]) {
+                int j;
+                for (j = i; j < __cur.count(); ++j)  {
+                    if (j - i >= END_DELTA)
+                        return i;
+                }
+
+                # The common span wasn't long enough for us to end the diff.
+                # Continue from here.
+                i = j;
+            }
+        }
+
+        # The diffs continue to the end of the buffer.
+        return i - 1;
+    }
+
+    ## Write the delta starting at 'pos', return the location after the write.
+    int __writeDelta(int pos) {
+
+        void dump(SimpleTermUI term, AppendBuffer buf, byte attr) {
+            term.setAttr(attr);
+            term.write(buf);
+            buf.size = 0;
+        }
+
+        # First, write the location.
+        __term.setPos(pos % __width, pos / __width);
+
+        # Find the end of the diff and the initial
+        end := __findDiffEnd(pos);
+        attr := byte(__new[pos] >> 8);
+
+        AppendBuffer buf = {end - pos};
+        int i;
+        for (i = pos; i < end; ++i) {
+
+            # If we got a different attribute, dump the buffer.
+            curAttr := byte(__new[i] >> 8);
+            if (curAttr != attr) {
+                dump(__term, buf, attr);
+                attr = curAttr;
+            }
+            buf.append(byte(__new[i]));
+        }
+
+        # Dump what's left of the buffer
+        if (buf.size)
+            dump(__term, buf, attr);
+
+        return i;
+    }
+
+    void flush() {
+        for (int i = 0; i < __cur.count(); ++i) {
+            if (__cur[i] != __new[i])
+                i = __writeDelta(i);
+        }
+
+        for (int i = 0; i < __cur.count(); ++i) {
+            __cur[i] = __new[i];
+        }
+    }
+
+    ## Write the text at the coordinate.  This will throw an IndexError if the
+    ## write is out of range.
+    void write(int x, int y, int attr, Buffer text) {
+        for (int i = 0; i < text.size; ++i)
+            __new[y * __width + x + i] = uint16((attr << 8) | text[i]);
+    }
+
+    ## Fill the rectangle with the given character and attribute.
+    void fillRect(int x, int y, int width, int height, byte attr, byte char) {
+        # Clip to the screen size.
+        x1 := x + width;
+        if (x1 > __width)
+            x1 = __width;
+        y1 := y + height;
+        if (y1 > __height)
+            y1 = __height;
+
+        uint16 word = (uint16(attr) << 8) | uint16(char);
+        orgx := x;
+        for (; y < y1; ++y) {
+            for (x = orgx; x < x1; ++x)
+                __new[y * __width + x] = word;
+        }
+    }
+
+    void showCursor(bool show) {
+        # XXX should probably hold onto this until the next flush, just for
+        # consistency.
+        __term.showCursor(show);
+    }
+
+    oper del() {
+        stop();
+    }
+
+    ## Returns the size of the screen.
+    Coord getSize() {
+        return Coord(__width, __height);
+    }
+
+    ## Shutdown the app.
+    void terminate() {
+        __terminate = true;
+    }
+
+    ## Returns true if the app is terminated.
+    bool terminated() {
+        return __terminate;
+    }
+
+    ## Add a toplevel window.  This is called automatically by the Window
+    ## constructor.
+    void _addToplevel(BaseWindow toplevel) {
+        __toplevels.append(toplevel);
+        if (!__focus)
+            __focus = toplevel;
+    }
+
+    ## Sets the focused window.  DON'T USE THIS DIRECTLY.
+    void _setFocused(BaseWindow window) {
+        if (__focus !is window) {
+            if (__focus) __focus.setFocus(false);
+            __focus = window;
+        }
+    }
+
+    ## Returns the currently focused window.
+    BaseWindow _getFocused() {
+        return __focus;
+    }
+}
+
+class GraphicsContext {
+
+    uint __xoff, __yoff, __width, __height;
+    TermApp __app;
+
+    oper init(TermApp term, uint xoff, uint yoff, uint width, uint height) :
+        __app = term,
+        __xoff = xoff,
+        __yoff = yoff,
+        __width = width,
+        __height = height {
+
+        size := term.getSize();
+
+        # If the start position is out of range, nerf all operations by
+        # clearing width and height.
+        if (xoff >= size.x || yoff >= size.y) {
+            __width = __height = 0;
+            return;
+        }
+
+        # Clip width and height to the terminal size.
+        if (xoff + width > size.x)
+            width = size.x - xoff;
+        if (yoff + height > size.y)
+            height = size.y - yoff;
+    }
+
+    ## Write text to the graphics context with relative positioning and
+    ## clipping.
+    void write(uint x, uint y, byte attr, String text) {
+        if (x >= __width || y >= __height)
+            return;
+        int count = text.size;
+        if (count + x > __width)
+            count = __width - x;
+        x += __xoff;
+        y += __yoff;
+        __app.write(x, y, attr, text.substr(0, count));
+    }
+
+    ## Fill the specified rectangle with the given attribute and character.
+    void fillRect(uint x, uint y, uint width, uint height, byte attr,
+                  byte char
+                  ) {
+        if (width + x > __width)
+            width = __width - x;
+        if (height + y > __height)
+            height = __height - y;
+        __app.fillRect(x + __xoff, y + __yoff, width, height, attr, char);
+    }
+
+    ## Clear the entire context the specified color.
+    void clear(byte attr) {
+        fillRect(0, 0, __width, __height, attr, b' ');
+    }
+
+    @final uint getWidth() { return __width; }
+    @final uint getHeight() { return __height; }
+}
+
+
+class Window : BaseWindow {
+    Window __parent;
+    TermApp __app;
+    bool __focus;
+
+    # Coordinates relative to parent and size.
+    uint x, y, width, height;
+
+    oper init(Window parent, uint x, uint y, uint width, uint height) {
+        __app = parent.__app;
+    }
+
+    ## Creates the top-level window, which occupies the entire screen.
+    oper init(TermApp app) : __app = app, x = 0, y = 0 {
+        size := app.getSize();
+        width = size.x;
+        height = size.y;
+        app._addToplevel(this);
+    }
+
+    ## Creates a window, initially invisible.  This should generally be the
+    ## base constructor called by derived classes.
+    oper init(Window parent) : __parent = parent {
+        __app = parent.__app;
+    }
+
+    ## Called when the window is resized.  This will be followed by a call to
+    ## paint(), so it's not necessary for the window to repaint here.
+    void onResize(uint width, uint height) {
+        this.width = width;
+        this.height = height;
+    }
+
+    ## Called when the window is moved.  Semantics are similar to onResize().
+    void onMove(uint x, uint y) {
+        this.x = x;
+        this.y = y;
+    }
+
+    ## Called when an event reaches the window.
+    ##
+    ## Event dispatching works like this: the window that has the focus gets
+    ## the event and its onEvent() method is called.  If the onEvent method
+    ## returns false, the event is then dispatched to the parent window, and
+    ## so on up to the root window unless one of the handlers returns true.
+    bool onEvent(Event event) { return false; }
+
+    BaseWindow getParent() { return __parent; }
+
+    ## Returns the absolute position of the window (relative to the root
+    ## window).
+    Coord getAbsPos() {
+        int absX = x, absY = y;
+        cur := __parent;
+        while (cur) {
+            absX += cur.x;
+            absY += cur.y;
+            cur = cur.__parent;
+        }
+
+        return Coord(absX, absY);
+    }
+
+    @final TermApp getApp() { return __app; }
+
+    GraphicsContext getGraphicsContext() {
+        absPos := getAbsPos();
+        return GraphicsContext(__app, absPos.x, absPos.y, width, height);
+    }
+
+    ## Repaint the entire window.
+    void paint() {
+    }
+
+    ## Returns the minimum required size of the window.  Layout controls may
+    ## not necessarily respect this.
+    Coord getMinSize() {
+        return Coord(1, 1);
+    }
+
+    void setFocus(bool focus) {
+        # TODO: rewrite focus code, we probably want a protected _setFocus()
+        # function to toggle the variable and make _setFocused() the driver
+        # for everything.
+        if (focus) getApp()._setFocused(this);
+        __focus = focus;
+    }
+
+    ## Returns true if the window or a descendant has the focus.
+    @final bool getFocus() {
+        if (__focus)
+            return true;
+
+        # See if the focused window is a child.
+        cur := getApp()._getFocused();
+        while (cur) {
+            if (cur is this)
+                return true;
+            cur = cur.getParent();
+        }
+        return false;
+    }
+
+    # Returns true if the window can accept input focus.  Static windows (such
+    # as labels) should override this to return false.
+    bool canFocus() { return true }
+}
+
+if (0) {
+    term := TermApp();
+    term.start();
+    term.write(10, 10, 3, 'in yo face!!!');
+    import crack.net Poller;
+    import crack.time TimeDelta;
+    poller := Poller();
+    poller.wait(TimeDelta(1, 0));
+    term.flush();
+    poller.wait(TimeDelta(1, 0));
+}
+
+#ui := ANSITermUI(FDWriter.cast(WriterCaster.toObject(cout.rep)), cin);
+#cout `clearing\n`;
+#ui.clear(0);
+#cout `done clearing\n`;
+#message := 'Word to yo momma!';
+#size := ui.getSize();
+#y := size.y / 2;
+#x := (size.x - message.size) / 2;
+#ui.write(Coord(x, y), message);
