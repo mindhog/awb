@@ -479,7 +479,10 @@ class CrashCallback @impl Functor0[void] {
     Block block;
 
     oper init(EvalContext context, Block block) :
-        context = context,
+        # Make a copy of the current context in order to
+        # a) retain the stack we had when the binding was made and
+        # b) not mess up the current context when we pop
+        context(context),
         block = block {
     }
 

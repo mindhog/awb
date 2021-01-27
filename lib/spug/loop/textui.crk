@@ -9,8 +9,8 @@ import crack.io cerr, cout, FStr, StandardFormatter, StringFormatter;
 import crack.lang Exception;
 import crack.net Poller;
 import crack.net.pollqueue PollQueue;
-import crash createRootContext, eval, parseString, Builtin, EvalContext,
-    Obj, ObjOf, SimpleValue;
+import crash createRootContext, eval, parseBlockArg, parseString, Builtin,
+    EvalContext, Obj, ObjOf, SimpleValue;
 import deadly.layout Column, Container, Row;
 import deadly.termlist List;
 import repl repl;
@@ -276,46 +276,62 @@ class TextController : Object @implements Controller, AppMethods {
 
     void setInterp(InterpWrapper interp) {
 
-        ## Run the user interface.
-        ##
-        ## 'block' is a crash block to execute in a subcontext that exists for
-        ## the duration of the time that the user interface is running.
-        @function(TextController) int runUI(String block) {
-            self.__app = App(AppContext());
-            self.__app.showCursor(false);
-            self.__app.start();
-            col := Column(self.__app);
-            self.__status = Status(col);
-            col.addChild(self.__status, 1);
 
-            StandardFormatter tempOut = cout, tempErr = cerr;
-            cout = StringFormatter();
-            cerr = StringFormatter();
+        class RunUI : Builtin {
+            String getDoc() {
+                return I"\
+                    Run the user interface.
 
-            rootCtx := self.__interp.getRootContext();
-            Exception error;
-            try {
-                rootCtx.define('mainColumn', SimpleValue(col));
-                rootCtx.pushFuncFrame();
-                eval(block, rootCtx);
-                self.__app.run(self.__poller);
-            } catch (Exception ex) {
-                error = ex;
+                    'block' is a crash block to execute in a subcontext that
+                    exists for the duration of the time that the user
+                    interface is running.
+                    ";
             }
 
-            cout = tempOut;
-            cerr = tempErr;
+            @cvars {
+                TextController self;
+            }
 
-            rootCtx.popFuncFrame();
-            self.__trackLists.clear();
-            self.__app.showCursor(true);
-            self.__app.stop();
-            self.__status = null;
-            self.__app = null;
+            Object invoke(EvalContext context, Array[Object] args) {
+                if (args.count() != 1)
+                    throw Exception('runUI accepts one argument');
+                block := parseBlockArg(args, 0);
 
-            if (error)
-                cerr `$error\n`;
-            return 0;
+                self.__app = App(AppContext());
+                self.__app.showCursor(false);
+                self.__app.start();
+                col := Column(self.__app);
+                self.__status = Status(col);
+                col.addChild(self.__status, 1);
+
+                StandardFormatter tempOut = cout, tempErr = cerr;
+                cout = StringFormatter();
+                cerr = StringFormatter();
+
+                Exception error;
+                try {
+                    context.pushFuncFrame();
+                    context.define('mainColumn', SimpleValue(col));
+                    block.evaluate(context);
+                    self.__app.run(self.__poller);
+                } catch (Exception ex) {
+                    error = ex;
+                }
+
+                cout = tempOut;
+                cerr = tempErr;
+
+                context.popFuncFrame();
+                self.__trackLists.clear();
+                self.__app.showCursor(true);
+                self.__app.stop();
+                self.__status = null;
+                self.__app = null;
+
+                if (error)
+                    cerr `$error\n`;
+                return null;
+            }
         }
 
         @function(TextController)
@@ -369,7 +385,7 @@ class TextController : Object @implements Controller, AppMethods {
         }
 
         __interp = interp;
-        __interp.define('runUI', runUI(this));
+        __interp.define('runUI', RunUI(this));
         __interp.define('TrackList', makeTrackList(this));
         __interp.define('TimeBar', makeTimeBar(this));
         __interp.define('BarSlider', makeBarSlider());
