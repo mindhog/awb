@@ -2,5 +2,5 @@
 crackdir=/home/mmuller/w/crack
 mydir=$(dirname $0)
 $crackdir/crack -B llvm-native -b out=awb.bin \
-    -l $crackdir/lib:$mydir/lib:$mydir/..:$mydir/../crash \
+    -l $mydir/lib:$crackdir/lib:$mydir/..:$mydir/../crash \
     $(dirname $0)/awb.crk "$@"
