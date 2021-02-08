@@ -5,7 +5,7 @@ import crack.ascii parseInt, wsplit, strip;
 import crack.cont.array Array;
 import crack.fs makePath;
 import crack.io cin, cerr, cout, FDReader, FDWriter, Formatter, FStr, Writer;
-import crack.lang AppendBuffer, Buffer;
+import crack.lang AppendBuffer, Buffer, Exception;
 import crack.process Process, ProcessHandlerImpl, CRK_PIPE_STDOUT,
     CRK_PIPE_STDERR;
 import crack.runtime sigaction, SigAction, SigInfo, SA_SIGINFO, SIGWINCH;
@@ -371,24 +371,31 @@ class TermApp {
     ##
     void run(Poller poller) {
         poller.add(cin, EventHandler(this));
-        while (!__terminate) {
-            for (toplevel :in __toplevels)
-                toplevel.paint();
-            flush();
-            poller.waitAndProcess(null);
-
-            if (_gotSigwinch) {
-                _gotSigwinch = false;
-
-                size := __term.getSize();
-                __resize(size);
-
+        try {
+            while (!__terminate) {
                 for (toplevel :in __toplevels)
-                    toplevel.onResize(size.x, size.y);
+                    toplevel.paint();
+                flush();
+                poller.waitAndProcess(null);
+
+                if (_gotSigwinch) {
+                    _gotSigwinch = false;
+
+                    size := __term.getSize();
+                    __resize(size);
+
+                    for (toplevel :in __toplevels)
+                        toplevel.onResize(size.x, size.y);
+                }
             }
+
+            __toplevels = null;
+        } catch (Exception ex) {
+            poller.remove(cin);
+            throw ex;
         }
 
-        __toplevels = null;
+        poller.remove(cin);
     }
 
     ## Run the event loop.
