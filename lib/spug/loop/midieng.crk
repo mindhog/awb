@@ -596,6 +596,11 @@ alias TimeCallback = Functor1[void, TimeEvent];
         __posIsValid = false;
         __updateJackState();
         __startTime = __pos.usecs - __ticksToUsecs(uint(pos));
+
+        # If we're currently idle, we need to reset __lastTime, too.
+        if (__state == ST_IDLE)
+            __lastTime = __pos.usecs;
+
         __interrupter.signal();
     }
 
