@@ -69,7 +69,7 @@ class MidiFile {
         buf.write2(uint16(ticksPerQN));
 
         # convert beats per minute to microseconds per beat
-        msecsPerBeat := uint(6e+7 / float(bpm));
+        usecsPerBeat := uint(6e+7 / float(bpm));
 
         for (track :in __tracks) {
             # Serialize the set tempo event.  This really only needs to happen
@@ -80,9 +80,9 @@ class MidiFile {
             midiWriter.write(0xff);  # Synthetic event 0x51
             midiWriter.write(0x51);
             midiWriter.write(3);  # Number of bytes.
-            midiWriter.write(byte(msecsPerBeat >> 16));  # msecs per beat.
-            midiWriter.write(byte(msecsPerBeat >> 8));
-            midiWriter.write(byte(msecsPerBeat));
+            midiWriter.write(byte(usecsPerBeat >> 16));  # usecs per beat.
+            midiWriter.write(byte(usecsPerBeat >> 8));
+            midiWriter.write(byte(usecsPerBeat));
 
             # Serialize the track.
             track.writeTo(midiWriter);
@@ -114,7 +114,7 @@ class MidiFile {
 
         numTracks := header.read2(10);
         ticksPerQN := header.read2(12);
-        int msecsPerBeat = -1;
+        int usecsPerBeat = -1;
         result := MidiFile(ticksPerQN, 0);
 
         for (int i = 0; i < numTracks; ++i) {
@@ -151,30 +151,28 @@ class MidiFile {
                         FStr() `Expected set tempo event size of 3, got $b`
                     );
 
-                tempo := (uint(reader.readByte()) << 24) |
-                         (uint(reader.readByte()) << 16) |
+                tempo := (uint(reader.readByte()) << 16) |
+                         (uint(reader.readByte()) << 8) |
                          uint(reader.readByte());
-                if (msecsPerBeat == -1) {
-                    msecsPerBeat = tempo;
-                } else if (msecsPerBeat != tempo) {
+                if (usecsPerBeat == -1) {
+                    usecsPerBeat = tempo;
+                } else if (usecsPerBeat != tempo) {
                     throw BadFileFormat(
                         FStr() I`Mismatched tempo specified for track $i, \
-                                 previously got $msecsPerBeat, new values is \
+                                 previously got $usecsPerBeat, new values is \
                                  $tempo`
                     );
                 }
             }
 
             # Make sure we got at least one set-tempo event.
-            if (msecsPerBeat == -1)
+            if (usecsPerBeat == -1)
                 throw BadFileFormat('No set-tempo event found in first track');
 
             result.append(reader.readTrack(FStr() `$i`));
-            import crack.io cerr;
-            cerr `xxx track read: $(result.__tracks)\n`;
         }
 
-        result.bpm = 6e+7 / float(msecsPerBeat);
+        result.bpm = 6e+7 / float(usecsPerBeat);
         return result;
     }
 }
