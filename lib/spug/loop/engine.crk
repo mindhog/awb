@@ -1,0 +1,238 @@
+## Facade to simplify interactions with the midi engine, jack engine and
+## underlying project model object.
+
+import crack.audio.wavfile WaveDef;
+import crack.cont.array Array;
+import crack.fs makePath;
+import crack.functor Functor1;
+import crack.io cerr;
+import crack.lang AssertionError;
+import crack.midi.alsa Sequencer, SND_SEQ_OPEN_INPUT, SND_SEQ_OPEN_OUTPUT;
+import crack.midi.event Track;
+
+import .jack JackPos, JackWrapper, WaveManager, RecordBuffer,
+    JACK_TRANSPORT_ROLLING;
+import .midieng EventManagerDispatcher, MidiDispatcher, MidiEngine,
+    MidiSequencer, ModelObserver, ST_IDLE, ST_PLAY, ST_LATCHED, ST_RECORD;
+import .model EventManager;
+
+@import crack.ann assert, cvars, impl;
+
+class AWBEngine;
+
+## Does standard initialization for the midi engine.
+MidiEngine makeMidiEngine(EventManager eventManager) {
+    # Create the sequencer and midi engine.
+    seq := Sequencer(SND_SEQ_OPEN_OUTPUT | SND_SEQ_OPEN_INPUT, 0);
+    seq.seq.set_client_name('AWBX'.buffer);
+    eng := MidiEngine(eventManager.waveMan, seq);
+
+    # Create some sequencer ports.
+    # XXX Hack.  Remove once we have a more principled way of adding ports.
+    eng.outPort = seq.makeReadPort('out');
+    seq.makeWritePort('in');
+
+    # Drivers start your engines!
+    eng.start();
+    return eng;
+}
+
+## Abstract recorder object, defines a set of source ports (either midi or
+## audio) and a destination.
+@abstract class Recorder {
+    @abstract void init(AWBEngine eng);
+    @abstract void close(AWBEngine eng);
+}
+
+## AWBEngine provides a unified front to both the Jack and Midi Engines.
+class AWBEngine @impl ModelObserver {
+
+    MidiEngine __midi;
+    WaveManager __jack;
+    EventManager __eventManager;
+
+    # Indicator as to whether we should start recording a midi track the next
+    # time we record.
+    #
+    # Hack until MidiEngine gets support for multiple record tracks.
+    bool __midiRecordArmed;
+
+    Array[Recorder] __recorders = {};
+
+    # Current state.  See midieng ST_* constants.
+    int __state = ST_IDLE;
+
+    void setTempo(int bpm);
+
+    ## Construct the engine using the old event manager.
+    ##
+    ## midiEngine is optional (may be null).
+    ##
+    ## Note that the goal is to make the event manager go away.
+    oper init(EventManager eventManager, MidiEngine midiEngine) :
+        __jack = eventManager.waveMan,
+        __eventManager = eventManager {
+
+        __midi = midiEngine ? midiEngine : makeMidiEngine(eventManager);
+
+        # Set a uniform tempo and make the midi engine send tracks to us
+        # (note: creates a reference cycle)
+        __midi.setModelObserver(this);
+        setTempo(120);
+    }
+
+    ## Start playing midi and jack.
+    void play() {
+        if (__state != ST_IDLE) {
+            cerr `play() called while already playing/recording/latched.\n`;
+            return;
+        }
+
+        __jack.unpause();
+        # TODO: do this in a more principled manner since we're now the
+        # owner of the state?
+        __midi.togglePlay();
+        __state = ST_PLAY;
+    }
+
+    ## Pause midi and jack.  This also ends recording.
+    void pause() {
+        if (__state == ST_IDLE) {
+            cerr `pause() called while already idle.\n`;
+            return;
+        }
+
+        __jack.pause();
+        __midi.togglePlay(); # TODO: see notes above.
+
+        ## Close out all recorders if recording.
+        if (__state == ST_RECORD) {
+            for (rec :in __recorders)
+                rec.close(this);
+        }
+
+        __state = ST_IDLE;
+    }
+
+    ## Adds a new "record path" that defines a source and destination for the
+    ## next record.
+    ##
+    ## It is currently not legal to call this when recording.
+    void addRecorder(Recorder path) {
+        @assert(__state != ST_RECORD);
+        __recorders.append(path);
+    }
+
+    ## Clears all record paths.
+    ##
+    ## Again, it is currently illegal to call this when the engine is recording.
+    void clearRecorders() {
+        @assert(__state != ST_RECORD);
+        __recorders.clear();
+    }
+
+    ## Start recording.  There must be at least one recorder specified.
+    void record() {
+        if (!__recorders)
+            throw AssertionError('No recorders defined.');
+
+        for (rec :in __recorders)
+            rec.init(this);
+
+        if (__state == ST_IDLE)
+            __jack.unpause();
+
+        if (__midiRecordArmed)
+            __midi.toggleRecord();
+        else
+            __midi.togglePlay();
+        __state = ST_RECORD;
+    }
+
+    ## Start/stop playing from both systems.
+    ##
+    ## If we are currently recording, this also effectively stops recording.
+    void togglePlay() {
+        if (__state == ST_IDLE)
+            play();
+        else
+            pause();
+    }
+
+    # Support for the ModelObserver interface.
+
+    class AddTrackCommand @impl Functor1[void, EventManager] {
+        @cvars {
+            Track track;
+        }
+
+        void oper call(EventManager em) {
+            em.addTrack(track, track[-1].time);
+        }
+    }
+
+    void addTrack(Track track) {
+        __eventManager.commandQueue.add(AddTrackCommand(track));
+    }
+
+    ## Returns the engine's audio sample rate.
+    int getAudioRate() {
+        return __jack.getSampleRate();
+    }
+
+    ## Returns the wave manager (a jack wrapper).
+    WaveManager getWaveManager() {
+        return __jack;
+    }
+
+    ## Returns the midi engine.
+    MidiEngine getMidiEngine() {
+        return __midi;
+    }
+
+    ## Sets the global tempo (in beats per minute).  Different portions of
+    ## the piece can have different tempos, but they're all scaled to the
+    ## global tempo.
+    void setTempo(int bpm) {
+        __midi.setBPM(bpm);
+        __eventManager.tempo = bpm;
+    }
+
+    ## Enable the midi recorder.  Allows MidiTrackRecorder to do its thing.
+    ##
+    ## TODO: Provide a better interface in MidiEngine so that we can have
+    ## multiple midi recorders.
+    void _armMidiRecord(bool armed) {
+        __midiRecordArmed = armed;
+    }
+}
+
+## Records from jack audio to a stereo wave file.
+class AudioFileRecorder : Recorder {
+    RecordBuffer buf;
+    @cvars {
+        String filename;
+    }
+
+    void init(AWBEngine engine) {
+        def := WaveDef(2, engine.getAudioRate(), 16);
+        out := makePath(filename).writer();
+        def.writeHeader(out);
+        buf = engine.getWaveManager().beginRecord(def, out);
+
+    }
+
+    void close(AWBEngine engine) {
+        buf.finish();
+    }
+}
+
+class MidiTrackRecorder : Recorder {
+    void init(AWBEngine engine) {
+        engine._armMidiRecord(true);
+    }
+
+    void close(AWBEngine engine) {
+        engine._armMidiRecord(false);
+    }
+}

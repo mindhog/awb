@@ -33,6 +33,8 @@ import stdlib stdlib;
 import types FloatObj, IntObj;
 import collections wrapIterator, Iter;
 
+import .engine makeMidiEngine, AudioFileRecorder, AWBEngine,
+    MidiTrackRecorder, Recorder;
 import .midifile MidiFile;
 
 @import crack.ann assert, cvars, impl, interface;
@@ -556,6 +558,7 @@ Obj makeTrack(Track track) {
     return result;
 }
 
+MidiEngine _midiEngine;
 Obj _midiEngineObj;
 
 class InstrumentDispatcher @impl Functor2[void, MidiSequencer, Event] {
@@ -592,18 +595,12 @@ class ModelObserverImpl @impl ModelObserver {
     if (!eventManager.waveMan)
         throw Exception('Wave manager not defined');
 
-    seq := Sequencer(SND_SEQ_OPEN_OUTPUT | SND_SEQ_OPEN_INPUT, 0);
-    seq.seq.set_client_name('AWBX'.buffer);
-    eng := MidiEngine(eventManager.waveMan, seq);
-    eng.setModelObserver(ModelObserverImpl());
+    if (!_midiEngine) {
+        _midiEngine = makeMidiEngine(eventManager);
+        _midiEngine.setModelObserver(ModelObserverImpl());
+    }
 
-    # XXX Hack.  Remove once we have a more principled way of adding ports.
-    eng.outPort = seq.makeReadPort('out');
-    seq.makeWritePort('in');
-
-    eng.start();
-
-    _midiEngineObj = o := ObjOf[MidiEngine](eng);
+    _midiEngineObj = o := ObjOf[MidiEngine](_midiEngine);
 
     ## Create an output port that all events are sent to.
     @function(MidiEngine) int routeToOutputPort() {
@@ -694,17 +691,17 @@ class ModelObserverImpl @impl ModelObserver {
         return 0;
     }
 
-    o.define('routeToOutputPort', routeToOutputPort(eng));
-    o.define('routeToInstrument', routeToInstrument(eng));
-    o.define('routeToEventManager', routeToEventManager(eng));
-    o.define('setInputChannel', setInputChannel(eng));
-    o.define('setPPB', setPPB(eng));
-    o.define('set_tempo', set_tempo(eng));
-    o.define('toggleRecord', toggleRecord(eng));
-    o.define('togglePlay', togglePlay(eng));
-    o.define('setPos', setPos(eng));
-    o.define('copySection', copySection(eng));
-    o.define('loadMidiFile', loadMidiFile(eng));
+    o.define('routeToOutputPort', routeToOutputPort(_midiEngine));
+    o.define('routeToInstrument', routeToInstrument(_midiEngine));
+    o.define('routeToEventManager', routeToEventManager(_midiEngine));
+    o.define('setInputChannel', setInputChannel(_midiEngine));
+    o.define('setPPB', setPPB(_midiEngine));
+    o.define('set_tempo', set_tempo(_midiEngine));
+    o.define('toggleRecord', toggleRecord(_midiEngine));
+    o.define('togglePlay', togglePlay(_midiEngine));
+    o.define('setPos', setPos(_midiEngine));
+    o.define('copySection', copySection(_midiEngine));
+    o.define('loadMidiFile', loadMidiFile(_midiEngine));
 
     return _midiEngineObj;
 }
@@ -797,6 +794,79 @@ class ExportMidiFileCmd : Builtin {
     throw Exception(FStr() `Unknown log level: $level`);
 }
 
+@function AudioFileRecorder makeAudioFileRecorder(String filename) {
+    return AudioFileRecorder(filename);
+}
+
+@function MidiTrackRecorder makeMidiTrackRecorder() {
+    return MidiTrackRecorder();
+}
+
+## Get the new engine facade.
+@function Obj get_engine() {
+    if (!eventManager.waveMan)
+        eventManager.waveMan = WaveManager.create();
+    self := AWBEngine(eventManager, _midiEngine);
+
+    if (!_midiEngine)
+        _midiEngine = self.getMidiEngine();
+
+    result := ObjOf[AWBEngine](self);
+
+    @function(AWBEngine) int play() {
+        self.play();
+        return 0;
+    }
+
+    @function(AWBEngine) int pause() {
+        self.pause();
+        return 0;
+    }
+
+    @function(AWBEngine) int addRecorder(Recorder rec) {
+        self.addRecorder(rec);
+        return 0;
+    }
+
+    @function(AWBEngine) int clearRecorders() {
+        self.clearRecorders();
+        return 0;
+    }
+
+    @function(AWBEngine) int record() {
+        self.record();
+        return 0;
+    }
+
+    @function(AWBEngine) int togglePlay() {
+        self.togglePlay();
+        return 0;
+    }
+
+    @function(AWBEngine) int addTrack(Track track) {
+        self.addTrack(track);
+        return 0;
+    }
+
+    ## Sets the global tempo (in beats per minute).  Different portions of
+    ## the piece can have different tempos, but they're all scaled to the
+    ## global tempo.
+    @function(AWBEngine) int setTempo(int bpm) {
+        self.setTempo(bpm);
+        return 0;
+    }
+
+    result.define('play', play(self));
+    result.define('pause', pause(self));
+    result.define('addRecorder', addRecorder(self));
+    result.define('clearRecorders', clearRecorders(self));
+    result.define('record', record(self));
+    result.define('togglePlay', togglePlay(self));
+    result.define('addTrack', addTrack(self));
+
+    return result;
+}
+
 class InterpWrapper {
 
     EvalContext __rootCtx = createRootContext();
@@ -828,6 +898,8 @@ class InterpWrapper {
         ctx.define('panControl', panControl());
         ctx.define('setPan', setPan());
         ctx.define('setGain', setGain());
+        ctx.define('makeAudioFileRecorder', makeAudioFileRecorder());
+        ctx.define('makeMidiTrackRecorder', makeMidiTrackRecorder());
         ctx.define('makeControllerOffsetChange',
                          makeControllerOffsetChange());
         ctx.define('bindController', bindController());
@@ -846,6 +918,7 @@ class InterpWrapper {
         ctx.define('getRelativePath', getRelativePath());
         ctx.define('setLogLevel', setLogLevel_());
         ctx.define('CVR_MULT', SimpleValue(IntObj(CVR_MULT)));
+        ctx.define('get_engine', get_engine());
     }
 
     oper init(AppMethods app) {
