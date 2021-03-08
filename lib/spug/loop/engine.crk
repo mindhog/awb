@@ -198,6 +198,12 @@ class AWBEngine @impl ModelObserver {
         __eventManager.tempo = bpm;
     }
 
+    ## Reset the play position to the start of section.
+    void resetPos() {
+        __midi.setPos(0);
+        __jack.seek(0);
+    }
+
     ## Enable the midi recorder.  Allows MidiTrackRecorder to do its thing.
     ##
     ## TODO: Provide a better interface in MidiEngine so that we can have

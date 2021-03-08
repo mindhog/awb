@@ -856,6 +856,12 @@ class ExportMidiFileCmd : Builtin {
         return 0;
     }
 
+    ## Reset the play position to the start of the current section.
+    @function(AWBEngine) int resetPos() {
+        self.resetPos();
+        return 0;
+    }
+
     result.define('play', play(self));
     result.define('pause', pause(self));
     result.define('addRecorder', addRecorder(self));
@@ -863,6 +869,8 @@ class ExportMidiFileCmd : Builtin {
     result.define('record', record(self));
     result.define('togglePlay', togglePlay(self));
     result.define('addTrack', addTrack(self));
+    result.define('setTempo', setTempo(self));
+    result.define('resetPos', resetPos(self));
 
     return result;
 }
