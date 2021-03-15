@@ -211,6 +211,18 @@ class AWBEngine @impl ModelObserver {
     void _armMidiRecord(bool armed) {
         __midiRecordArmed = armed;
     }
+
+    ## Returns the first track that has the given name.
+    Track getTrackByName(String name) {
+
+        # WARNING: Dangerous shared use of an unprotected resource!
+        for (track :in __eventManager.curSection.tracks) {
+            if (track.name == name)
+                return track;
+        }
+
+        return null;
+    }
 }
 
 ## Records from jack audio to a stereo wave file.

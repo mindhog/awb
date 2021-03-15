@@ -36,6 +36,7 @@ import collections wrapIterator, Iter;
 import .engine makeMidiEngine, AudioFileRecorder, AWBEngine,
     MidiTrackRecorder, Recorder;
 import .midifile MidiFile;
+import .server startServer;
 
 @import crack.ann assert, cvars, impl, interface;
 @import ann function;
@@ -927,6 +928,7 @@ class InterpWrapper {
         ctx.define('setLogLevel', setLogLevel_());
         ctx.define('CVR_MULT', SimpleValue(IntObj(CVR_MULT)));
         ctx.define('get_engine', get_engine());
+        ctx.define('start_server', startServer());
     }
 
     oper init(AppMethods app) {
