@@ -30,8 +30,9 @@ import crack.sys env;
 import crash SimpleValue;
 #import crack.ccl CCLInterpreter;
 
+import spug.loop.engine engine, AWBEngine;
 import spug.loop.jack WaveManager;
-import spug.loop.tel telEventManager = eventManager, AppMethods, InterpWrapper;
+import spug.loop.tel AppMethods, InterpWrapper;
 import spug.loop.textui TextController;
 import spug.loop.model programNames, ChannelMap, EventManager, Project,
     Section, Controller, WaveTrack, IDLE, LATCHED_RECORD, PLAY, RECORD;
@@ -570,12 +571,9 @@ class TrackPanel : Widget {
     # Width of the label column.
     int __labelColWidth;
 
-    EventManager em;
-
-    oper init(EventManager em, Coord pos, Coord size) :
+    oper init(Coord pos, Coord size) :
         Widget(pos, size),
-        __labelColWidth = CHAR_WIDTH * 12,
-        em = em {
+        __labelColWidth = CHAR_WIDTH * 12 {
     }
 
     typeof(Array[TrackWidget]().iter()) iter() { return __elems.iter(); }
@@ -596,12 +594,13 @@ class TrackPanel : Widget {
                                   ) {
         ts := trackSize ? trackSize : Coord(size.x - 2, TRACK_HEIGHT);
         Coord trackPos = {pos.x + 1, pos.y + index * TRACK_HEIGHT + 1};
+        span := engine.getCurrentSection().span;
         return TrackCanvas(surface, trackPos,
                            ts,
                            __labelColWidth,
                            ts.x - __labelColWidth,
-                           em.lastTime % em.curSection.span,
-                           em.curSection.span
+                           engine.getTicks() % span,
+                           span
                            );
     }
 
@@ -644,7 +643,7 @@ class TrackPanel : Widget {
             cerr `ERROR: deleteActiveTrack(): no active track\n`;
             return;
         }
-        em.deleteTrack(__activeIndex);
+        engine.deleteTrack(__activeIndex);
     }
 
     void selectActiveTrack(Surface surface) {
@@ -671,14 +670,16 @@ class TrackPanel : Widget {
 
     void sectionChanged() {
         __elems.clear();
-        for (track :in em.curSection.tracks)
+        for (track :in engine.getCurrentSection().tracks)
             addTrack(track, track[-1].time, null);
     }
 
     void drawPosition(Surface surface) {
         # find the absolute line position.
+        span := engine.getCurrentSection().span;
+        timeFraction := float(engine.getTicks() % span) / float(span);
         x := __labelColWidth +
-             em.getTimeFraction() * (size.x - __labelColWidth) + pos.x;
+             timeFraction * (size.x - __labelColWidth) + pos.x;
         drawLine(surface, Coord(x, pos.y), Coord(x, pos.y + size.y - 1),
                  POS_LINE_COLOR
                  );
@@ -780,7 +781,6 @@ class TextWidget : Widget {
 class App : Object @implements AppMethods, KeyboardHandler, MouseButtonHandler,
             ResizeHandler, Controller {
     SDLApp app = {640, 480};
-    EventManager eventManager;
     InterpWrapper interp;
 
     # the cursor that points to the next event in the merged track.  This
@@ -846,16 +846,16 @@ class App : Object @implements AppMethods, KeyboardHandler, MouseButtonHandler,
     }
 
     void trackAdded() {
-        trackPanel.addTrack(eventManager.curSection.tracks[-1],
-                            eventManager.curSection.span,
+        trackPanel.addTrack(engine.getCurrentSection().tracks[-1],
+                            engine.getCurrentSection().span,
                             null
                             );
         app.flip();
     }
 
     void waveAdded() {
-        trackPanel.addTrack(eventManager.curSection.waves[-1],
-                            eventManager.curSection.span,
+        trackPanel.addTrack(engine.getCurrentSection().waves[-1],
+                            engine.getCurrentSection().span,
                             null
                             );
     }
@@ -910,15 +910,15 @@ class App : Object @implements AppMethods, KeyboardHandler, MouseButtonHandler,
         if (sym == b'q')
             app.terminate();
         else if (sym == b'r') {
-            eventManager.doLatchedRecord();
+            engine.latchForRecord();
         } else if (sym == b'i') {
-            eventManager.doRecord();
+            engine.record();
         } else if (sym == b' ') {
-            eventManager.togglePlay();
+            engine.togglePlay();
         } else if (sym == b'c') {
-            eventManager.clear();
+            engine.clear();
         } else if (sym == b's') {
-            eventManager.doIdle();
+            engine.pause();
         } else if (sym == b'l') {
             channelWidget.changeChannel(app.surface, +1);
             app.flip();
@@ -928,7 +928,7 @@ class App : Object @implements AppMethods, KeyboardHandler, MouseButtonHandler,
         } else if (sym >= b'0' && sym <= b'9') {
             # add an input event.
             byte note = byte(sym - b'0' + inputOffset);
-            eventManager.onInputEvent(NoteOn(0, DRUM, note, 127));
+            engine.sendEvent(NoteOn(0, DRUM, note, 127));
         } else if (sym == b'=') {
             inputOffset += 10;
         } else if (sym == b'-') {
@@ -957,20 +957,20 @@ class App : Object @implements AppMethods, KeyboardHandler, MouseButtonHandler,
             app.flip();
             return true;
         } else if (sym == SDLK_F2) {
-            eventManager.save();
+            engine.saveClassicProjectFile();
         } else if (sym == SDLK_F5) {
             # create new section
-            eventManager.createSection(trackPanel.getSelectedTracks());
+            engine.createSection(trackPanel.getSelectedTracks());
         } else if (sym == SDLK_F7) {
             # previous section
-            int index = eventManager.getNextSectionIndex();
-            int count = eventManager.getSectionCount();
-            eventManager.setNextSection((count + index - 1) % count);
+            int index = engine.getNextSectionIndex();
+            int count = engine.getSectionCount();
+            engine.setNextSection((count + index - 1) % count);
         } else if (sym == SDLK_F8) {
             # next section
-            int index = eventManager.getNextSectionIndex();
-            int count = eventManager.getSectionCount();
-            eventManager.setNextSection((index + 1) % count);
+            int index = engine.getNextSectionIndex();
+            int count = engine.getSectionCount();
+            engine.setNextSection((index + 1) % count);
         } else if (sym == SDLK_ESCAPE && piano) {
             panels.delete(-1);
             panels[0].activate(app.surface, true);
@@ -987,10 +987,10 @@ class App : Object @implements AppMethods, KeyboardHandler, MouseButtonHandler,
         if (sym >= b'0' && sym <= b'9') {
             # add a drum event
             byte note = byte(sym - b'0' + inputOffset);
-            eventManager.onInputEvent(NoteOff(0, DRUM, note, 0));
+            engine.sendEvent(NoteOff(0, DRUM, note, 0));
         } else if (sym == b'=') {
             byte note = ++inputOffset;
-            eventManager.onInputEvent(NoteOff(0, DRUM, note, 127));
+            engine.sendEvent(NoteOff(0, DRUM, note, 127));
         }
 
         return true;
@@ -1046,8 +1046,7 @@ class App : Object @implements AppMethods, KeyboardHandler, MouseButtonHandler,
         panel.append(recBtn);
 
         ypos := panel.getMinSize().y + 4;
-        trackPanel = TrackPanel(null,
-                                Coord(0, ypos),
+        trackPanel = TrackPanel(Coord(0, ypos),
                                 Coord(app.width,
                                       app.height - 48 - ypos
                                       )
@@ -1074,22 +1073,13 @@ class App : Object @implements AppMethods, KeyboardHandler, MouseButtonHandler,
         app.addResizeHandler(this);
     }
 
-    void setEventManager(EventManager em) {
-        trackPanel.em = em;
-        eventManager = em;
-    }
-
     ## Run the application until the user quits.
     void run() {
-        if (!eventManager)
-            throw AssertionError('Event manager not defined!');
-
         Event lastPlayed;
 
         while (app.isActive()) {
             try {
                 app.runOneCycle();
-                eventManager.runOneCycle();
                 interp.checkForInput();
                 while (userQueue) {
                     StartPianoRollEvent event = userQueue.pop();
@@ -1115,7 +1105,7 @@ class App : Object @implements AppMethods, KeyboardHandler, MouseButtonHandler,
                     piano.draw(app.surface);
                     app.flip();
                 }
-                if (eventManager.playingExistingTracks()) {
+                if (engine.playingExistingTracks()) {
                     trackPanel.draw(app.surface);
                     trackPanel.drawPosition(app.surface);
                     app.flip();
@@ -1188,13 +1178,11 @@ if (cl.getBool('legacy-ui')) {
     textui.setInterp(interp);
     interp.define('UI_MODE', SimpleValue('text', 'User interface mode.'));
 }
+
+# TODO: Get this out of here.
 EventManager em = {controller, orch, s, channelMap};
 em.waveMan = waveMan;
-telEventManager = em;
-if (app)
-    app.setEventManager(em);
-else
-    em.start();
+engine = AWBEngine(em, null);
 
 # Evaluate the user's .awb.crash script
 userConfig := makePath(env['HOME'])/'.awb.crash';

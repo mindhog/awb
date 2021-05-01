@@ -15,12 +15,6 @@ connect awb:right system:playback_2
 # device numbers and therefore sucks).
 #shell aconnect 28:0 128:0
 if {== $UI_MODE text} {
-    # In text mode, we have to make sure we have a midi engine and we route
-    # all events received by the engine to the event manager.  This way all of
-    # the existing control bindings still work.  Then connect the midi
-    # controller to the AWBX device (which goes to the midi engine) instead of
-    # the AWB device (which goes to the event manager).
-    [getMidiEngine] routeToEventManager
     connect 'midi:nanoKONTROL2/nanoKONTROL2 MIDI 1'  'midi:AWBX/in'
 } else {
     connect 'midi:nanoKONTROL2/nanoKONTROL2 MIDI 1'  'midi:AWB/in'
@@ -99,7 +93,7 @@ def v {} 'Bring up the text panel UI.' {
 
     # Override builtin play, which still just starts the event manager.
     def play {} {
-        [getMidiEngine] togglePlay
+        [getAWBEngine] togglePlay
     }
 
     runUI {
@@ -108,7 +102,7 @@ def v {} 'Bring up the text panel UI.' {
         bind $KEY_LEFT bak
         bind $KEY_RIGHT fwd
         setStatusText 'AWB -- <Space> toggle play, <q> to quit, <Left> back, <Right> Forward'
-        TimeBar $mainColumn 1 [getMidiEngine]
+        TimeBar $mainColumn 1 [getAWBEngine]
     }
 }
 

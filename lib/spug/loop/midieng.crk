@@ -40,7 +40,8 @@ const int
     ST_IDLE = 0,
     ST_PLAY = 1,
 
-    ## Latched for record (first event will start the recording)
+    ## Latched for record (first event will start the recording).  If there
+    ## are existing tracks, they should be playing while in latched mode.
     ST_LATCHED = 2,
     ST_RECORD = 3;
 
@@ -552,6 +553,11 @@ alias TimeCallback = Functor1[void, TimeEvent];
         __ticksPerSecond = float(__ppb) * bpm / 60.0;
     }
 
+    float getBPM() {
+        lk := MutexLock(__lock);
+        return __ticksPerSecond * 60.0 / float(__ppb);
+    }
+
     ## Toggle record mode.
     void toggleRecord() {
         lk := MutexLock(__lock);
@@ -584,6 +590,16 @@ alias TimeCallback = Functor1[void, TimeEvent];
             __lastTime = __pos.usecs;
         }
         __interrupter.signal();
+    }
+
+    ## Put the engine into "latched record" mode.
+    ##
+    ## This may need a bit of work.
+    void latchForRecord() {
+        lk := MutexLock(__lock);
+        if (__recordTrack)
+            __endRecord();
+        __state = ST_LATCHED;
     }
 
     ## Set the current position (specified in ticks).
@@ -631,6 +647,30 @@ alias TimeCallback = Functor1[void, TimeEvent];
         lk := MutexLock(__lock);
         __timeCallbacks[uintz(callback)] = callback;
         __interrupter.signal();
+    }
+
+    void sendEvent(Event event) {
+        lk := MutexLock(__lock);
+        __processor(this, event);
+    }
+
+    ## Returns true if the engine is playing and there are tracks in the
+    ## current section.
+    bool playingExistingTracks() {
+        lk := MutexLock(__lock);
+        return __state == ST_PLAY ||
+            (__state == ST_RECORD || __state == ST_LATCHED) && __trackCursors;
+    }
+
+    ## Returns the time in ticks since the beginning of the section.  Note
+    ## that this will not change when idle.
+    uint getTicks() {
+        lk := MutexLock(__lock);
+        if (__state == ST_IDLE || __state == ST_LATCHED && !__trackCursors) {
+            return __usecsToTicks(__lastTime - __startTime);
+        } else {
+            return __getTicks(__section.span);
+        }
     }
 }
 
@@ -706,6 +746,10 @@ alias TimeCallback = Functor1[void, TimeEvent];
         __mseq.setBPM(bpm);
     }
 
+    float getBPM() {
+        return __mseq.getBPM();
+    }
+
     ## Toggle record mode.
     void toggleRecord() {
         __mseq.toggleRecord();
@@ -714,6 +758,11 @@ alias TimeCallback = Functor1[void, TimeEvent];
     ## Toggle play mode.
     void togglePlay() {
         __mseq.togglePlay();
+    }
+
+    ## Put the engine into "latched record" mode.
+    void latchForRecord() {
+        __mseq.latchForRecord();
     }
 
     ## Set the current position.
@@ -729,6 +778,24 @@ alias TimeCallback = Functor1[void, TimeEvent];
     ## Subscribe to the time callback.
     void subscribeTimeEvent(TimeCallback callback) {
         __mseq.subscribeTimeEvent(callback);
+    }
+
+    ## Send an event to the midi engine for immediate dispatch to the
+    ## processor.
+    void sendEvent(Event event) {
+        __mseq.sendEvent(event);
+    }
+
+    ## Returns true if the engine is playing and there are tracks in the
+    ## current section.
+    bool playingExistingTracks() {
+        return __mseq.playingExistingTracks();
+    }
+
+    ## Returns the time in ticks since the beginning of the section.  Note
+    ## that this will not change when idle.
+    uint getTicks() {
+        return __mseq.getTicks();
     }
 
     Port oper .outPort =(Port port) { return __mseq.outPort = port }

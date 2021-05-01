@@ -4,17 +4,21 @@
 import crack.audio.wavfile WaveDef;
 import crack.cont.array Array;
 import crack.fs makePath;
-import crack.functor Functor1;
-import crack.io cerr;
+import crack.functor Functor1, Functor2;
+import crack.io  cerr;
 import crack.lang AssertionError;
 import crack.midi.alsa Sequencer, SND_SEQ_OPEN_INPUT, SND_SEQ_OPEN_OUTPUT;
-import crack.midi.event Track;
+import crack.midi.event Event, Track;
+import crash Obj;
 
+import .evtrec makeEventRecorderModule;
+import .instrument MidiInstrument, Orchestra;
 import .jack JackPos, JackWrapper, WaveManager, RecordBuffer,
-    JACK_TRANSPORT_ROLLING;
+    WaveAdapter, WaveModel, WindowBufferAdapter, JACK_TRANSPORT_ROLLING;
 import .midieng EventManagerDispatcher, MidiDispatcher, MidiEngine,
     MidiSequencer, ModelObserver, ST_IDLE, ST_PLAY, ST_LATCHED, ST_RECORD;
-import .model EventManager;
+import .midifile MidiFile;
+import .model EventContext, EventManager, Section;
 
 @import crack.ann assert, cvars, impl;
 
@@ -43,6 +47,8 @@ MidiEngine makeMidiEngine(EventManager eventManager) {
     @abstract void init(AWBEngine eng);
     @abstract void close(AWBEngine eng);
 }
+
+alias EventProcessor = Functor2[void, Event, EventContext];
 
 ## AWBEngine provides a unified front to both the Jack and Midi Engines.
 class AWBEngine @impl ModelObserver {
@@ -79,6 +85,11 @@ class AWBEngine @impl ModelObserver {
         # (note: creates a reference cycle)
         __midi.setModelObserver(this);
         setTempo(120);
+
+        # Route all events to the event manager so that legacy bindings still
+        # work.
+        __midi.addProcessor(EventManagerDispatcher(eventManager));
+
     }
 
     ## Start playing midi and jack.
@@ -159,6 +170,22 @@ class AWBEngine @impl ModelObserver {
             pause();
     }
 
+    ## Start/stop recording.  If we're already recording, go into "play" state.
+    void toggleRecord() {
+        if (__state == ST_RECORD)
+            play();
+        else
+            record();
+    }
+
+    ## Put the engine into "latched for record" mode.
+    ##
+    ## If there are tracks, this should start the tracks playing and should be
+    ## no different from "record" mode.
+    void latchForRecord() {
+        __midi.latchForRecord();
+    }
+
     # Support for the ModelObserver interface.
 
     class AddTrackCommand @impl Functor1[void, EventManager] {
@@ -167,12 +194,33 @@ class AWBEngine @impl ModelObserver {
         }
 
         void oper call(EventManager em) {
-            em.addTrack(track, track[-1].time);
+            em.addTrack(track);
         }
     }
 
     void addTrack(Track track) {
         __eventManager.commandQueue.add(AddTrackCommand(track));
+    }
+
+    ## Add a wave file as a track in the current section.
+    WindowBufferAdapter addWaveFile(String filename) {
+        return __eventManager.mapWaveFile(filename);
+    }
+
+    ## Adds a new WaveModel track.
+    WaveAdapter addWaveModel(WaveModel model, String trackName) {
+        return __eventManager.addWaveModel(model, trackName);
+    }
+
+    ## Add all tracks of a midi file to the engine.
+    void addMidiFile(String filename) {
+        file := MidiFile.read(makePath(filename).reader());
+
+        for (track :in file.tracks)
+            __eventManager.addTrack(track, track[-1].time);
+
+        __midi.setSection(__eventManager.curSection.clone());
+        __eventManager.ppb = file.ticksPerQN;
     }
 
     ## Returns the engine's audio sample rate.
@@ -190,6 +238,16 @@ class AWBEngine @impl ModelObserver {
         return __midi;
     }
 
+    ## Returns the sequencer.
+    Sequencer getSequencer() {
+        return __eventManager.sequencer;
+    }
+
+    ## Load an old-style project into the event manager.
+    void loadProject(String filename) {
+        __eventManager.load(filename);
+    }
+
     ## Sets the global tempo (in beats per minute).  Different portions of
     ## the piece can have different tempos, but they're all scaled to the
     ## global tempo.
@@ -198,10 +256,36 @@ class AWBEngine @impl ModelObserver {
         __eventManager.tempo = bpm;
     }
 
+    ## Returns the current tempo.
+    int getTempo() {
+        return __eventManager.tempo;
+    }
+
+    void setPPB(int ppb) {
+        __eventManager.ppb = ppb;
+        __midi.setPPB(ppb);
+    }
+
+    ## Returns pulses-per-beat ("pulses per quarter note" in midi parlance).
+    int getPPB() {
+        return __eventManager.ppb;
+    }
+
     ## Reset the play position to the start of section.
     void resetPos() {
         __midi.setPos(0);
         __jack.seek(0);
+    }
+
+    ## Set the position in midi ticks.
+    void setPos(int pos) {
+        __midi.setPos(pos);
+
+        # Given pulses per second and frames per second (the sample rate) we
+        # can compute frames per pulse as fps / pps.
+        pps := float(__midi.getBPM()) * float(__eventManager.ppb) / 60.0;
+        framesPerTick := float(__jack.getSampleRate()) / pps;
+        __jack.seek(int(float(pos) * framesPerTick));
     }
 
     ## Enable the midi recorder.  Allows MidiTrackRecorder to do its thing.
@@ -222,6 +306,125 @@ class AWBEngine @impl ModelObserver {
         }
 
         return null;
+    }
+
+    ## Returns the set of tracks in the current section as an array.
+    Array[Track] getAllTracks() {
+        return __eventManager.curSection.tracks;
+    }
+
+    ## Returns the current section.
+    Section getCurrentSection() {
+        return __eventManager.curSection;
+    }
+
+    ## Returns the orchestra object (the set of midi instruments currently in
+    ## use.
+    ##
+    ## The orchestra object, for better or worse, is mutable.  There is a
+    ## thread-safety issue here, we should really be manipulating the
+    ## orchestra through the control queue.
+    Orchestra getOrchestra() {
+        return __eventManager.instrument;
+    }
+
+    ## Bind an event processor to a control number (channel << 8 + controller
+    ## + offset).
+    void addEventProcessor(int eventSelector, EventProcessor processor) {
+        __eventManager.eventProcessors[eventSelector] = processor;
+    }
+
+    ## Create an event recorder module for the engine.
+    Obj makeEventRecorderModule() {
+        return makeEventRecorderModule(__eventManager);
+    }
+
+    ## Copy the current section from the event manager to the midi engine.
+    ##
+    ## This should go away, it exists as a shim so that scripts can populate
+    ## the event manager and then move tracks to the midi engine.
+    void copySection() {
+        __midi.setSection(__eventManager.curSection.clone());
+    }
+
+    ## Connect the internal orchestra channel to the specified midi client and
+    ## port.
+    void connectChannelToMidi(int channel, int client, int port) {
+        inst := MidiInstrument(__eventManager.getOutPort(client, port),
+                               byte(channel));
+        __eventManager.instrument[channel] = inst;
+    }
+
+    ## Export the specified tracks to the given file.
+    void exportMidiFile(String filename, Array[int] trackNumbers) {
+        tracks := Array[Track]();
+        file := MidiFile(__eventManager.ppb, float(__eventManager.tempo));
+        for (trackNum :in trackNumbers) {
+            track := __eventManager.curSection.tracks[trackNum];
+            file.append(track);
+        }
+        file.write(makePath(filename).writer());
+    }
+
+    ## Begin recording to the specified file, return a RecordBuffer.
+    RecordBuffer recordFile(String filename) {
+        def := WaveDef(2, 44100, 16);
+        out := makePath(filename).writer();
+        def.writeHeader(out);
+        return __eventManager.waveMan.beginRecord(def, out);
+    }
+
+    ## Clear the entire project state.
+    void clear() {
+        __eventManager.clear();
+        __midi.setSection(Section());
+    }
+
+    ## Send a (automatically generated) input event to the midi engine.
+    void sendEvent(Event event) {
+        __midi.sendEvent(event);
+    }
+
+    ## Save the old-style project file.
+    void saveClassicProjectFile() {
+        __eventManager.save();
+    }
+
+    ## Create a new section, copying the specified tracks into it.
+    void createSection(Array[Track] tracks) {
+        __eventManager.createSection(tracks);
+    }
+
+    ## Set the next section to be played based on the index.
+    void setNextSection(int index) {
+        __eventManager.setNextSection(index);
+    }
+
+    ## Returns the index of the current next section.
+    int getNextSectionIndex() {
+        return __eventManager.getNextSectionIndex();
+    }
+
+    ## Returns the number of sections.
+    int getSectionCount() {
+        return __eventManager.getSectionCount();
+    }
+
+    ## Delete the specified track in the current section.
+    void deleteTrack(int index) {
+        __eventManager.deleteTrack(index);
+    }
+
+    ## Returns true if the engine is currently in play/record and there are
+    ## tracks in the current section.
+    bool playingExistingTracks() {
+        return __midi.playingExistingTracks();
+    }
+
+    ## Returns the time in ticks since the beginning of the section.  Note
+    ## that this will not change when idle.
+    uint getTicks() {
+        return __midi.getTicks();
     }
 }
 
@@ -254,3 +457,7 @@ class MidiTrackRecorder : Recorder {
         engine._armMidiRecord(false);
     }
 }
+
+## The global engine instance.  Must be set externally during program
+## initialization.
+AWBEngine engine;

@@ -14,9 +14,10 @@ import crash createRootContext, eval, parseBlockArg, parseString, Builtin,
 import deadly.layout Column, Container, Row;
 import deadly.termlist List;
 import repl repl;
+import .engine engine, AWBEngine;
 import .model Controller;
 import .midieng MidiEngine, TimeCallback, TimeEvent;
-import .tel eventManager, AppMethods, CrashCallback, InterpWrapper;
+import .tel AppMethods, CrashCallback, InterpWrapper;
 
 import types FloatObj, IntObj;
 @import ann function;
@@ -63,7 +64,7 @@ class Status : Window {
 class TrackList : List {
     @final void reloadTracks() {
         model = Array[String]();
-        for (track :in eventManager.curSection.tracks)
+        for (track :in engine.getCurrentSection().tracks)
             model.append(track.name);
     }
 
@@ -72,11 +73,11 @@ class TrackList : List {
     }
 
     void trackAdded() {
-        model.append(eventManager.curSection.tracks[-1].name);
+        model.append(engine.getCurrentSection().tracks[-1].name);
     }
 
     void waveAdded() {
-        model.append(eventManager.curSection.waves[-1].getName());
+        model.append(engine.getCurrentSection().waves[-1].getName());
     }
 
     void trackDeleted() {
@@ -345,9 +346,10 @@ class TextController : Object @implements Controller, AppMethods {
 
         @function(TextController)
         TimeBar makeTimeBar(Window parent, int size,
-                            MidiEngine midiEng
+                            AWBEngine engine
                             ) {
-            timeBar := TimeBar.create(parent, self.__controlQueue, midiEng);
+            timeBar := TimeBar.create(parent, self.__controlQueue,
+                                      engine.getMidiEngine());
             if (cont := Container.cast(parent, null))
                 cont.addChild(timeBar, size);
             return timeBar;
