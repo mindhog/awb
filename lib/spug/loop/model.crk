@@ -827,7 +827,7 @@ class EventManager @impl EventContext {
     }
 
 
-    void onInputEvent(Event event) {
+    bool onInputEvent(Event event) {
         if (mode == LATCHED_RECORD)
             doRecord();
 
@@ -842,15 +842,10 @@ class EventManager @impl EventContext {
              )
             ) {
             proc(cc, this);
-            return;
+            return true;
         }
 
-        if (chev := ChannelEvent.cast(event, null))
-            chev.channel = channelMap.currentChannel;
-
-        instrument.onEvent(event);
-        if (mode == RECORD)
-            recordTrack.append(event);
+        return false;
     }
 
     void __playPendingEvents(LoopCursor cur, uint pos) {

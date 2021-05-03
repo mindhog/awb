@@ -28,7 +28,10 @@ class MidiSequencer;
 ## EventProcessors are called whenever the MidiEngine receives an event.  They
 ## are called synchronously and therefore must be able to deal with the event
 ## in a small bounded amount of time.
-alias EventProcessor = Functor2[void, MidiSequencer, Event];
+##
+## A return value of "true" indicates that further processing of the chain
+## should be aborted.
+alias EventProcessor = Functor2[bool, MidiSequencer, Event];
 
 const MAX_TIME := 0xffffffff;
 
@@ -126,7 +129,7 @@ alias TimeCallback = Functor1[void, TimeEvent];
     # True if __pos and __transportState are valid.
     bool __posIsValid;
 
-    EventProcessor __processor;
+    Array[EventProcessor] __processors = {};
     ModelObserver __modelObserver;
 
     ## The track we're currently recording.  If this is non-null and the
@@ -261,13 +264,20 @@ alias TimeCallback = Functor1[void, TimeEvent];
         }
     }
 
+    void __dispatchEvent(Event event) {
+        for (proc :in __processors) {
+            if (proc(this, event))
+                break;
+        }
+    }
+
     void __playPendingEvents(LoopCursor cur, uint pos) {
         while (cur && !cur.immediatelyFollows(pos % cur.span)) {
             # Send it off to the processor (if it's not an EndTrack)
             evt := cur.next();
             if (!EndTrack.cast(evt, null)) {
                 info `midieng: playing event $evt`;
-                __processor(this, evt);
+                __dispatchEvent(evt);
             }
         }
     }
@@ -365,8 +375,7 @@ alias TimeCallback = Functor1[void, TimeEvent];
             }
         }
 
-        if (__processor)
-            __processor(this, event);
+        __dispatchEvent(event);
 
         # This probably belongs in the event processor.
         if (!(__recordTrack is null)) {
@@ -528,10 +537,8 @@ alias TimeCallback = Functor1[void, TimeEvent];
     ## Add a processor to the midi engine.  This will get called whenever an
     ## event is received.
     void addProcessor(EventProcessor processor) {
-        # This is totally wrong, should be adding a processor to the processor
-        # chain.
         lk := MutexLock(__lock);
-        __processor = processor;
+        __processors.append(processor);
     }
 
     ## Sets the current model observer, which is notified of changes to the
@@ -651,7 +658,7 @@ alias TimeCallback = Functor1[void, TimeEvent];
 
     void sendEvent(Event event) {
         lk := MutexLock(__lock);
-        __processor(this, event);
+        __dispatchEvent(event);
     }
 
     ## Returns true if the engine is playing and there are tracks in the
@@ -806,8 +813,9 @@ alias TimeCallback = Functor1[void, TimeEvent];
 }
 
 class MidiDispatcher @impl EventProcessor {
-    void oper call(MidiSequencer engine, Event event) {
+    bool oper call(MidiSequencer engine, Event event) {
         engine.outPort.send(event);
+        return true;
     }
 }
 
@@ -822,7 +830,7 @@ class EventManagerDispatcher @impl EventProcessor {
         EventManager __eventManager;
     }
 
-    void oper call(MidiSequencer engine, Event event) {
-        __eventManager.onInputEvent(event);
+    bool oper call(MidiSequencer engine, Event event) {
+        return __eventManager.onInputEvent(event);
     }
 }

@@ -487,7 +487,7 @@ class CallbackCmd : Builtin {
 }
 
 @function Obj getEventRecModule() {
-    return engine.makeEventRecorderModule();
+    return makeEventRecorderModule(engine);
 }
 
 ## Command to run a command on the shell.
@@ -539,13 +539,14 @@ Obj makeTrack(Track track) {
 
 Obj _midiEngineObj;
 
-class InstrumentDispatcher @impl Functor2[void, MidiSequencer, Event] {
+class InstrumentDispatcher @impl Functor2[bool, MidiSequencer, Event] {
     @cvars {
         Instrument instrument;
     }
 
-    void oper call(MidiSequencer engine, Event event) {
+    bool oper call(MidiSequencer engine, Event event) {
         instrument.onEvent(event);
+        return true;
     }
 }
 

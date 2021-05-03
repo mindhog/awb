@@ -8,9 +8,10 @@ import crack.io cerr, Formatter, FStr, StandardFormatter;
 import crack.lang Exception, StaticString;
 import crack.midi.event ChannelEvent, ControlChange, Event;
 import crash parseBlockArg, Block, Builtin, EvalContext, Obj;
-import spug.loop.model EventContext, EventManager;
+import spug.loop.model EventContext;
 import spug.loop.jack WaveManager, PCMTrackAdapter;
 import types BoolObj, FloatObj, IntObj;
+import .engine AWBEngine;
 import .plugins PluginInstance, PluginLibrary;
 import .plugincmds makeEffectObj;
 import .processors Component;
@@ -220,7 +221,7 @@ class SmartController @impl EventProcessor {
 ## of synchronized wave files and into which an output logfile is written,
 ## describing all of the mixer events for the project.
 class Project {
-    EventManager eventManager;
+    AWBEngine engine;
     Path dir;
 
     ## The output logfile.
@@ -266,8 +267,8 @@ class Project {
 
     Array[Channel] __channels = {};
 
-    oper init(EventManager eventManager, String dir) :
-        eventManager = eventManager,
+    oper init(AWBEngine engine, String dir) :
+        engine = engine,
         dir = makePath(dir) {
 
         # Rather than blindly overwriting this, we should probably load it in
@@ -279,26 +280,24 @@ class Project {
     void __addChannel(PCMTrackAdapter adapter, int volumeController,
                       int panController
                       ) {
-        eventManager.eventProcessors[panController] = pan :=
-            SmartController(Panner(adapter, eventManager.waveMan, out,
-                                   __trackIndex
-                                   )
-                            );
-        eventManager.eventProcessors[volumeController] = vol :=
-            SmartController(VolumeControl(adapter, eventManager.waveMan,  out,
-                                          __trackIndex
-                                          )
-                            );
-
+        pan := SmartController(Panner(adapter, engine.getWaveManager(), out,
+                                      __trackIndex
+                                      )
+                               );
+        engine.addEventProcessor(panController, pan);
+        vol := SmartController(VolumeControl(adapter, engine.getWaveManager(),
+                                             out,
+                                             __trackIndex
+                                             )
+                               );
+        engine.addEventProcessor(volumeController, vol);
         ++__trackIndex;
         __channels.append(Channel(adapter, vol, pan));
     }
 
     ## Adds a track given the name of a wave file.
     void addTrack(String filename, int volumeController, int panController) {
-        if (!eventManager.waveMan)
-            eventManager.waveMan = WaveManager.create();
-        adapter := eventManager.mapWaveFile((dir/filename).getFullName());
+        adapter := engine.addWaveFile((dir/filename).getFullName());
         __addChannel(adapter, volumeController, panController);
 
         # Add the new track to the log.
@@ -308,9 +307,7 @@ class Project {
     void addPassThrough(Array[String] inputs, int volumeController,
                         int panController
                         ) {
-        if (!eventManager.waveMan)
-            eventManager.waveMan = WaveManager.create();
-        adapter := eventManager.waveMan.addPassThrough(inputs);
+        adapter := engine.getWaveManager().addPassThrough(inputs);
         __addChannel(adapter, volumeController, panController);
     }
 
@@ -373,7 +370,7 @@ class Project {
     ## As elsewhere, 'controller' is an integer in which the low-byte is the
     ## controller id and the high-byte is the channel number.
     void bindController(int controller, EventProcessor processor) {
-        eventManager.eventProcessors[controller] = processor;
+        engine.addEventProcessor(controller, processor);
     }
 }
 
@@ -467,20 +464,19 @@ class Project_bindControllerScriptCmd : Builtin {
 }
 
 class EventRecorderModule {
-    EventManager eventManager;
-    oper init(EventManager eventManager) : eventManager = eventManager {}
+    AWBEngine engine;
+    oper init(AWBEngine engine) : engine = engine {}
 }
 
-## Create a new EventRecorderModule for crash.  This lets us inject the event
-## manager.
-Obj makeEventRecorderModule(EventManager eventManager) {
+## Create a new EventRecorderModule for crash.  This lets us inject the engine.
+Obj makeEventRecorderModule(AWBEngine engine) {
     obj := Obj();
-    erm := EventRecorderModule(eventManager);
+    erm := EventRecorderModule(engine);
 
     ## Create a new project object in the given directory.
     @function(EventRecorderModule) Obj makeProject(String dir) {
         obj := Obj();
-        proj := Project(self.eventManager, dir);
+        proj := Project(self.engine, dir);
         obj.define('addTrack', Project_addTrack(proj));
         obj.define('addPassThrough', Project_addPassThrough(proj));
         obj.define('setGain', Project_setGain(proj));
