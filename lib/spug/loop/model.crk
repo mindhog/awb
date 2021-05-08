@@ -7,8 +7,9 @@ import crack.cont.hashmap HashMap;
 import crack.cont.treemap TreeMap;
 import crack.fs cwd, makePath;
 import crack.functor Functor1, Functor2;
-import crack.io cerr, cout, FStr, StringReader, StringWriter;
+import crack.io cerr, FStr, StringReader, StringWriter;
 import crack.lang cmp, makeHashVal, CString, Exception;
+import crack.logger error, info;
 import crack.math floor;
 import crack.midi.event ChannelEvent, ControlChange, EndTrack, Event,
     MidiReader, MidiWriter, ProgramChange, SeekableEventSource, Track;
@@ -141,7 +142,7 @@ class Section {
             }
 
             if (time > span) {
-                cout `increasing span: $time / $span\n`;
+                info `increasing span: $time / $span`;
                 multiple := (time - 1) / span + 1;
                 span *= multiple;
             }
@@ -218,7 +219,7 @@ class Section {
             # Read and discard the optional track data.
             src.readString();
 
-            cout `track $i:\n$track\n`;
+            info `track $i:\n$track`;
         }
 
         # Read the optional data.
@@ -231,7 +232,7 @@ class Section {
         newTracks := Array[Track]();
         for (track :in tracks) {
             newTrack := Track(track.name);
-            newTracks.append(track);
+            newTracks.append(newTrack);
             for (event :in track)
                 newTrack.append(event.clone());
         }
@@ -679,7 +680,7 @@ class EventManager @impl EventContext {
     void addTrack(Track track) {
         Event lastEvent;
         @assert(track.count() && (lastEvent = track[-1]).isa(EndTrack));
-        curSection.markEnding(track, lastEvent.time, false);
+        addTrack(track, lastEvent.time);
     }
 
     ## Adds a wave file track to the current section, notifies the controller.
@@ -709,7 +710,7 @@ class EventManager @impl EventContext {
         controller.changeState(mode, RECORD);
         if (mode == RECORD)
             endRecord();
-        cout `record\n`;
+        info `record`;
 
         # if we're coming in from "latched" mode, adjust the start time
         if (mode == LATCHED_RECORD && startTime.secs && curSection.span) {
@@ -733,14 +734,14 @@ class EventManager @impl EventContext {
 
     void doLatchedRecord() {
         # XXX going from play -> latched seems to be broken
-        cout `latched\n`;
+        info `latched`;
         if (mode == RECORD)
             endRecord();
         mode = LATCHED_RECORD;
     }
 
     void doIdle() {
-        cout `idle\n`;
+        info `idle`;
         instrument.stop();
         controller.changeState(PLAY, IDLE);
         mode = IDLE;
@@ -764,11 +765,11 @@ class EventManager @impl EventContext {
 
     void doPlay() {
         if (!curSection.tracks && mode != RECORD && !waveMan) {
-            cout `No tracks to play!\n`;
+            error `No tracks to play!`;
             return;
         }
 
-        cout `play\n`;
+        info `play`;
         controller.changeState(mode, PLAY);
 
         if (mode == RECORD)
@@ -817,7 +818,7 @@ class EventManager @impl EventContext {
 
     ## restore the app to its pristine state
     void clear() {
-        cout `clearing state\n`;
+        info `clearing state`;
         recordTrack = null;
         mode = IDLE;
         startTime.secs = startTime.nsecs = 0;
@@ -832,7 +833,7 @@ class EventManager @impl EventContext {
             doRecord();
 
         event.time = getRelTime();
-        cout `got event $event\n`;
+        info `got event $event`;
 
         # Divert bound events to the correct event processor.
         if ((cc := ControlChange.cast(event, null)) &&
@@ -1024,7 +1025,7 @@ class EventManager @impl EventContext {
         if (path.exists()) {
             project.readFrom(SerialReader(path.reader()));
             curSection = project.sections[0];
-            cout `tracks in cur section: $(curSection.tracks.count())\n`;
+            info `tracks in cur section: $(curSection.tracks.count())`;
             controller.sectionChanged();
         }
     }

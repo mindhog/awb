@@ -14,8 +14,9 @@ import crash Obj;
 import .instrument MidiInstrument, Orchestra;
 import .jack JackPos, JackWrapper, WaveManager, RecordBuffer,
     WaveAdapter, WaveModel, WindowBufferAdapter, JACK_TRANSPORT_ROLLING;
-import .midieng EventManagerDispatcher, MidiDispatcher, MidiEngine,
-    MidiSequencer, ModelObserver, ST_IDLE, ST_PLAY, ST_LATCHED, ST_RECORD;
+import .midieng EventManagerDispatcher, EventProcessor, MidiDispatcher,
+    MidiEngine, MidiSequencer, ModelObserver, ST_IDLE, ST_PLAY, ST_LATCHED,
+    ST_RECORD;
 import .midifile MidiFile;
 import .model EventContext, EventManager, Section;
 
@@ -47,7 +48,7 @@ MidiEngine makeMidiEngine(EventManager eventManager) {
     @abstract void close(AWBEngine eng);
 }
 
-alias EventProcessor = Functor2[void, Event, EventContext];
+alias LegacyEventProcessor = Functor2[void, Event, EventContext];
 
 ## AWBEngine provides a unified front to both the Jack and Midi Engines.
 class AWBEngine @impl ModelObserver {
@@ -85,19 +86,23 @@ class AWBEngine @impl ModelObserver {
         __midi.setModelObserver(this);
         setTempo(120);
 
-        # Route all events to the event manager so that legacy bindings still
-        # work.
-        __midi.addProcessor(EventManagerDispatcher(eventManager));
+        # Route all events to the event manager so that legacy bindings and
+        # event time assignment still work.
+        __midi.addInputProcessor(EventManagerDispatcher(eventManager));
 
     }
 
-    ## Start playing midi and jack.
+    void copySection();
+
+    ## Toggle playing midi and jack.
     void play() {
         if (__state != ST_IDLE) {
             cerr `play() called while already playing/recording/latched.\n`;
             return;
         }
 
+        if (__state == ST_IDLE)
+            copySection();
         __jack.unpause();
         # TODO: do this in a more principled manner since we're now the
         # owner of the state?
@@ -185,20 +190,8 @@ class AWBEngine @impl ModelObserver {
         __midi.latchForRecord();
     }
 
-    # Support for the ModelObserver interface.
-
-    class AddTrackCommand @impl Functor1[void, EventManager] {
-        @cvars {
-            Track track;
-        }
-
-        void oper call(EventManager em) {
-            em.addTrack(track);
-        }
-    }
-
     void addTrack(Track track) {
-        __eventManager.commandQueue.add(AddTrackCommand(track));
+        __eventManager.addTrack(track);
     }
 
     ## Add a wave file as a track in the current section.
@@ -327,9 +320,23 @@ class AWBEngine @impl ModelObserver {
         return __eventManager.instrument;
     }
 
+    ## Add a midi event processor to the input chain.
+    void addInputProcessor(EventProcessor processor) {
+        __midi.addInputProcessor(processor);
+    }
+
+    ## Add a midi event processor to the output chain.
+    void addOutputProcessor(EventProcessor processor) {
+        __midi.addOutputProcessor(processor);
+    }
+
     ## Bind an event processor to a control number (channel << 8 + controller
     ## + offset).
-    void addEventProcessor(int eventSelector, EventProcessor processor) {
+    ##
+    ## TODO: move this logic out of here, there should be a "controller
+    ## dispatcher" event processor that multiplexes to per controller
+    ## processors.
+    void addEventProcessor(int eventSelector, LegacyEventProcessor processor) {
         __eventManager.eventProcessors[eventSelector] = processor;
     }
 

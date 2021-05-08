@@ -562,14 +562,14 @@ class InstrumentDispatcher @impl Functor2[bool, MidiSequencer, Event] {
 
     ## Create an output port that all events are sent to.
     @function(AWBEngine) int routeToOutputPort() {
-        self.getMidiEngine().addProcessor(MidiDispatcher());
+        self.getMidiEngine().addOutputProcessor(MidiDispatcher());
         return 0;
     }
 
     ## Route all events to the given instrument object.
     @function(AWBEngine)
     InstrumentDispatcher routeToInstrument(Instrument instrument) {
-        self.getMidiEngine().addProcessor(
+        self.getMidiEngine().addOutputProcessor(
             result := InstrumentDispatcher(instrument)
         );
         return result;

@@ -21,7 +21,7 @@ import spug.loop.model EventManager, LoopCursor, Section;
 
 @import crack.ann assert, cvars, impl, interface, struct;
 
-@export_symbols TimeCallback;
+@export_symbols EventProcessor, TimeCallback;
 
 class MidiSequencer;
 
@@ -129,7 +129,13 @@ alias TimeCallback = Functor1[void, TimeEvent];
     # True if __pos and __transportState are valid.
     bool __posIsValid;
 
-    Array[EventProcessor] __processors = {};
+    Array[EventProcessor]
+        ## Input event processor chain. Events coming in from the midi
+        ## sequencer are sent through this, and may mutate the events.
+        __inputProcessors = {},
+
+        ## Output event processor chain.  The
+         __outputProcessors = {};
     ModelObserver __modelObserver;
 
     ## The track we're currently recording.  If this is non-null and the
@@ -264,11 +270,19 @@ alias TimeCallback = Functor1[void, TimeEvent];
         }
     }
 
-    void __dispatchEvent(Event event) {
-        for (proc :in __processors) {
+    void __dispatchEvent(Array[EventProcessor] processors, Event event) {
+        for (proc :in processors) {
             if (proc(this, event))
                 break;
         }
+    }
+
+    void __dispatchInputEvent(Event event) {
+        __dispatchEvent(__inputProcessors, event);
+    }
+
+    void __dispatchOutputEvent(Event event) {
+        __dispatchEvent(__outputProcessors, event);
     }
 
     void __playPendingEvents(LoopCursor cur, uint pos) {
@@ -277,7 +291,7 @@ alias TimeCallback = Functor1[void, TimeEvent];
             evt := cur.next();
             if (!EndTrack.cast(evt, null)) {
                 info `midieng: playing event $evt`;
-                __dispatchEvent(evt);
+                __dispatchOutputEvent(evt);
             }
         }
     }
@@ -322,7 +336,7 @@ alias TimeCallback = Functor1[void, TimeEvent];
             __playPendingEvents(cur, t);
     }
 
-    @final void __processEvent(Event event) {
+    @final void __processInputEvent(Event event) {
         if (inputChannel > -1 && event := ChannelEvent.cast(event, null))
             event.channel = byte(inputChannel);
 
@@ -375,7 +389,12 @@ alias TimeCallback = Functor1[void, TimeEvent];
             }
         }
 
-        __dispatchEvent(event);
+        __dispatchInputEvent(event);
+
+        # We currently just always send input events to the output event
+        # processor.  We might want to consider putting this in an event
+        # processor and adding it to the end of the input chain, instead.
+        __dispatchOutputEvent(event);
 
         # This probably belongs in the event processor.
         if (!(__recordTrack is null)) {
@@ -413,7 +432,7 @@ alias TimeCallback = Functor1[void, TimeEvent];
                 if (evt) {
                     evt.time = __engine.__getTicks(0);
                     info `got midi event $evt, time is $(evt ? evt.time : 0)`;
-                    __engine.__processEvent(evt);
+                    __engine.__processInputEvent(evt);
                 } else {
                     info `got null event`;
                 }
@@ -534,11 +553,18 @@ alias TimeCallback = Functor1[void, TimeEvent];
     # engine which can be called by any thread.  They need to be
     # reimplemented to queue events to be processed by the engine thread.
 
-    ## Add a processor to the midi engine.  This will get called whenever an
-    ## event is received.
-    void addProcessor(EventProcessor processor) {
+    ## Add an input event processor to the midi engine.  This will get called
+    ## whenever an event is received.
+    void addInputProcessor(EventProcessor processor) {
         lk := MutexLock(__lock);
-        __processors.append(processor);
+        __inputProcessors.append(processor);
+    }
+
+    ## Add an output event processor to the midi engine.  This will get called
+    ## whenever an event is received.
+    void addOutputProcessor(EventProcessor processor) {
+        lk := MutexLock(__lock);
+        __outputProcessors.append(processor);
     }
 
     ## Sets the current model observer, which is notified of changes to the
@@ -658,7 +684,7 @@ alias TimeCallback = Functor1[void, TimeEvent];
 
     void sendEvent(Event event) {
         lk := MutexLock(__lock);
-        __dispatchEvent(event);
+        __processInputEvent(event);
     }
 
     ## Returns true if the engine is playing and there are tracks in the
@@ -734,8 +760,12 @@ alias TimeCallback = Functor1[void, TimeEvent];
         MyThread(__mseq).start();
     }
 
-    void addProcessor(EventProcessor processor) {
-        __mseq.addProcessor(processor);
+    void addInputProcessor(EventProcessor processor) {
+        __mseq.addInputProcessor(processor);
+    }
+
+    void addOutputProcessor(EventProcessor processor) {
+        __mseq.addOutputProcessor(processor);
     }
 
     void setModelObserver(ModelObserver observer) {
@@ -812,6 +842,7 @@ alias TimeCallback = Functor1[void, TimeEvent];
     }
 }
 
+## Dispatcher that sends events to the midi output port.
 class MidiDispatcher @impl EventProcessor {
     bool oper call(MidiSequencer engine, Event event) {
         engine.outPort.send(event);
