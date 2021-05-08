@@ -1,0 +1,388 @@
+
+import crack.cont.array Array;
+import crack.cont.hashmap HashMap;
+import crack.functor Functor2, Functor3;
+import crack.io Formatter, FStr, StringWriter, Reader;
+import crack.lang cmp, makeHashVal, AppendBuffer, Exception, WriteBuffer;
+import crack.logger.ctx Log;
+import crack.protobuf readMessageFromString, Field, Message, ProtoWriter;
+import crack.net Address;
+import crack.net.comm2 Connection, ConnectionFactory, NewConnection,
+    UserHandler, WaiterFor;
+import crack.serial SerialReader, SerialWriter;
+
+@import crack.ann cvars, impl, interface;
+@import crack.protobuf.ann protobuf;
+
+@export_symbols RPCContext, RPCMessage, MethodHandlerFunc, MethodMap;
+
+@protobuf {
+    version = 1
+
+    ## The general RPC message envelope.  Everything gets sent across the wire
+    ## in a serialized string containing one of these.
+    message RPCMessage {
+
+        ## The message id.  When sent with a request, the response should have
+        ## the same id.  Messages without a non-zero message id are presumed
+        ## to be asynchronous and don't get a response.
+        optional int32 id = 1;
+
+        ## The message to be called.  Should only be present for a request.
+        ## If it is absent (or empty), the message is assumed to be a
+        ## response.
+        optional string method = 2;
+
+        ## The request body.  Should only be present for a request. This will
+        ## be another protobuf appropriate for the "request" part of the
+        ## method.
+        optional string request = 3;
+
+        ## The response body. Should only be present for a response.  The
+        ## response protobuf.
+        optional string response = 4;
+
+        ## If there was an error processing a message, this gets returned in
+        ## the response.
+        optional string error = 5;
+    }
+}
+
+alias RPCWaiter = WaiterFor[RPCMessage, int];
+
+class BaseRPCContext {
+    Log log;
+
+    ## Gets set to true when the client has completed authentication.
+    bool authenticated;
+    String peerName;
+
+    oper init(Log log, String peerName) : log = log, peerName = peerName {}
+
+    ## Utility function for writing a response message.
+    void writeResponse(Connection comm, Message response, int32 requestId) {
+        RPCMessage reply = {};
+        reply.id = requestId;
+        reply.response = response ? response.toString() : null;
+        StringWriter backing = {};
+        SerialWriter sw = {backing};
+        sw.write(reply.toString());
+        comm.write(backing.string());
+        log.debug I`sent to poller thread: $(reply.toString().getRepr())`;
+    }
+
+    void writeError(Connection comm, String errorMessage, int32 requestId) {
+        RPCMessage reply = {};
+        reply.id = requestId;
+        reply.error = errorMessage;
+        StringWriter backing = {};
+        SerialWriter sw = {backing};
+        sw.write(reply.toString());
+        comm.write(backing.string());
+        log.debug I`sent to poller thread: $(reply.toString().getRepr())`;
+    }
+}
+
+## Base class for wrappers for RPC methods.  Adapted from mawfs.rpc.
+@abstract
+class MethodHandler
+    @impl Functor3[void, BaseRPCContext, RPCMessage, Connection] {
+
+    @cvars {
+        ## Set to true if authentication isn't required.
+        bool noauth;
+    }
+
+    oper init() {}
+}
+
+## This wraps a function of the form "RespType func(RPCContext, ReqType)".  If
+## the function returns null, it must send its own response later.
+## TODO: Find a better way to deal with the case of deferred responses (or
+## RPCs that don't need a response).
+class TypedMethodHandler[RPCContext, ReqType, RespType]  : MethodHandler {
+
+    alias Func = Functor2[RespType, RPCContext, ReqType];
+    Func __func;
+
+    oper init(Func func) : __func = func {}
+
+    oper init(Func func, bool noauth) :
+        MethodHandler(noauth),
+        __func = func {
+    }
+
+    void oper call(BaseRPCContext ctx, RPCMessage msg, Connection conn) {
+        parcel := ReqType();
+        try {
+            readMessageFromString(parcel, msg.request);
+        } catch (Exception e) {
+            ctx.log.warn I`Invalid request object received in
+                           $(this.class.name), closing connection.`;
+            conn.close();
+            return;
+        }
+        resp := __func(RPCContext.cast(ctx), parcel);
+        if (msg.id) {
+            if (resp) {
+                ctx.writeResponse(conn, resp, msg.id);
+                ctx.log.debug `Sent response to message id $(msg.id)`
+            } else {
+                ctx.log.debug `Deferred response to message id $(msg.id)`;
+            }
+        } else if (resp) {
+            ctx.log.warn I`Discarding response to message without a message \
+                           id.`;
+            ctx.log.debug I`Request was $(msg), response is $(resp)`;
+        }
+    }
+}
+
+alias MethodMap = HashMap[String, MethodHandler];
+
+## Stolen from mawfs.rpc.
+class _FakeReader @impl Reader {
+    uint read(WriteBuffer buf) {
+        return buf.size = 0;
+    }
+}
+
+## Reads protobuf strings from an append buffer.
+## Stolen from mawfs.rpc.
+class _BufferSerialReader {
+    AppendBuffer __buffer = {4096};
+    SerialReader __reader = {_FakeReader()};
+
+    oper init(AppendBuffer buffer) : __buffer = buffer {
+        __reader.buf = __buffer;
+    }
+
+    ## Read a string, returns null if no complete string is in the buffer.
+    @final String readString() {
+        return __reader.readString(false);
+    }
+}
+
+@interface HandlerCallbacks {
+    @abstract void onInit(BaseRPCContext context, Connection conn);
+    @abstract void onTerminate(BaseRPCContext context);
+}
+
+## Handles communication from a peer using the RPC protocol.
+## Note that this is a rip-off of the RPCHandler in mawfs.rpc.  This
+## functionality should probably be moved into Crack.
+class RPCHandler @impl UserHandler {
+
+    ## Serial reader for input.
+    _BufferSerialReader reader;
+
+    ## The session context.
+    BaseRPCContext __context;
+
+    Address __clientAddr;
+    MethodMap __methods;
+    HandlerCallbacks __callbacks;
+    HashMap[int, RPCWaiter] __waiters = {};
+    #RawPtr[_PeerProxyBase] __owner;
+
+    ## methods is nullable
+    oper init(MethodMap methods, BaseRPCContext context, Address clientAddr,
+              HandlerCallbacks callbacks
+              ) :
+        __methods = methods,
+        __context = context,
+        __clientAddr = clientAddr,
+        __callbacks = callbacks {
+    }
+
+    void processRequest(Connection comm, RPCMessage msg) {
+        comm.log.debug `processing method $(msg.method)`;
+        String error;
+
+        handler := __methods.get(msg.method);
+        if (handler) {
+            try {
+                comm.log.debug `calling handler for $(msg.method)`;
+                if (!__context.authenticated && !handler.noauth) {
+                    comm.log.error I`Access denied to method $(msg.method): \
+                                     requires auth`;
+                    error = FStr() I`Access denied, auth required.`;
+                } else {
+                    handler(__context, msg, comm);
+                    return;
+                }
+            } catch (Exception ex) {
+                error = FStr() `$ex`;
+            }
+        } else {
+            comm.log.error `got unknown method $(msg.method)`;
+            error = FStr() `Method $(msg.method.getRepr()) not found`;
+        }
+
+        # if we haven't returned yet, we have to deal with an error.
+
+        # If there's no message id, the message is asynchronous and we don't
+        # return a response.
+        if (!msg.id)
+            return;
+
+
+        # Wrap the reply in a string and ship it back to the client.
+        comm.log.debug I`sending reply, error $error`;
+        __context.writeError(comm, error, msg.id);
+    }
+
+    void process(Connection comm) {
+        # Initialize the reader if we haven't done so.
+        if (!reader)
+            reader = _BufferSerialReader(comm.inBuf);
+        if (!__context.log) {
+            __context.log = comm.log;
+#            if (ssl := SSLConnection.get(comm)) {
+#                __context.authenticated = !(ssl.getUserData(0) is null);
+#
+#                # Only allow unauthenticated SSL connections over localhost.
+#                if (!__context.authenticated &&
+#                    (!(inaddr := InetAddress.cast(__clientAddr, null)) ||
+#                     inaddr.getAddr() != 0x7f000001
+#                     )
+#                    ) {
+#                    comm.log.error I`Unauthenticated SSL connection from \
+#                                     remote client: $__clientAddr`;
+#                    comm.close();
+#                    return;
+#                }
+#            }
+        }
+
+        while (comm.inBuf) {
+            # Get the next message, make sure we were able to read it.
+            serializedMsg := reader.readString();
+            if (!serializedMsg)
+                # Assume this is an incomplete message.
+                return;
+
+            # We've got a complete message, so process it.
+            RPCMessage msg = {};
+            try {
+                readMessageFromString(msg, serializedMsg);
+            } catch (Exception e) {
+                comm.log.warn `Invalid message received, closing connection.`;
+                comm.close();
+                return;
+            }
+
+            if (msg.method) {
+                if (!__methods) {
+                    comm.log.error `conection attempted to send a request`;
+                    __context.writeError(comm,
+                                         'Non-peer cannot process requests',
+                                         msg.id
+                                         );
+                    continue;
+                }
+                processRequest(comm, msg);
+            } else {
+                # Treat it as a response.
+                waiter := __waiters.get(msg.id);
+                if (waiter)
+                    waiter.setResult(msg);
+                else
+                    comm.log.error
+                        `No response found for message id $(msg.id)\n`;
+            }
+        }
+    }
+
+    void terminate(Connection comm) {
+#        if (__owner)
+#            __owner._invalidateProxy();
+
+        # Close all of the open connections.
+        for (waiter :in __waiters) {
+            RPCMessage response = {};
+            response.id = int32(waiter.key);
+            response.error = 'Connection closed prematurely.';
+            waiter.val.setResult(response);
+        }
+
+        __callbacks.onTerminate(__context);
+    }
+
+    void addResponder(Object waiter) {
+        w := RPCWaiter.cast(waiter);
+        __waiters[w.info] = w;
+    }
+
+#    void disown() { __owner = null }
+#    void setOwner(RawPtr[_PeerProxyBase] owner) { __owner = owner }
+}
+
+## Thrown whenever we receive an error from the remote object.
+class RemoteError : Exception {
+    oper init(String message) : Exception(message) {}
+}
+
+## Proxy for sending RPC messages to a remote instance.
+class PeerProxy {
+
+    atomic_int __nextId;
+
+    @cvars {
+        Connection conn;
+    }
+
+    RPCWaiter sendAsync(String method, String parcel) {
+        msg := RPCMessage();
+        msg.id = int32(__nextId += 1);
+        msg.method = method;
+        msg.request = parcel;
+
+        # Wrap the message in a protobuf string representation.
+        StringWriter backing = {};
+        SerialWriter sw = {backing};
+        sw.write(msg.toString());
+
+        waiter := RPCWaiter(msg.id);
+        conn.sendSync(backing.string(), waiter);
+        return waiter;
+    }
+
+    ## Send a message, return a result (which is the response parcel).  Throws
+    ## a RemoteError if the response contained an error.
+    String sendSync(String method, String parcel) {
+        waiter := sendAsync(method, parcel);
+        response := waiter.getResult();
+        if (response.error)
+            throw RemoteError(response.error);
+        return response.response;
+    }
+}
+
+class RPCConnectionFactory @impl ConnectionFactory {
+
+    @cvars {
+        MethodMap __methods;
+        HandlerCallbacks __callbacks;
+    }
+
+    ## Returns a new RPC context for the connection.  Derived classes will
+    ## usually want to override this to provide a customized RPC context.
+    BaseRPCContext makeRPCContext(Log log, String peerName) {
+        return BaseRPCContext(log, peerName);
+    }
+
+    Connection makeConnection(NewConnection conn) {
+        peerAddr := FStr() `$(conn.accepted.addr)`;
+        conn.log.info `accepted connection from $peerAddr\n`;
+        log := Log(conn.log, FStr() `server-client-$peerAddr`);
+        context := makeRPCContext(log, peerAddr);
+        result := Connection(log,
+                             RPCHandler(__methods, context, conn.accepted.addr,
+                                        __callbacks
+                                        )
+                             );
+        __callbacks.onInit(context, result);
+        return result;
+    }
+}
