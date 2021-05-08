@@ -1,0 +1,292 @@
+## Server interface.
+##
+## Messages begin with a single byte indicating the message type.
+## Message types are:
+##
+##  1   MSG_WRITE_MIDI.  Write midi track.
+##      4 byte big endian size of remaining data
+##      null terminated track name
+##      track contents (just a sequence of midi events as they would be
+##      written in a midi file, only without the MTrk header and size)
+##  2   MSG_GET_MIDI.  Request midi track.
+##      null terminated track name
+##      A server should respond to this with message 1.
+##  3   MSG_SET_POS.  Set position.
+##      4 byte big endian position in ticks.
+##      When sent from client to server, this sets the current position.  When
+##      sent from server to client, this informs the client of the current
+##      position.
+##  4   MSG_ERROR.  Report an error.
+##      null terminated error message.
+##      Reports an error in response to the last message.
+
+import crack.cont.array Array;
+import crack.functor Functor2;
+import crack.io cerr, BufferReader, Formatter, FStr, StringWriter, SEEK_SET;
+import crack.lang cmp, makeHashVal, AppendBuffer, Buffer;
+import crack.logger.ctx Log;
+import crack.midi.event MidiReader, MidiWriter, Track;
+import crack.net InetAddress;
+import crack.net.comm2 Comm, Connection, ConnectionFactory, NewConnection,
+    UserHandler;
+import crack.protobuf Field, Message, ProtoWriter;
+import crash Builtin, EvalContext;
+import types IntObj;
+
+import .engine AWBEngine;
+import .protocol BaseRPCContext, HandlerCallbacks, MethodMap,
+    RemoteError, RPCConnectionFactory, TypedMethodHandler;
+
+@import crack.ann cvars, impl;
+@import crack.protobuf.ann protobuf;
+@import ann function;
+@import .rpcann rpc;
+
+const int
+    MSG_WRITE_MIDI = 1,
+    MSG_GET_MIDI = 2,
+    MSG_SET_POS = 3,
+    MSG_ERROR = 4;
+
+@protobuf {
+    version = 1
+
+    message PutMidiRequest {
+
+        ## The midi track name.
+        optional string name = 1;
+
+        ## Midi track contents (in standard midi file format, minus the RIFF
+        ## headers and sizes).
+        optional string contents = 2;
+    }
+
+    message GetMidiRequest {
+        ## The midi track name.
+        optional string name = 1;
+    }
+
+    message GetMidiResponse {
+        ## The midi track name.
+        optional string name = 1;
+
+        ## Midi track contents (same format as in PutMidiRequest).
+        optional string contents = 2;
+    }
+
+    message EmptyResponse {
+        optional int32 ignore = 1;
+    }
+}
+
+
+## Read and return a 4 byte big-endian from the buffer.
+uint32 read4(Buffer buf, int index) {
+    return uint32(buf[index]) << 24 |
+           uint32(buf[index + 1]) << 16 |
+           uint32(buf[index + 2]) << 8 |
+           uint32(buf[index + 3]);
+}
+
+## Read a null terminated string from the buffer and return it.  The null
+## terminator is not retained in the returned string.
+##
+## Returns null if no null terminator is discovered in the string.
+String readString(Buffer buf, int index) {
+    i := index;
+    while (i < buf.size && buf[i]) ++i;
+
+    if (i == buf.size)
+        return null;
+
+    return String(buf, index, i - index);
+}
+
+class MessageWriter = AppendBuffer {
+
+    ## Write a null terminated string.
+    void writeString(String data) {
+        extend(data);
+        append(0);
+    }
+
+    void write4(uint32 data) {
+        append(byte(data >> 24));
+        append(byte(data >> 16));
+        append(byte(data >> 8));
+        append(byte(data));
+    }
+}
+
+class AWBHandler @impl UserHandler {
+
+    @cvars {
+        AWBEngine engine;
+    }
+
+    void process(Connection conn) {
+        while (conn.inBuf) {
+            msg := conn.inBuf[0];
+            if (msg == MSG_WRITE_MIDI) {
+                # Write midi track.
+
+                # Make sure we have the whole message.
+                if (conn.inBuf.count() < 5)
+                    return;
+                len := read4(conn.inBuf, 1);
+                if (conn.inBuf.count() < len + 5)
+                    return;
+
+                name := readString(conn.inBuf, 5);
+
+                # Create a MidiReader that reads from the position after the track
+                # name.
+                bufReader := BufferReader(conn.inBuf);
+                bufReader.seek(int64(6 + name.count()), SEEK_SET);
+                cerr `midi buf contains $(
+                    String(conn.inBuf, 6 + name.count(),
+                           conn.inBuf.size - 6 + name.count()
+                           ).getRepr())\n`;
+                reader := MidiReader(bufReader);
+
+                # Need to clobber any existing track.
+                track := reader.readTrack(name);
+                engine.addTrack(track);
+
+                conn.inBuf.compact(5 + len);
+            } else if (msg == MSG_GET_MIDI) {
+                # Request midi track.
+                name := readString(conn.inBuf, 1);
+                if (name is null)
+                    return;
+
+                track := engine.getTrackByName(name);
+                String encodedTrack;
+                if (track) {
+                    writer := StringWriter();
+                    track.writeTo(MidiWriter(writer));
+                    encodedTrack = writer.string();
+                } else {
+                    # Should probably give an error in these cases.
+                    encodedTrack = '';
+                }
+
+                conn.inBuf.compact(name.count() + 2);
+
+                response := MessageWriter(AppendBuffer(1024));
+                response.append(1);
+                response.write4(uint32(name.count() + 1));
+                response.writeString(name);
+                response.extend(encodedTrack);
+                conn.write(response);
+            } else {
+                response := MessageWriter(AppendBuffer(1024));
+                response.append(MSG_ERROR);
+                response.writeString(FStr() `Unknown message type $msg`);
+                conn.write(response);
+                conn.close();
+                return;
+            }
+        }
+    }
+
+    void terminate(Connection conn) {}
+    void addResponder(Object responder) {}
+}
+
+class AWBHandlerFactory @impl ConnectionFactory {
+
+    @cvars {
+        AWBEngine engine;
+    }
+
+    Connection makeConnection(NewConnection conn) {
+        return Connection(conn.log, AWBHandler(engine));
+    }
+}
+
+class RPCContext : BaseRPCContext {
+
+    AWBEngine engine;
+
+    oper init(Log log, AWBEngine engine) :
+        BaseRPCContext(log, 'peer'),
+        engine = engine {
+    }
+}
+
+class AWBConnectionFactory : RPCConnectionFactory {
+    AWBEngine engine;
+
+    oper init(MethodMap methods, HandlerCallbacks callbacks,
+              AWBEngine engine) :
+        RPCConnectionFactory(methods, callbacks),
+        engine = engine {
+    }
+
+    BaseRPCContext makeRPCContext(Log log, String peerName) {
+        return RPCContext(log, engine);
+    }
+}
+
+@rpc
+EmptyResponse putMidiTrack(PutMidiRequest req) {
+    bufReader := BufferReader(req.contents);
+    bufReader.seek(int64(6 + req.name.count()), SEEK_SET);
+    reader := MidiReader(bufReader);
+
+    # Need to clobber any existing track.
+    track := reader.readTrack(req.name);
+    context.engine.addTrack(track);
+
+    return EmptyResponse();
+}
+
+@rpc
+GetMidiResponse getMidiTrack(GetMidiRequest req) {
+    track := context.engine.getTrackByName(req.name);
+    String encodedTrack;
+    resp := GetMidiResponse();
+    resp.name = req.name;
+    if (track) {
+        writer := StringWriter();
+        track.writeTo(MidiWriter(writer));
+        resp.contents = writer.string();
+    } else {
+        # Should probably give an error in these cases.
+        throw RemoteError(FStr() `Track $(req.name) not found.`);
+    }
+    return resp;
+}
+
+
+class AWBHandlerCallbacks @impl HandlerCallbacks {
+    void onInit(BaseRPCContext context, Connection conn) {}
+    void onTerminate(BaseRPCContext context) {}
+}
+
+const METHODS := MethodMap();
+METHODS['putMidiTrack'] = putMidiTrack.makeTypedMethodHandler(true);
+METHODS['getMidiTrack'] = getMidiTrack.makeTypedMethodHandler(true);
+
+Comm comm;
+
+void serve(AWBEngine engine, int port) {
+    comm = Comm(Log(null, null, cerr, cerr, cerr, 'server'));
+    comm.start();
+#    comm.startServer(InetAddress(127, 0, 0, 1, port),
+#                     AWBHandlerFactory(engine),
+#                     true
+#                     );
+    comm.startServer(InetAddress(127, 0, 0, 1, port),
+                     AWBConnectionFactory(METHODS, AWBHandlerCallbacks(),
+                                          engine
+                                          ),
+                     true
+                     );
+}
+
+@function int startServer(AWBEngine engine, int port) {
+    serve(engine, port);
+    return 0;
+}
