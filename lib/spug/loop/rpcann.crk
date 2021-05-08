@@ -1,0 +1,64 @@
+## RPC annotation.
+
+import crack.ann deserializeXMac, getIdent, readBlock, readDelimited, xmac,
+    NodeList, NodeListImpl, Type;
+import crack.io cerr, FStr;
+import crack.compiler CrackContext, Token, TOK_LPAREN, TOK_RPAREN;
+
+@import crack.ann xmac;
+
+void rpc(CrackContext ctx) {
+    String className;
+
+    # XXX we shouldn't need to consume the docs, we can let the generated
+    # class do that.
+    #docs := ctx.consumeDocs();
+
+    # read the return type (which is the response type).
+    respType := NodeListImpl();
+    Type.parse(ctx, respType);
+
+    # read the name
+    funcNameTok := getIdent(ctx);
+
+    # get the paren and arg list.
+    tok := ctx.getToken();
+    if (!tok.isLParen())
+        ctx.error(tok,
+                  FStr() `Expected left paren, got $(tok.getText())\0`.buffer
+                  );
+
+    # parse the return type and argument name.
+    reqType := NodeListImpl();
+    Type.parse(ctx, reqType);
+    parmName := getIdent(ctx);
+
+    # parse the closing paren.
+    tok = ctx.getToken();
+    if (!tok.isRParen()) {
+        ctx.error(tok,
+                  FStr() I`Expected right paren, got $(tok.getText()) (\
+                           additional parameters are not allowed after \
+                           the request paramter)\0`.buffer
+                  );
+    }
+
+    # parse the function body
+    body := readBlock(ctx);
+
+    @xmac* {
+        class $funcNameTok @impl Functor2[$respType, RPCContext, $reqType] {
+
+            oper init() {}
+
+            $respType oper call(RPCContext context, $reqType $parmName) $body
+
+            alias MyTypedMethodHandler =
+                TypedMethodHandler[RPCContext, $reqType, $respType];
+
+            @static MyTypedMethodHandler makeTypedMethodHandler(bool noauth) {
+                return MyTypedMethodHandler($funcNameTok(), noauth);
+            }
+        }
+    }.expand(ctx);
+}
