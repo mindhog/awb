@@ -829,10 +829,6 @@ class EventManager @impl EventContext {
 
 
     bool onInputEvent(Event event) {
-        if (mode == LATCHED_RECORD)
-            doRecord();
-
-        event.time = getRelTime();
         info `got event $event`;
 
         # Divert bound events to the correct event processor.

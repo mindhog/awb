@@ -317,6 +317,7 @@ alias TimeCallback = Functor1[void, TimeEvent];
     void __endRecord() {
         info `midieng: saving recorded track`;
         t := __getTicks(0);
+        __recordTrack.append(EndTrack(t));
         __section.markEnding(__recordTrack, t, true);
         __section.tracks.append(__recordTrack);
 
@@ -446,6 +447,9 @@ alias TimeCallback = Functor1[void, TimeEvent];
     ## for each cycle.
     void runOneCycle(Poller poller, TimeDelta timeout) {
         lk := MutexLock(__lock);
+
+        # Actual time to wait, null if there is no next event.
+        TimeDelta actualTimeout;
         __updateJackState();
 
         if (__state != ST_IDLE) {
@@ -494,11 +498,13 @@ alias TimeCallback = Functor1[void, TimeEvent];
                     delta := float(nextEventTime) / __ticksPerSecond;
                     timeout.secs = int32(delta);
                     timeout.nsecs = int32((delta - floor(delta)) *
-                                             1000000000.0);
+                                          1000000000.0);
+                    actualTimeout = timeout;
                 } else {
                     # Trigger an event for 0.1 seconds from now.
                     timeout.secs = 0;
                     timeout.nsecs = 100000000;
+                    actualTimeout = timeout;
                 }
             }
         }
@@ -506,7 +512,7 @@ alias TimeCallback = Functor1[void, TimeEvent];
         # We're going to wait now, so invalidate the jack transport state.
         __posIsValid = false;
         lk = null;
-        poller.waitAndProcess(timeout);
+        poller.waitAndProcess(actualTimeout);
     }
 
     void registerHandlers(Poller poller) {
@@ -614,7 +620,6 @@ alias TimeCallback = Functor1[void, TimeEvent];
 
             __startTime += __pos.usecs - __lastTime;
             __jack.start();
-
         } else {
             __jack.stop();
 
@@ -671,7 +676,9 @@ alias TimeCallback = Functor1[void, TimeEvent];
             __updateJackState();
             t = __pos.usecs - __startTime;
         }
-        __setTrackCursors(__usecsToTicks(t) % __section.span);
+        __setTrackCursors(__section.span ? __usecsToTicks(t) % __section.span :
+                                           0
+                          );
 
         __interrupter.signal();
     }
@@ -704,6 +711,12 @@ alias TimeCallback = Functor1[void, TimeEvent];
         } else {
             return __getTicks(__section.span);
         }
+    }
+
+    ## Returns the number of ticks since the beginning of the section without
+    ## wrapping to the span duration.
+    uint getRecordTicks() {
+        return __getTicks(0);
     }
 }
 
@@ -861,7 +874,11 @@ class EventManagerDispatcher @impl EventProcessor {
         EventManager __eventManager;
     }
 
-    bool oper call(MidiSequencer engine, Event event) {
-        return __eventManager.onInputEvent(event);
+    bool oper call(MidiSequencer mseq, Event event) {
+        result := __eventManager.onInputEvent(event);
+
+        # The event manager doesn't know what the current tick is.
+        event.time = mseq.getRecordTicks();
+        return result;
     }
 }
