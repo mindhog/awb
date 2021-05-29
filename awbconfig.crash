@@ -89,6 +89,32 @@ def getGain {track} {
     $project getGain $track
 }
 
+def MidiState {parent size} {
+    object {
+        var active [+ 0]
+        var win [StatefulText $parent $size 'Midi']
+        var eng [get_engine]
+        win bind $KEY_ENTER {
+            if {give $active} {
+                win setNormalAttr 130
+                win setUnfocusedAttr 2
+                set active [+ 0]
+                eng clearRecorders
+            } else {
+                self setNormalAttr 129
+                self setUnfocusedAttr 1
+                set active [+ 1]
+                eng addRecorder [makeMidiTrackRecorder]
+            }
+
+            give 'true'
+        }
+
+        win setNormalAttr 130
+        win setUnfocusedAttr 2
+    }
+}
+
 def v {} 'Bring up the text panel UI.' {
 
     # Override builtin play, which still just starts the event manager.
@@ -97,10 +123,15 @@ def v {} 'Bring up the text panel UI.' {
     }
 
     runUI {
+        var toolbar [MidiState $mainColumn 1]
         TrackList $mainColumn -1
         bind $KEY_SPACE play
         bind $KEY_LEFT bak
         bind $KEY_RIGHT fwd
+
+        # Lower-case "r" to record.
+        bind 114 {[get_engine] record}
+
         setStatusText 'AWB -- <Space> toggle play, <q> to quit, <Left> back, <Right> Forward'
         TimeBar $mainColumn 1 [getAWBEngine]
     }

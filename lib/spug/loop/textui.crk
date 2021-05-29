@@ -9,8 +9,8 @@ import crack.io cerr, cout, FStr, StandardFormatter, StringFormatter;
 import crack.lang Exception;
 import crack.net Poller;
 import crack.net.pollqueue PollQueue;
-import crash createRootContext, eval, parseBlockArg, parseString, Builtin,
-    EvalContext, Obj, ObjOf, SimpleValue;
+import crash createRootContext, eval, parseBlockArg, parseString, Block,
+    Builtin, EvalContext, Obj, ObjOf, SimpleValue;
 import deadly.layout Column, Container, Row;
 import deadly.termlist List;
 import repl repl;
@@ -145,6 +145,131 @@ class BarSlider : Window {
     result := ObjOf[BarSlider](self);
     result.define('setValue', setValue(self));
     result.define('setController', setController(self));
+    return result;
+}
+
+class StatefulText : Window {
+    byte
+        backgroundAttr = 0,
+        unfocusedAttr = 7,
+        normalAttr = 0xF;
+
+    String text;
+
+    HashMap[int, Functor0[bool]] __callbacks = {};
+
+    oper init(Window parent, String text) : Window(parent), text = text {}
+
+    void bind(int key, Functor0[bool] callback) {
+        __callbacks[key] = callback;
+    }
+
+    bool onEvent(Event event) {
+        if (ke := KeyEvent.cast(event, null)) {
+            cb := __callbacks.get(ke.key);
+            if (cb)
+                return cb();
+        }
+        return false;
+    }
+
+    void paint() {
+        gc := getGraphicsContext();
+        gc.fillRect(0, 0, width, height, backgroundAttr, b' ');
+        gc.write(0, 0, getFocus() ? normalAttr : unfocusedAttr, text);
+    }
+}
+
+alias StatefulTextObj = ObjOf[StatefulText];
+
+class KeyCallback @impl Functor0[bool] {
+    @cvars {
+        EvalContext context;
+        Block block;
+    }
+
+    bool oper call() {
+        ctx := EvalContext(context);
+        ctx.pushFuncFrame();
+        Object result;
+        try {
+            result = block.evaluate(ctx);
+        } catch (Exception ex) {
+            ctx.popFuncFrame();
+            throw ex;
+        }
+
+        return result;
+    }
+}
+
+@function StatefulTextObj makeStatefulText(Window parent, int size, String text) {
+    @function(StatefulText) String getText() {
+        return self.text;
+    }
+
+    @function(StatefulText) String setText(String val) {
+        return self.text = val;
+    }
+
+    @function(StatefulText) int getBackgroundAttr() {
+        return self.backgroundAttr;
+    }
+
+    @function(StatefulText) int setBackgroundAttr(int attr) {
+        return self.backgroundAttr = byte(attr);
+    }
+
+    @function(StatefulText) int getUnfocusedAttr() {
+        return self.unfocusedAttr;
+    }
+
+    @function(StatefulText) int setUnfocusedAttr(int attr) {
+        return self.unfocusedAttr = byte(attr);
+    }
+
+    @function(StatefulText) int getNormalAttr() {
+        return self.normalAttr;
+    }
+
+    @function(StatefulText) int setNormalAttr(int attr) {
+        return self.normalAttr = byte(attr);
+    }
+
+    class BindCmd : Builtin {
+        @cvars {
+            StatefulText innerSelf;
+            StatefulTextObj self;
+        }
+
+        Object invoke(EvalContext ctx, Array[Object] args) {
+            if (args.count() != 2)
+                throw Exception('"bind" requires int, block');
+            key := IntObj.convert(args[0]).val;
+            block := parseBlockArg(args, 1);
+
+            ctx.pushFuncFrame();
+            ctx.define('self', self);
+            innerSelf.bind(key, KeyCallback(EvalContext(ctx), block));
+            ctx.popFuncFrame();
+
+            return IntObj(0);
+        }
+    }
+
+    self := StatefulText(parent, text);
+    if (container := Container.cast(parent, null))
+        container.addChild(self, size);
+    result := ObjOf[StatefulText](self);
+    result.define('bind', BindCmd(self, result));
+    result.define('getText', getText(self));
+    result.define('setText', setText(self));
+    result.define('setBackgroundAttr', setBackgroundAttr(self));
+    result.define('getBackgroundAttr', getBackgroundAttr(self));
+    result.define('getUnfocusedAttr', getUnfocusedAttr(self));
+    result.define('setUnfocusedAttr', setUnfocusedAttr(self));
+    result.define('getNormalAttr', getNormalAttr(self));
+    result.define('setNormalAttr', setNormalAttr(self));
     return result;
 }
 
@@ -388,6 +513,7 @@ class TextController : Object @implements Controller, AppMethods {
 
         __interp = interp;
         __interp.define('runUI', RunUI(this));
+        __interp.define('StatefulText', makeStatefulText());
         __interp.define('TrackList', makeTrackList(this));
         __interp.define('TimeBar', makeTimeBar(this));
         __interp.define('BarSlider', makeBarSlider());
