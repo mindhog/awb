@@ -11,7 +11,7 @@ import crack.net Poller;
 import crack.net.pollqueue PollQueue;
 import crash createRootContext, eval, parseBlockArg, parseString, Block,
     Builtin, EvalContext, Obj, ObjOf, SimpleValue;
-import deadly.layout Column, Container, Row;
+import deadly.layout Column, Container, Frame, Row;
 import deadly.termlist List;
 import repl repl;
 import .engine engine, AWBEngine;
@@ -128,6 +128,12 @@ class BarSlider : Window {
     }
 }
 
+## If "parent" is a container, add the child to it with the given size.
+void addToContainer(Window parent, Window child, int size) {
+    if (container := Container.cast(parent, null))
+        container.addChild(child, size);
+}
+
 @function Obj makeBarSlider(Window parent, int size) {
     @function(BarSlider) float setValue(float value) {
         self.value = value;
@@ -140,8 +146,7 @@ class BarSlider : Window {
     }
 
     self := BarSlider(parent);
-    if (container := Container.cast(parent, null))
-        container.addChild(self, size);
+    addToContainer(parent, self, size);
     result := ObjOf[BarSlider](self);
     result.define('setValue', setValue(self));
     result.define('setController', setController(self));
@@ -258,8 +263,7 @@ class KeyCallback @impl Functor0[bool] {
     }
 
     self := StatefulText(parent, text);
-    if (container := Container.cast(parent, null))
-        container.addChild(self, size);
+    addToContainer(parent, self, size);
     result := ObjOf[StatefulText](self);
     result.define('bind', BindCmd(self, result));
     result.define('getText', getText(self));
@@ -270,6 +274,43 @@ class KeyCallback @impl Functor0[bool] {
     result.define('setUnfocusedAttr', setUnfocusedAttr(self));
     result.define('getNormalAttr', getNormalAttr(self));
     result.define('setNormalAttr', setNormalAttr(self));
+    return result;
+}
+
+## Make a "Row" layout control, which manages a row of child windows.
+@function Row makeRow(Window parent, int size) {
+    self := Row(parent);
+    addToContainer(parent, self, size);
+    return self;
+}
+
+## Make a "Column" layout control, which manages a row of child windows.
+@function Column makeColumn(Window parent, int size) {
+    self := Column(parent);
+    addToContainer(parent, self, size);
+    return self;
+}
+
+alias ObjOfFrame = ObjOf[Frame];
+
+## Create a frame window, which can be used to present one of a number of
+## child windows.
+@function ObjOfFrame makeFrame(Window parent, int size) {
+
+    @function(Frame) int setParcel(Window parcel) {
+        self.parcel = parcel;
+        return 0;
+    }
+
+    @function(Frame) Window getParcel() {
+        return self.parcel;
+    }
+
+    self := Frame(parent);
+    addToContainer(parent, self, size);
+    result := ObjOf[Frame](self);
+    result.define('setParcel', setParcel(self));
+    result.define('getParcel', getParcel(self));
     return result;
 }
 
@@ -463,8 +504,7 @@ class TextController : Object @implements Controller, AppMethods {
         @function(TextController)
         TrackList makeTrackList(Window parent, int size) {
             list := TrackList(parent);
-            if (cont := Container.cast(parent, null))
-                cont.addChild(list, size);
+            addToContainer(parent, list, size);
             self.__trackLists.append(list);
             return list;
         }
@@ -514,6 +554,9 @@ class TextController : Object @implements Controller, AppMethods {
         __interp = interp;
         __interp.define('runUI', RunUI(this));
         __interp.define('StatefulText', makeStatefulText());
+        __interp.define('Row', makeRow());
+        __interp.define('Column', makeColumn());
+        __interp.define('Frame', makeFrame());
         __interp.define('TrackList', makeTrackList(this));
         __interp.define('TimeBar', makeTimeBar(this));
         __interp.define('BarSlider', makeBarSlider());
