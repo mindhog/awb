@@ -732,6 +732,12 @@ class ExportMidiFileCmd : Builtin {
     throw Exception(FStr() `Unknown log level: $level`);
 }
 
+## Write 'text' to standard error.
+@function int prerr(String text) {
+    cerr `$text`;
+    return 0;
+}
+
 @function AudioFileRecorder makeAudioFileRecorder(String filename) {
     return AudioFileRecorder(filename);
 }
@@ -856,6 +862,7 @@ class InterpWrapper {
         ctx.define('recordFile', recordFile());
         ctx.define('getRelativePath', getRelativePath());
         ctx.define('setLogLevel', setLogLevel_());
+        ctx.define('prerr', prerr());
         ctx.define('CVR_MULT', SimpleValue(IntObj(CVR_MULT)));
         ctx.define('get_engine', get_engine());
         ctx.define('start_server', startServer());
