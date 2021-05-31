@@ -30,6 +30,10 @@ alias BindingMap = HashMap[int, Functor1[bool, AppContext]];
 
 BindingMap appBindings = BindingMap();
 
+## This flag may be set by external modules, if true standard-error is
+## captured and stored in a string when we bring up the terminal UI.
+bool captureCerr = true;
+
 class App : TermApp {
     AppContext __context;
 
@@ -473,7 +477,8 @@ class TextController : Object @implements Controller, AppMethods {
 
                 StandardFormatter tempOut = cout, tempErr = cerr;
                 cout = StringFormatter();
-                cerr = StringFormatter();
+                if (captureCerr)
+                    cerr = StringFormatter();
 
                 Exception error;
                 try {
@@ -486,7 +491,8 @@ class TextController : Object @implements Controller, AppMethods {
                 }
 
                 cout = tempOut;
-                cerr = tempErr;
+                if (tempErr !is cerr)
+                    cerr = tempErr;
 
                 context.popFuncFrame();
                 self.__trackLists.clear();

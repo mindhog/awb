@@ -33,7 +33,7 @@ import crash SimpleValue;
 import spug.loop.engine engine, AWBEngine;
 import spug.loop.jack WaveManager;
 import spug.loop.tel AppMethods, InterpWrapper;
-import spug.loop.textui TextController;
+import spug.loop.textui captureCerr, TextController;
 import spug.loop.model programNames, ChannelMap, EventManager, Project,
     Section, Controller, WaveTrack, IDLE, LATCHED_RECORD, PLAY, RECORD;
 import spug.loop.instrument FluidSynthInstrument, Instrument, Orchestra;
@@ -63,6 +63,12 @@ CmdOptions cl = [
     Option('legacy-ui', 'u',
            'Use the legacy SDL UI instead of the new text UI.',
            'false', CMD_BOOL),
+    Option('no-capture-stderr', 'e',
+           'Do not capture standarderror when running the text UI (useful for '
+           'sending log output to a text file or another terminal).',
+           'false',
+           CMD_BOOL
+           ),
 ];
 
 nonFlagArgs := cl.parse(argv);
@@ -87,6 +93,8 @@ options)\n`;
     clientNum = parseInt(portName.slice(0, colonPos));
     portNum = parseInt(portName.slice(colonPos + 1));
 }
+
+captureCerr = !cl.getBool('no-capture-stderr');
 
 Array[byte] MAJ_CHORD = [0, 4, 7];
 
