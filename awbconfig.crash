@@ -123,8 +123,14 @@ def v {} 'Bring up the text panel UI.' {
     }
 
     runUI {
-        var toolbar [MidiState $mainColumn 1]
-        TrackList $mainColumn -1
+        MidiState $mainColumn 1
+
+        var tracklist [TrackList $mainColumn -1]
+        tracklist bind $KEY_ENTER {
+            prerr [format 'selection is ' [self getSelection]]
+            give ''
+        }
+
         bind $KEY_SPACE play
         bind $KEY_LEFT bak
         bind $KEY_RIGHT fwd

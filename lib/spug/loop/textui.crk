@@ -4,7 +4,7 @@ import crack.cont.hashmap HashMap;
 import crack.exp.termui Event, KeyEvent, TermApp, Window, KEY_UP, KEY_DOWN,
     KEY_LEFT, KEY_RIGHT, KEY_PGUP, KEY_PGDN, KEY_BACKSPACE, KEY_ENTER,
     KEY_ESC, KEY_SPACE;
-import crack.functor Functor0, Functor1;
+import crack.functor Functor0, Functor1, Functor2;
 import crack.io cerr, cout, FStr, StandardFormatter, StringFormatter;
 import crack.lang Exception;
 import crack.net Poller;
@@ -87,6 +87,58 @@ class TrackList : List {
     void trackDeleted() {
         reloadTracks();
     }
+
+    @function(TrackList) int getSelection() {
+        return self.selection;
+    }
+
+    @function(TrackList) int setSelection(int index) {
+        self.selection = index;
+        return index;
+    }
+}
+
+## Command to bind a key event to a block.
+##
+## WidgetType is a crack.exp.termui Window that has a method bind(int,
+## KeyCallback[WidgetType]).
+class BindCmd[WidgetType]  : Builtin {
+    @cvars {
+        WidgetType innerSelf;
+        ObjOf[WidgetType] self;
+    }
+
+    String getDoc() {
+        return FStr() I`\
+            bind <key-code:int> <block:str> -- bind a key to a block.
+
+            Bind the key code to the specified block.  The block will be
+            evaluated whenever the key is pressed and the widget has the
+            focus.
+
+            If the block evaluates to "true" then no further callbacks are
+            called.
+
+            The following variables are defined within the block context:
+
+                self: The widget.
+                event: The event.
+            `;
+    }
+
+    Object invoke(EvalContext ctx, Array[Object] args) {
+        if (args.count() != 2)
+            throw Exception('"bind" requires int, block');
+        key := IntObj.convert(args[0]).val;
+        block := parseBlockArg(args, 1);
+
+        ctx.pushFuncFrame();
+        ctx.define('self', self);
+        innerSelf.bind(key, KeyCallback[WidgetType](EvalContext(ctx), block));
+        ctx.popFuncFrame();
+
+        return IntObj(0);
+    }
 }
 
 ## The BarSlider is a horizontal single bar graph window that displays two
@@ -165,11 +217,11 @@ class StatefulText : Window {
 
     String text;
 
-    HashMap[int, Functor0[bool]] __callbacks = {};
+    HashMap[int, Functor2[bool, StatefulText, Event]] __callbacks = {};
 
     oper init(Window parent, String text) : Window(parent), text = text {}
 
-    void bind(int key, Functor0[bool] callback) {
+    void bind(int key, Functor2[bool, StatefulText, Event] callback) {
         __callbacks[key] = callback;
     }
 
@@ -177,7 +229,7 @@ class StatefulText : Window {
         if (ke := KeyEvent.cast(event, null)) {
             cb := __callbacks.get(ke.key);
             if (cb)
-                return cb();
+                return cb(this, event);
         }
         return false;
     }
@@ -191,15 +243,16 @@ class StatefulText : Window {
 
 alias StatefulTextObj = ObjOf[StatefulText];
 
-class KeyCallback @impl Functor0[bool] {
+class KeyCallback[WidgetType] @impl Functor2[bool, WidgetType, Event] {
     @cvars {
         EvalContext context;
         Block block;
     }
 
-    bool oper call() {
+    bool oper call(WidgetType widget, Event event) {
         ctx := EvalContext(context);
         ctx.pushFuncFrame();
+        ctx.define('event', SimpleValue(event));
         Object result;
         try {
             result = block.evaluate(ctx);
@@ -207,6 +260,7 @@ class KeyCallback @impl Functor0[bool] {
             ctx.popFuncFrame();
             throw ex;
         }
+        ctx.popFuncFrame();
 
         return result;
     }
@@ -245,31 +299,10 @@ class KeyCallback @impl Functor0[bool] {
         return self.normalAttr = byte(attr);
     }
 
-    class BindCmd : Builtin {
-        @cvars {
-            StatefulText innerSelf;
-            StatefulTextObj self;
-        }
-
-        Object invoke(EvalContext ctx, Array[Object] args) {
-            if (args.count() != 2)
-                throw Exception('"bind" requires int, block');
-            key := IntObj.convert(args[0]).val;
-            block := parseBlockArg(args, 1);
-
-            ctx.pushFuncFrame();
-            ctx.define('self', self);
-            innerSelf.bind(key, KeyCallback(EvalContext(ctx), block));
-            ctx.popFuncFrame();
-
-            return IntObj(0);
-        }
-    }
-
     self := StatefulText(parent, text);
     addToContainer(parent, self, size);
     result := ObjOf[StatefulText](self);
-    result.define('bind', BindCmd(self, result));
+    result.define('bind', BindCmd[StatefulText](self, result));
     result.define('getText', getText(self));
     result.define('setText', setText(self));
     result.define('setBackgroundAttr', setBackgroundAttr(self));
@@ -507,12 +540,18 @@ class TextController : Object @implements Controller, AppMethods {
             }
         }
 
+        alias TrackListObj = ObjOf[List];
+
         @function(TextController)
-        TrackList makeTrackList(Window parent, int size) {
+        TrackListObj makeTrackList(Window parent, int size) {
             list := TrackList(parent);
             addToContainer(parent, list, size);
+            result := TrackListObj(list);
+            result.define('getSelection', TrackList.getSelection(list));
+            result.define('setSelection', TrackList.setSelection(list));
+            result.define( 'bind', BindCmd[List](list, result));
             self.__trackLists.append(list);
-            return list;
+            return result;
         }
 
         @function(TextController)
