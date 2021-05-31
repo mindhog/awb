@@ -549,7 +549,7 @@ class TextController : Object @implements Controller, AppMethods {
             result := TrackListObj(list);
             result.define('getSelection', TrackList.getSelection(list));
             result.define('setSelection', TrackList.setSelection(list));
-            result.define( 'bind', BindCmd[List](list, result));
+            result.define('bind', BindCmd[List](list, result));
             self.__trackLists.append(list);
             return result;
         }
