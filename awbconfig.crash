@@ -115,6 +115,21 @@ def MidiState {parent size} {
     }
 }
 
+def EntryBar {parent size label enterCallback} {
+    object {
+        var row [Row $parent $size]
+        var label [StatefulText $row 10 $label]
+        var entry [Entry $row -1]
+        var lastParcel [parent getParcel]
+        parent setParcel $row
+        entry setFocus [+ 1]
+        entry bind $KEY_ENTER {
+            enterCallback [entry getText]
+            parent setParcel $lastParcel
+        }
+    }
+}
+
 def v {} 'Bring up the text panel UI.' {
 
     # Override builtin play, which still just starts the event manager.
@@ -125,11 +140,21 @@ def v {} 'Bring up the text panel UI.' {
     runUI {
         MidiState $mainColumn 1
 
-        var tracklist [TrackList $mainColumn -1]
+        var centerPane [Frame $mainColumn -1]
+
+        var tracklist [TrackList $centerPane -1]
         tracklist bind $KEY_ENTER {
-            prerr [format 'selection is ' [self getSelection]]
-            give ''
+            var menu [List $centerPane -1]
+            menu add 'Do foo'
+            menu add 'Do bar'
+            centerPane setParcel $menu
+            menu bind $KEY_ENTER {
+                centerPane setParcel $tracklist
+                give true
+            }
+            give true
         }
+        centerPane setParcel $tracklist
 
         bind $KEY_SPACE play
         bind $KEY_LEFT bak
@@ -139,7 +164,10 @@ def v {} 'Bring up the text panel UI.' {
         bind 114 {[get_engine] record}
 
         setStatusText 'AWB -- <Space> toggle play, <q> to quit, <Left> back, <Right> Forward'
-        TimeBar $mainColumn 1 [getAWBEngine]
+
+        var bottomBar [Frame $mainColumn 1]
+        var timeBar [TimeBar $mainColumn 1 [getAWBEngine]]
+        bottomBar setParcel $timeBar
     }
 }
 

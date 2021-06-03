@@ -6,11 +6,12 @@ import crack.exp.termui Event, KeyEvent, TermApp, Window, KEY_UP, KEY_DOWN,
     KEY_ESC, KEY_SPACE;
 import crack.functor Functor0, Functor1, Functor2;
 import crack.io cerr, cout, FStr, StandardFormatter, StringFormatter;
-import crack.lang Exception;
+import crack.lang AppendBuffer, Exception;
 import crack.net Poller;
 import crack.net.pollqueue PollQueue;
 import crash createRootContext, eval, parseBlockArg, parseString, Block,
     Builtin, EvalContext, Obj, ObjOf, SimpleValue;
+import deadly.entry Entry;
 import deadly.layout Column, Container, Frame, Row;
 import deadly.termlist List;
 import repl repl;
@@ -417,6 +418,63 @@ class CallbackWrapper @impl Functor1[bool, AppContext] {
     }
 }
 
+@function(Window) int setFocus(int focused) {
+    self.setFocus(focused);
+    return 0;
+}
+
+alias EntryObj = ObjOf[Entry];
+
+## Create an Entry control (a single line entryfield).
+@function EntryObj makeEntry(Window parent, int size) {
+
+    @function(Entry) String getText() {
+        return String(self.model);
+    }
+
+    @function(Entry) int setText(String text) {
+        if (text.count() > self.model.size)
+            self.model.grow(text.count());
+        self.model.move(0, text);
+        self.model.size = text.count();
+        if (self.pos > text.count())
+            self.pos = text.count();
+        if (self.start > self.pos)
+            self.start = self.pos;
+        return 0;
+    }
+
+    buf := AppendBuffer(256);
+    entry := Entry(parent, buf);
+    addToContainer(parent, entry, size);
+    result := EntryObj(entry);
+    result.define('bind', BindCmd[Entry](entry, result));
+    result.define('getText', getText(entry));
+    result.define('setText', setText(entry));
+    result.define('setFocus', setFocus(entry));
+    return result;
+}
+
+alias ListObj = ObjOf[List];
+
+## Create a List control.
+@function ListObj makeList(Window parent, int size) {
+
+    @function(List) int add(String entry) {
+        self.model.append(entry);
+        return 0;
+    }
+
+    model := Array[String]();
+    list := List(parent, model);
+    addToContainer(parent, list, size);
+    result := ListObj(list);
+    result.define('bind', BindCmd[List](list, result));
+    result.define('add', add(list));
+    result.define('setFocus', setFocus(list));
+    return result;
+}
+
 alias MQCallback = MessageQueue.Callback;
 
 class TextController : Object @implements Controller, AppMethods {
@@ -602,6 +660,8 @@ class TextController : Object @implements Controller, AppMethods {
         __interp.define('Row', makeRow());
         __interp.define('Column', makeColumn());
         __interp.define('Frame', makeFrame());
+        __interp.define('Entry', makeEntry());
+        __interp.define('List', makeList());
         __interp.define('TrackList', makeTrackList(this));
         __interp.define('TimeBar', makeTimeBar(this));
         __interp.define('BarSlider', makeBarSlider());
