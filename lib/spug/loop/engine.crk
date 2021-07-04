@@ -3,33 +3,36 @@
 
 import crack.audio.wavfile WaveDef;
 import crack.cont.array Array;
+import crack.cont.treemap TreeMap;
 import crack.fs makePath;
 import crack.functor Functor1, Functor2;
-import crack.io  cerr;
-import crack.lang AssertionError;
-import crack.midi.alsa Sequencer, SND_SEQ_OPEN_INPUT, SND_SEQ_OPEN_OUTPUT;
+import crack.io cerr, FStr;
+import crack.lang AssertionError, CString;
+import crack.midi.alsa Port, Sequencer, SND_SEQ_OPEN_INPUT,
+    SND_SEQ_OPEN_OUTPUT;
 import crack.midi.event Event, Track;
 import crash Obj;
 
 import .instrument MidiInstrument, Orchestra;
 import .jack JackPos, JackWrapper, WaveManager, RecordBuffer,
     WaveAdapter, WaveModel, WindowBufferAdapter, JACK_TRANSPORT_ROLLING;
-import .midieng EventManagerDispatcher, EventProcessor, MidiDispatcher,
+import .midieng ControllerDispatcher, EventProcessor, MidiDispatcher,
     MidiEngine, MidiSequencer, ModelObserver, ST_IDLE, ST_PLAY, ST_LATCHED,
     ST_RECORD;
 import .midifile MidiFile;
-import .model EventContext, EventManager, Section;
+import .model AudioTrack, EventContext, ProjectRef, Section, WaveTrack;
 
 @import crack.ann assert, cvars, impl;
+@import .ann immut;
 
 class AWBEngine;
 
 ## Does standard initialization for the midi engine.
-MidiEngine makeMidiEngine(EventManager eventManager) {
+MidiEngine makeMidiEngine(WaveManager waveMan, ProjectRef project) {
     # Create the sequencer and midi engine.
     seq := Sequencer(SND_SEQ_OPEN_OUTPUT | SND_SEQ_OPEN_INPUT, 0);
     seq.seq.set_client_name('AWBX'.buffer);
-    eng := MidiEngine(eventManager.waveMan, seq);
+    eng := MidiEngine(waveMan, seq, project);
 
     # Create some sequencer ports.
     # XXX Hack.  Remove once we have a more principled way of adding ports.
@@ -55,7 +58,7 @@ class AWBEngine @impl ModelObserver {
 
     MidiEngine __midi;
     WaveManager __jack;
-    EventManager __eventManager;
+    ProjectRef __project;
 
     # Indicator as to whether we should start recording a midi track the next
     # time we record.
@@ -65,31 +68,41 @@ class AWBEngine @impl ModelObserver {
 
     Array[Recorder] __recorders = {};
 
+    # Tree to track the output ports.  The key is (client << 16) | port_number.
+    TreeMap[int, Port] __portCache = {};
+
+    # The sequencer, which we keep track of purely for managing ports.
+    Sequencer __seq;
+
     # Current state.  See midieng ST_* constants.
     int __state = ST_IDLE;
+
+    # Input processor that serves as a bridge to legacy controller events.
+    ControllerDispatcher __controllerDispatcher = {};
 
     void setTempo(int bpm);
 
     ## Construct the engine using the old event manager.
-    ##
-    ## midiEngine is optional (may be null).
-    ##
-    ## Note that the goal is to make the event manager go away.
-    oper init(EventManager eventManager, MidiEngine midiEngine) :
-        __jack = eventManager.waveMan,
-        __eventManager = eventManager {
+    oper init() :
+        __jack = WaveManager.create(),
+        __project() {
 
-        __midi = midiEngine ? midiEngine : makeMidiEngine(eventManager);
+        __midi = makeMidiEngine(__jack, __project);
+        __seq = __midi.sequencer;
 
         # Set a uniform tempo and make the midi engine send tracks to us
         # (note: creates a reference cycle)
         __midi.setModelObserver(this);
         setTempo(120);
 
-        # Route all events to the event manager so that legacy bindings and
-        # event time assignment still work.
-        __midi.addInputProcessor(EventManagerDispatcher(eventManager));
+        # Add the controller dispatcher as an input processor so we can
+        # continue to dispatch to legacy controller processors.
+        __midi.addInputProcessor(__controllerDispatcher);
 
+    }
+
+    oper del() {
+        __jack.deactivate();
     }
 
     void copySection();
@@ -191,28 +204,38 @@ class AWBEngine @impl ModelObserver {
     }
 
     void addTrack(Track track) {
-        __eventManager.addTrack(track);
+        __project.addTrack(track);
     }
 
     ## Add a wave file as a track in the current section.
     WindowBufferAdapter addWaveFile(String filename) {
-        return __eventManager.mapWaveFile(filename);
+        result := __jack.addFile(filename);
+
+        # Calculate end time in microseconds.
+        endTime := uint64(result.getFrameCount()) * 1000000 /
+                   uint64(result.getRate());
+
+        spanInTicks := __midi.usecsToTicks(endTime);
+        __project.addTrack(AudioTrack(filename, spanInTicks));
+
+        return result
     }
 
     ## Adds a new WaveModel track.
     WaveAdapter addWaveModel(WaveModel model, String trackName) {
-        return __eventManager.addWaveModel(model, trackName);
+
+        result := __jack.addWaveModel(model);
+        spanInUSecs := uint64(model.frames) * 1000000 / 44100;
+        spanInTicks := __midi.usecsToTicks(spanInUSecs);
+        __project.addTrack(WaveTrack(model, 0,  trackName, spanInTicks));
+        return result;
     }
 
     ## Add all tracks of a midi file to the engine.
     void addMidiFile(String filename) {
         file := MidiFile.read(makePath(filename).reader());
-
-        for (track :in file.tracks)
-            __eventManager.addTrack(track, track[-1].time);
-
-        __midi.setSection(__eventManager.curSection.clone());
-        __eventManager.ppb = file.ticksPerQN;
+        __project.addTracks(file.tracks);
+        __midi.setPPB(file.ticksPerQN);
     }
 
     ## Returns the engine's audio sample rate.
@@ -232,12 +255,12 @@ class AWBEngine @impl ModelObserver {
 
     ## Returns the sequencer.
     Sequencer getSequencer() {
-        return __eventManager.sequencer;
+        return __seq;
     }
 
     ## Load an old-style project into the event manager.
     void loadProject(String filename) {
-        __eventManager.load(filename);
+        __project.load(filename);
     }
 
     ## Sets the global tempo (in beats per minute).  Different portions of
@@ -245,22 +268,20 @@ class AWBEngine @impl ModelObserver {
     ## global tempo.
     void setTempo(int bpm) {
         __midi.setBPM(bpm);
-        __eventManager.tempo = bpm;
     }
 
     ## Returns the current tempo.
     int getTempo() {
-        return __eventManager.tempo;
+        return __midi.getBPM()
     }
 
     void setPPB(int ppb) {
-        __eventManager.ppb = ppb;
         __midi.setPPB(ppb);
     }
 
     ## Returns pulses-per-beat ("pulses per quarter note" in midi parlance).
     int getPPB() {
-        return __eventManager.ppb;
+        return __midi.getPPB();
     }
 
     ## Reset the play position to the start of section.
@@ -275,7 +296,7 @@ class AWBEngine @impl ModelObserver {
 
         # Given pulses per second and frames per second (the sample rate) we
         # can compute frames per pulse as fps / pps.
-        pps := float(__midi.getBPM()) * float(__eventManager.ppb) / 60.0;
+        pps := float(__midi.getBPM()) * float(__midi.getPPB()) / 60.0;
         framesPerTick := float(__jack.getSampleRate()) / pps;
         __jack.seek(int(float(pos) * framesPerTick));
     }
@@ -290,34 +311,20 @@ class AWBEngine @impl ModelObserver {
 
     ## Returns the first track that has the given name.
     Track getTrackByName(String name) {
-
-        # WARNING: Dangerous shared use of an unprotected resource!
-        for (track :in __eventManager.curSection.tracks) {
-            if (track.name == name)
-                return track;
-        }
-
-        return null;
+        return __project.getTrackByName(name);
     }
 
     ## Returns the set of tracks in the current section as an array.
-    Array[Track] getAllTracks() {
-        return __eventManager.curSection.tracks;
+    @immut Array[Track] getAllTracks() {
+        return __project.curSection.tracks;
     }
+
+    ## Returns the mutable project reference.
+    ProjectRef oper .project() { return __project }
 
     ## Returns the current section.
-    Section getCurrentSection() {
-        return __eventManager.curSection;
-    }
-
-    ## Returns the orchestra object (the set of midi instruments currently in
-    ## use.
-    ##
-    ## The orchestra object, for better or worse, is mutable.  There is a
-    ## thread-safety issue here, we should really be manipulating the
-    ## orchestra through the control queue.
-    Orchestra getOrchestra() {
-        return __eventManager.instrument;
+    @immut Section getCurrentSection() {
+        return __project.curSection;
     }
 
     ## Add a midi event processor to the input chain.
@@ -337,7 +344,7 @@ class AWBEngine @impl ModelObserver {
     ## dispatcher" event processor that multiplexes to per controller
     ## processors.
     void addEventProcessor(int eventSelector, LegacyEventProcessor processor) {
-        __eventManager.eventProcessors[eventSelector] = processor;
+        __controllerDispatcher.setEventProcessor(eventSelector, processor);
     }
 
     ## Copy the current section from the event manager to the midi engine.
@@ -345,23 +352,15 @@ class AWBEngine @impl ModelObserver {
     ## This should go away, it exists as a shim so that scripts can populate
     ## the event manager and then move tracks to the midi engine.
     void copySection() {
-        __midi.setSection(__eventManager.curSection.clone());
-    }
-
-    ## Connect the internal orchestra channel to the specified midi client and
-    ## port.
-    void connectChannelToMidi(int channel, int client, int port) {
-        inst := MidiInstrument(__eventManager.getOutPort(client, port),
-                               byte(channel));
-        __eventManager.instrument[channel] = inst;
+        __midi.setSection(__project.curSection);
     }
 
     ## Export the specified tracks to the given file.
     void exportMidiFile(String filename, Array[int] trackNumbers) {
         tracks := Array[Track]();
-        file := MidiFile(__eventManager.ppb, float(__eventManager.tempo));
+        file := MidiFile(__midi.getPPB(), float(__midi.getBPM()));
         for (trackNum :in trackNumbers) {
-            track := __eventManager.curSection.tracks[trackNum];
+            track := __project.curSection.tracks[trackNum];
             file.append(track);
         }
         file.write(makePath(filename).writer());
@@ -372,12 +371,12 @@ class AWBEngine @impl ModelObserver {
         def := WaveDef(2, 44100, 16);
         out := makePath(filename).writer();
         def.writeHeader(out);
-        return __eventManager.waveMan.beginRecord(def, out);
+        return __jack.beginRecord(def, out);
     }
 
     ## Clear the entire project state.
     void clear() {
-        __eventManager.clear();
+        __project.clear();
         __midi.setSection(Section());
     }
 
@@ -388,32 +387,37 @@ class AWBEngine @impl ModelObserver {
 
     ## Save the old-style project file.
     void saveClassicProjectFile() {
-        __eventManager.save();
+        __project.save();
     }
 
     ## Create a new section, copying the specified tracks into it.
     void createSection(Array[Track] tracks) {
-        __eventManager.createSection(tracks);
+        __project.createSection(tracks);
     }
 
     ## Set the next section to be played based on the index.
+    ##
+    ## Currently actually does nothing.
     void setNextSection(int index) {
-        __eventManager.setNextSection(index);
+        # __eventManager.setNextSection(index);
     }
 
     ## Returns the index of the current next section.
+    ##
+    ## Currently actually always returns 0.
     int getNextSectionIndex() {
-        return __eventManager.getNextSectionIndex();
+        # return __eventManager.getNextSectionIndex();
+        return 0;
     }
 
     ## Returns the number of sections.
     int getSectionCount() {
-        return __eventManager.getSectionCount();
+        return __project.getSectionCount();
     }
 
     ## Delete the specified track in the current section.
     void deleteTrack(int index) {
-        __eventManager.deleteTrack(index);
+        __project.deleteTrack(index);
     }
 
     ## Returns true if the engine is currently in play/record and there are
@@ -426,6 +430,20 @@ class AWBEngine @impl ModelObserver {
     ## that this will not change when idle.
     uint getTicks() {
         return __midi.getTicks();
+    }
+
+    ## Return the output port connected to the specified client and port,
+    ## creating one if necessary.
+    Port getOutPort(int client, int portNum) {
+        port := __portCache.get(client << 16 | portNum);
+        if (!port) {
+            port = __seq.makeWritePort(
+                CString(FStr() `crack-$client:$portNum`)
+            );
+            __portCache[client << 16 | portNum] = port;
+        }
+        port.connectTo(client, portNum);
+        return port;
     }
 }
 

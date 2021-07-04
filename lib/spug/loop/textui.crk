@@ -82,7 +82,7 @@ class TrackList : List {
     }
 
     void waveAdded() {
-        model.append(engine.getCurrentSection().waves[-1].getName());
+        model.append(engine.getCurrentSection().waves[-1].name);
     }
 
     void trackDeleted() {

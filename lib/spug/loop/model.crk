@@ -2,6 +2,7 @@
 #
 # Spugloop model objects.
 
+import crack.audio.wavfile WaveBuffer;
 import crack.cont.array Array;
 import crack.cont.hashmap HashMap;
 import crack.cont.treemap TreeMap;
@@ -20,11 +21,12 @@ import spug.loop.jack SequencerWaveModel, Wave, WaveAdapter, WaveManager,
 import crack.midi.alsa Port, Sequencer;
 import crack.protobuf Message;
 import crack.serial SerialReader, SerialWriter;
-import crack.threads Queue = Queue2, Thread;
+import crack.threads Mutex, MutexLock, Queue = Queue2, Thread;
 import crack.time Time_add = add, Time, TimeDelta;
 
 @import crack.ann assert, cvars, impl, implements, interface;
 @import crack.protobuf.ann protobuf;
+@import .ann immut, nullable;
 
 ## Defines a midi bank.  This can be applied to an Orchestra object to change
 ## the instrument configuration for a given channel.
@@ -64,20 +66,54 @@ class WavePlayerBank : Object @implements Bank {
     }
 }
 
-class WaveTrack {
-    WaveModel model;
-    int channel;
-    String __name;
+## Interface for any kind of track.
+@interface OmniTrack {
+    ## The track name.
+    @abstract String oper .name();
+}
 
-    oper init(WaveModel model, int channel, String name) :
-        model = model,
-        channel = channel,
-        __name = name {
+class AudioTrack @impl OmniTrack {
+    @cvars {
+        String __name;
+        uint __span;
     }
 
-    String getName() {
-        return __name;
+    String oper .name() { return __name; }
+    uint oper .span() { return __span }
+}
+
+class WaveTrack : AudioTrack {
+    WaveModel __model;
+    int __channel;
+
+    oper init(WaveModel model, int channel, String name, uint span) :
+        AudioTrack(name, span),
+        __model = model,
+        __channel = channel {
     }
+
+    uint oper .channels() { return __model.channels }
+    uint oper .frames() { return __model.frames }
+    int oper .channel() { return __channel }
+
+    ## Read a sequence of samples into 'outputs'.
+    ##
+    ## pos: position (frame number) to read from.
+    ## out: An output buffer.  This can be expected to be of size
+    ##      frames * channels
+    ## outputs: Set of buffers to read into.  It is safe to assume that the
+    ##          number of buffers is the same as this.tracks.
+    ## frames: Number of frames to read.
+    @final void read(uint pos, WaveBuffer out, uint frames) {
+        return __model.read(pos, out, frames);
+    }
+}
+
+class MidiTrack @impl OmniTrack {
+    Track __track;
+
+    String oper .name() { return __track.name }
+    Track oper .track() { return __track }
 }
 
 ## This is a "section" of the piece.  A section consists of a group of tracks
@@ -109,71 +145,101 @@ class Section {
         span = span {
     }
 
-    ## Records the "end of track" time.  If there is only one track it also
-    ## sets the measure time.
-    ## If 'snapToMeasure' is true, snap the end time and events to the nearest
-    ## measure boundary.  That is to say, it changes the end time to the end of the last
-    ## measure if that is closer than the end of the next measure and
-    ## moves all events past the end of the last measure back to align with
-    ## the ending.
-    @final void markEnding(Track lastTrack, uint time, bool snapToMeasure) {
+    class Mut = Section {
 
-        if (!span) {
-            span = measure = time;
-        # verify that the time is an even multiple of the current span
-        } else {
+        ## Records the "end of track" time.  If there is only one track it also
+        ## sets the measure time.
+        ## If 'snapToMeasure' is true, snap the end time and events to the nearest
+        ## measure boundary.  That is to say, it changes the end time to the end of the last
+        ## measure if that is closer than the end of the next measure and
+        ## moves all events past the end of the last measure back to align with
+        ## the ending.
+        @final void markEnding(Track lastTrack, uint time, bool snapToMeasure) {
 
-            # If we don't have measure defined, define it now.
-            if (!measure)
-                measure = time;
+            if (!span) {
+                span = measure = time;
+            # verify that the time is an even multiple of the current span
+            } else {
 
-            # if the end time is closer to the beginning of the measure than
-            # to the end, trim all events to the end of the measure boundary.
-            if (snapToMeasure) {
-                timeInMeasure := time % measure;
-                if (timeInMeasure < measure - timeInMeasure) {
-                    time -= timeInMeasure;
-                    if (lastTrack) {
-                        for (event :in lastTrack)
-                            if (event.time > time)
-                                event.time = time;
+                # If we don't have measure defined, define it now.
+                if (!measure)
+                    measure = time;
+
+                # if the end time is closer to the beginning of the measure than
+                # to the end, trim all events to the end of the measure boundary.
+                if (snapToMeasure) {
+                    timeInMeasure := time % measure;
+                    if (timeInMeasure < measure - timeInMeasure) {
+                        time -= timeInMeasure;
+                        if (lastTrack) {
+                            for (event :in lastTrack)
+                                if (event.time > time)
+                                    event.time = time;
+                        }
                     }
                 }
+
+                if (time > span) {
+                    info `increasing span: $time / $span`;
+                    multiple := (time - 1) / span + 1;
+                    span *= multiple;
+                }
+                time = span;
             }
 
-            if (time > span) {
-                info `increasing span: $time / $span`;
-                multiple := (time - 1) / span + 1;
-                span *= multiple;
-            }
-            time = span;
+            # If we've been given a track with no end event, add one.  If there
+            # is already an end event, we've already snapped it to the measure if
+            # this was requested.
+            if (lastTrack && (!lastTrack.count() || !lastTrack[-1].isa(EndTrack)))
+                lastTrack.add(EndTrack(time));
         }
 
-        # If we've been given a track with no end event, add one.  If there
-        # is already an end event, we've already snapped it to the measure if
-        # this was requested.
-        if (lastTrack && (!lastTrack.count() || !lastTrack[-1].isa(EndTrack)))
-            lastTrack.add(EndTrack(time));
+        Mut deleteTrack(uint index) {
+            tracks.delete(index);
+
+            # deal with deleting the last track.
+            if (!tracks.count()) {
+                span = measure = 0;
+                return this;
+            }
+
+            # recalculate the span
+            maxSpan := 0;
+            uint t;
+            for (track :in tracks) {
+                t = track[-1].time;
+                if (t > maxSpan)
+                    maxSpan = t;
+            }
+            span = t;
+            return this;
+        }
+
+        void readFrom(SerialReader src) {
+            measure = src.readUInt();
+            span = src.readUInt();
+            trackCount := src.readUInt();
+
+            for (int i = 0; i < trackCount; ++i) {
+                trackName := src.readString();
+                MidiReader mr = {StringReader(src.readString())};
+                tracks.append(track := mr.readTrack(trackName));
+
+                # Read and discard the optional track data.
+                src.readString();
+
+                info `track $i:\n$track`;
+            }
+
+            # Read the optional data.
+            optionalDataString := src.readString();
+            optionalData = SectionOptionalData();
+            readMessageFromString(optionalData, optionalDataString);
+        }
     }
 
-    @final void deleteTrack(uint index) {
-        tracks.delete(index);
-
-        # deal with deleting the last track.
-        if (!tracks.count()) {
-            span = measure = 0;
-            return;
-        }
-
-        # recalculate the span
-        maxSpan := 0;
-        uint t;
-        for (track :in tracks) {
-            t = track[-1].time;
-            if (t > maxSpan)
-                maxSpan = t;
-        }
-        span = t;
+    @static Mut makeMut() {
+        return Mut(Section());
     }
 
     void writeTo(SerialWriter out) {
@@ -206,29 +272,7 @@ class Section {
             out.write(0);
     }
 
-    void readFrom(SerialReader src) {
-        measure = src.readUInt();
-        span = src.readUInt();
-        trackCount := src.readUInt();
-
-        for (int i = 0; i < trackCount; ++i) {
-            trackName := src.readString();
-            MidiReader mr = {StringReader(src.readString())};
-            tracks.append(track := mr.readTrack(trackName));
-
-            # Read and discard the optional track data.
-            src.readString();
-
-            info `track $i:\n$track`;
-        }
-
-        # Read the optional data.
-        optionalDataString := src.readString();
-        optionalData = SectionOptionalData();
-        readMessageFromString(optionalData, optionalDataString);
-    }
-
-    Section clone() {
+    Mut clone() {
         newTracks := Array[Track]();
         for (track :in tracks) {
             newTrack := Track(track.name);
@@ -248,7 +292,7 @@ class Section {
             readMessageFromString(result.optionalData, optionalData.toString());
         }
 
-        return result;
+        return Mut(result);
     }
 }
 
@@ -261,11 +305,13 @@ const int IDLE = 0, RECORD = 1, PLAY = 2, LATCHED_RECORD = 3;
 const PROJ_WAVEFILE := 1;
 
 ## This is the main class representing a project.
+##
+## Project objects, and everything in them, are immutable.
 class Project {
-    Array[Section] sections = {};
+    Array[Section] __sections = {};
 
     ## The next section number that hasn't been used as part of a section name.
-    int nextSectionNumber;
+    int __nextSectionNumber;
 
     ## The set of all wave files known to the project.
     Array[String] waveFiles = {};
@@ -275,6 +321,11 @@ class Project {
 
     # Special midi banks.
     TreeMap[uint16, Bank] __banks;
+
+    oper init() {}
+
+    ## Temporary and deprecated: returns the list of sections.
+    Array[Section] oper .sections() { return __sections }
 
     ## Write the current project to a file.
     void writeTo(SerialWriter out) {
@@ -291,32 +342,69 @@ class Project {
         out.write(outBack.string());
 
         # write the section count, then each of the sections.
-        out.write(sections.count());
-        for (section :in sections)
+        out.write(__sections.count());
+        for (section :in __sections)
             section.writeTo(out);
     }
 
-    void readFrom(SerialReader src) {
-        sections.clear();
-        if ((v := src.readUInt()) != 1)
-            throw Exception(FStr() `Invalid varsion number: $v`);
+    int getSectionCount() {
+        return __sections.count();
+    }
 
-        # Read optional data.
-        optionalData := src.readString();
-        opt := ProtoReader(StringReader(optionalData));
-        while (field := opt.readField()) {
-            if (field.id == PROJ_WAVEFILE)
-                waveFiles.append(field.getString());
-            else
-                __unknownFields.append(field);
+    class Mut = Project {
+
+        void readFrom(SerialReader src) {
+            __sections.clear();
+            if ((v := src.readUInt()) != 1)
+                throw Exception(FStr() `Invalid varsion number: $v`);
+
+            # Read optional data.
+            optionalData := src.readString();
+            opt := ProtoReader(StringReader(optionalData));
+            while (field := opt.readField()) {
+                if (field.id == PROJ_WAVEFILE)
+                    waveFiles.append(field.getString());
+                else
+                    __unknownFields.append(field);
+            }
+
+            sectionCount := src.readUInt();
+            for (i := 0; i < sectionCount; ++i) {
+                section := Section.makeMut();
+                section.readFrom(src);
+                __sections.append(section);
+            }
         }
 
-        sectionCount := src.readUInt();
-        for (i := 0; i < sectionCount; ++i) {
-            section := Section();
-            section.readFrom(src);
-            sections.append(section);
+        Mut replaceSection(Section oldSec, Section newSec) {
+            for (cur :on __sections) {
+                if (cur.elem() is oldSec) {
+                    __sections[cur.index] = newSec;
+                    break;
+                }
+            }
+            return this;
         }
+
+        Mut addSection(Section sec) {
+            __sections.append(sec);
+            return this;
+        }
+    }
+
+    ## Return a new mutable project instance.
+    @static Mut makeMut() {
+        return Mut(Project());
+    }
+
+    Project.Mut clone() {
+        p := Project();
+        p.__sections = __sections;
+        p.__nextSectionNumber = __nextSectionNumber;
+        p.waveFiles = waveFiles;
+        p.__unknownFields = __unknownFields;
+        p.__banks = __banks;
+        return Mut(p);
     }
 }
 
@@ -327,6 +415,187 @@ class Project {
     @abstract void trackDeleted(uint index);
     @abstract void sectionCreated();
     @abstract void sectionChanged();
+}
+
+## Threadsafe object that references a project and the current section.
+class ProjectRef {
+    @immut Project __project;
+    @immut Section __section;
+    Mutex __mutex = Mutex();
+
+    # Legacy project filename.
+    String __projectFileName = 'unnamed';
+
+    Controller __controller;
+
+    void clear();
+
+    oper init() {
+        clear();
+    }
+
+    void updateProject(Project project) {
+        lk := MutexLock(__mutex);
+        __project = project;
+    }
+
+    ## Replace the current section with newSec.
+    @final void __replaceSection(Section newSec) {
+        __project = __project.clone().replaceSection(__section, newSec);
+        __section = newSec;
+    }
+
+    ## Load the track and set the filename.  Does nothing if the file doesn't
+    ## exist.
+    void load(String filename) {
+        lk := MutexLock(__mutex);
+        __projectFileName = filename;
+        path := makePath(filename);
+        if (path.exists()) {
+            project := Project.makeMut();
+            project.readFrom(SerialReader(path.reader()));
+            __project = project;
+            __section = project.sections[0];
+            info `tracks in cur section: $(__section.tracks.count())`;
+            lk = null;
+            if (__controller)
+                __controller.sectionChanged();
+        }
+    }
+
+    void save() {
+        __project.writeTo(SerialWriter(makePath(__projectFileName).writer()));
+    }
+
+    ## Clear out all project contents.
+    void clear() {
+        proj := Project.makeMut();
+        proj.addSection(Section());
+        __project = proj;
+        __section = __project.sections[0];
+    }
+
+    ## Add a track to the current section.
+    void addTrack(Track track) {
+        lk := MutexLock(__mutex);
+        Event lastEvent;
+        @assert(track.count() && (lastEvent = track[-1]).isa(EndTrack));
+        sec := __section.clone();
+        sec.markEnding(track, lastEvent.time, true);
+        sec.tracks.append(track);
+        __replaceSection(sec);
+
+        lk = null;
+        if (__controller)
+            __controller.trackAdded();
+    }
+
+    ## Add a set of tracks to the current section.
+    void addTracks(Array[Track] tracks) {
+        lk := MutexLock(__mutex);
+        sec := __section.clone();
+        Event lastEvent;
+        for (track :in tracks) {
+            @assert(track.count() && (lastEvent = track[-1]).isa(EndTrack));
+            sec.tracks.append(track);
+        }
+        if (lastEvent) {
+            sec.markEnding(null, lastEvent.time, true);
+            __replaceSection(sec);
+        }
+
+        lk = null;
+        __controller.trackAdded();
+    }
+
+    void __addTrack(Track track) {
+        sec := __section.clone();
+        Event lastEvent;
+        @assert(track.count() && (lastEvent = track[-1]).isa(EndTrack));
+        if (lastEvent.time > sec.span)
+            sec.span = lastEvent.time;
+
+        sec.tracks.append(track);
+        __replaceSection(sec);
+    }
+
+    void addTrack(OmniTrack track) {
+        lk := MutexLock(__mutex);
+        if (t := AudioTrack.cast(track, null))
+            __addTrack(Track(t.name, Array[Event]![EndTrack(t.span)]));
+        else if (t := MidiTrack.cast(track, null))
+            __addTrack(t.track);
+        else
+            throw Exception(FStr() `Unknown track type $(track.class.name)`);
+
+        lk = null;
+        if (__controller)
+            __controller.trackAdded();
+    }
+
+    ## Create a new section.  If we're in "play" mode, make the new section
+    ## the next section to play.
+    ## seedTracks: tracks to seed the new section with.
+    void createSection(@nullable Array[Track] seedTracks) {
+        lk := MutexLock(__mutex);
+
+        # if there are seed tracks, use the current section's measure and
+        # obtain the span from the seed track.  Otherwise just create an empty
+        # section.
+        Section newSection = Section();
+        if (seedTracks) {
+            uint span;
+            for (track :in seedTracks) {
+                t := track[-1].time;
+                if (t > span)
+                    span = t;
+            }
+            newSection = Section(seedTracks, __section.measure, span);
+        } else {
+            newSection = Section();
+        }
+
+        newProject := __project.clone();
+        newProject.addSection(newSection);
+        __project = newProject;
+
+        lk = null;
+        if (__controller)
+            __controller.sectionCreated();
+    }
+
+    ## Return the current section.
+    @immut Section oper .curSection() {
+        lk := MutexLock(__mutex);
+        return __section;
+    }
+
+    @immut Track getTrackByName(String name) {
+        lk := MutexLock(__mutex);
+        for (track :in __section.tracks) {
+            if (track.name == name)
+                return track;
+        }
+
+        return null;
+    }
+
+    void deleteTrack(uint index) {
+        lk := MutexLock(__mutex);
+        __replaceSection(__section.clone().deleteTrack(index));
+    }
+
+    ## Set the "controller" which is actually more of an observer -- it gets
+    ## notifications on project status changes.
+    void setController(Controller controller) {
+        lk := MutexLock(__mutex);
+        __controller = controller;
+    }
+
+    uint getSectionCount() {
+        lk := MutexLock(__mutex);
+        return __project.getSectionCount();
+    }
 }
 
 Array[String] programNames = [
@@ -547,532 +816,3 @@ const BILLION := MILLION * 1000;
 @interface EventContext {
     @abstract void setControllerOffset(uint offset);
 }
-
-## The event manager deals with all of the scheduling and event dispatching.
-class EventManager @impl EventContext {
-    Controller controller;
-    Orchestra instrument;
-    Sequencer sequencer;
-    ChannelMap channelMap;
-    Port outPort;
-
-    # initialize to default project.
-    Project project = {};
-
-    Section curSection = {};
-    int curSectionIndex, nextSectionIndex;
-    Track recordTrack;
-    Array[LoopCursor] trackCursors;
-    TreeMap[int, Port] __portCache = {};
-
-    alias CommandQueue = Queue[Functor1[void, EventManager]];
-
-    CommandQueue __commandQueue = CommandQueue();
-
-    ## Event manager command queue.  Commands added to this queue are
-    ## evaluated during runOneCycle().
-    @final CommandQueue oper .commandQueue() { return __commandQueue }
-
-    # Name of the project file.
-    String projectFileName = 'noname';
-
-    # The wave manager.  Manages the direct PCM wave system and interface to
-    # jack.
-    WaveManager waveMan;
-
-    # This value is set by setControllerOffset() and it is added to the
-    # controller event id (see eventProcessors).
-    uint controllerOffset;
-
-    # Mapping from event byte values to special processing functions for those
-    # events.  Currently only control changes are supported and these are
-    # represented by an integer of form (channel << 8 | controller) + offset.
-    # ("offset" is the value set by setControllerOffset()).
-    HashMap[uint, Functor2[void, Event, EventContext]] eventProcessors = {};
-
-    int mode;
-
-    # time that the current loop started and a holder for the current time.
-    Time startTime = {}, t = {};
-
-    # last time that we acted upon.
-    float lastTime;
-
-    # if nextSectionIndex is true, this is the next time to change the section
-    uint nextSectionStartTime;
-
-    # Both Tempo and PPB should be defined per section.  Per-section tempo
-    # should be defined relative to the project tempo, tempo should be in the
-    # project, what we have here should probably be either a scaling factor or
-    # an override of the project level value.
-
-    ## Global tempo in BPM.
-    uint tempo = 120;
-
-    ## Global pulses-per-beat.  Setting this to 1440 (5 * 9 * 32) to
-    ## correspond to the same value in midieng.
-    uint ppb = 1440;
-
-    oper init(Controller controller, Orchestra instrument,
-              Sequencer sequencer,
-              ChannelMap channelMap
-              ) :
-        controller = controller,
-        instrument = instrument,
-        sequencer = sequencer,
-        channelMap = channelMap {
-
-        project.sections.append(curSection);
-
-        # set up the programs for the synthesizer
-        byte i;
-        for (chi :in channelMap.programs) {
-            instrument.onEvent(ProgramChange(0, i, chi.program & 0x7F));
-            ++i;
-        }
-    }
-
-    ## Returns the number of midi clock ticks (aka "pulses") for the specified
-    ## number of microseconds.
-    @final int usecsToTicks(int64 usecs) {
-        # This is a bit convoluted because we're trying to do it with integer
-        # math without truncating anything signficant.  What we're trying to say
-        # is: seconds * pulsesPerSecond
-        # where: pulsesPerSecond = (BPM / 60) * PPB
-        #        seconds = usecs / MILLION
-        # so: (usecs / MILLION) * ((BPM / 60) * PPB)
-        #     (usecs / MILLION) * ((BPM * PPB) / 60)
-        #     (usecs * BPM * PPB) / (60 * MILLION)
-        return (usecs * int64(tempo) * int64(ppb)) / int64(60 * MILLION);
-    }
-
-    int64 ticksToUSecs(int ticks) {
-        # This just inverts the math above:
-        #   ticks = (nsecs * BPM * PPB) / (60 * MILLION)
-        # so:
-        #   (ticks * 60 * MILLION) / (BPM * PPB) = nsecs
-        return (60 * MILLION * int64(ticks)) / (int64(tempo) * int64(ppb));
-    }
-
-    ## Record the current time as the start time.
-    void markStartTime() {
-        startTime.setToNow(null);
-    }
-
-    ## Returns the time relative to when we started looping (also in ticks).
-    uint getRelTime() {
-        t.setToNow(null);
-        int64 usecs = int64(t.secs - startTime.secs) * MILLION +
-                      (t.nsecs - startTime.nsecs) / 1000;
-        result := usecsToTicks(usecs);
-        return result;
-    }
-
-    ## Adds a track to the current section, notifies the controller.
-    void addTrack(Track track, uint endTime) {
-        curSection.markEnding(track, endTime, true);
-        curSection.tracks.append(track);
-        controller.trackAdded();
-    }
-
-    ## Adds a track.  The track must already have an EndTrack event as its
-    ## last event.
-    void addTrack(Track track) {
-        Event lastEvent;
-        @assert(track.count() && (lastEvent = track[-1]).isa(EndTrack));
-        addTrack(track, lastEvent.time);
-    }
-
-    ## Adds a wave file track to the current section, notifies the controller.
-    void addWaveTrack(WaveModel wave, String name) {
-        # XXX need to convert from number of frames to midi pulses.  This also
-        # locks in the section size.
-        curSection.markEnding(null, wave.frames, false);
-        for (int channel = 0; channel < wave.channels; ++channel) {
-            trackName := FStr() `$(name.substr(0, 7))$(channel ? 'R' : 'L')`;
-            curSection.waves.append(WaveTrack(wave, channel, trackName));
-            controller.waveAdded();
-        }
-    }
-
-    ## Add a new wave file to the set of wave tracks.
-    void addWaveFile(String filename) {
-        addWaveTrack(waveMan.addMemFile(filename).model, filename);
-    }
-
-    void endRecord() {
-        addTrack(recordTrack, getRelTime());
-        trackCursors = null;
-        recordTrack = null;
-    }
-
-    void doRecord() {
-        controller.changeState(mode, RECORD);
-        if (mode == RECORD)
-            endRecord();
-        info `record`;
-
-        # if we're coming in from "latched" mode, adjust the start time
-        if (mode == LATCHED_RECORD && startTime.secs && curSection.span) {
-            usecs := ticksToUSecs((getRelTime() / curSection.span) *
-                                  curSection.span);
-            startTime.nsecs += int32((usecs % MILLION) * 1000);
-            startTime.secs += int32(usecs / MILLION +
-                                    startTime.nsecs / BILLION);
-        } else {
-            # otherwise, just reset it.
-            markStartTime();
-        }
-
-        # Start the wave manager if we're coming in from IDLE.
-        if (waveMan && mode == IDLE)
-            waveMan.unpause();
-
-        mode = RECORD;
-        recordTrack = Track(channelMap.getCurrentChannel().getProgramName());
-    }
-
-    void doLatchedRecord() {
-        # XXX going from play -> latched seems to be broken
-        info `latched`;
-        if (mode == RECORD)
-            endRecord();
-        mode = LATCHED_RECORD;
-    }
-
-    void doIdle() {
-        info `idle`;
-        instrument.stop();
-        controller.changeState(PLAY, IDLE);
-        mode = IDLE;
-        trackCursors = null;
-        if (waveMan)
-            waveMan.pause();
-    }
-
-    void setTrackCursors(uint ticks) {
-        if (trackCursors) {
-            for (cur :in trackCursors)
-                cur.setPos(ticks);
-        }
-    }
-
-    ## Sets our current position within the section.
-    void setPos(uint ticks) {
-        markStartTime();
-        setTrackCursors(ticks);
-    }
-
-    void doPlay() {
-        if (!curSection.tracks && mode != RECORD && !waveMan) {
-            error `No tracks to play!`;
-            return;
-        }
-
-        info `play`;
-        controller.changeState(mode, PLAY);
-
-        if (mode == RECORD)
-            endRecord();
-        mode = PLAY;
-
-        # This is a hack to deal with the looping/wave editing dichotomy - if
-        # we're doing midi looping (as evidenced by the presence of midi
-        # tracks) then we set the current position to zero.
-        if (!waveMan) {
-            setPos(0);
-        } else {
-            # Mark the start time but then offset it backwards by the current
-            # position of the wave managaer.
-            markStartTime();
-
-            # Get the current frame number and convert to seconds since the
-            # beginning of the wave.
-            timeSinceStart :=
-                float(waveMan.tell()) / float(waveMan.getSampleRate());
-            wholeSecs := floor(timeSinceStart);
-            nsecs := (timeSinceStart - wholeSecs) * 1e+9;
-            startTime = Time_add(startTime,
-                                 TimeDelta(-int32(wholeSecs), -int32(nsecs))
-                                 );
-        }
-        if (waveMan)
-            waveMan.unpause();
-    }
-
-    void doStop() {
-        if (mode == RECORD)
-            endRecord();
-
-        mode = IDLE;
-        if (waveMan)
-            waveMan.unpause();
-    }
-
-    void togglePlay() {
-        if (mode == PLAY)
-            doIdle();
-        else
-            doPlay();
-    }
-
-    ## restore the app to its pristine state
-    void clear() {
-        info `clearing state`;
-        recordTrack = null;
-        mode = IDLE;
-        startTime.secs = startTime.nsecs = 0;
-        project = Project();
-        curSection = Section();
-        project.sections.append(curSection);
-    }
-
-
-    bool onInputEvent(Event event) {
-        info `got event $event`;
-
-        # Divert bound events to the correct event processor.
-        if ((cc := ControlChange.cast(event, null)) &&
-            (proc :=
-                eventProcessors.get((uint(cc.channel) << 8) | cc.controller +
-                                    controllerOffset)
-             )
-            ) {
-            proc(cc, this);
-            return true;
-        }
-
-        return false;
-    }
-
-    void __playPendingEvents(LoopCursor cur, uint pos) {
-        while (cur && !cur.immediatelyFollows(pos)) {
-            instrument.onEvent(e := cur.next());
-#            cout `played event $e at time $(e.time)/$(cur.span) for pos $pos\n`;
-        }
-    }
-
-    void deleteTrack(uint index) {
-        trackChannel := ChannelEvent.cast(curSection.tracks[index][0]).channel;
-        instrument.getChild(trackChannel).stop();
-        curSection.deleteTrack(index);
-        if (trackCursors)
-            trackCursors.delete(index);
-
-        # tell the controller
-        controller.trackDeleted(index);
-    }
-
-    void __changeSection() {
-        curSectionIndex = nextSectionIndex;
-        curSection = project.sections[curSectionIndex];
-        trackCursors = null;
-        controller.sectionChanged();
-    }
-
-    ## Change the section at the end of the next loop or immediately if we're
-    ## idle.
-    void __scheduleSectionChange() {
-        if (mode == IDLE)
-            __changeSection();
-        else {
-            relTime := getRelTime();
-            nextSectionStartTime =
-                (relTime / curSection.span + 1) * curSection.span;
-        }
-    }
-
-    ## Create a new section.  If we're in "play" mode, make the new section
-    ## the next section to play.
-    ## seedTracks: tracks to seed the new section with.
-    void createSection(Array[Track] seedTracks) {
-        nextSectionIndex = project.sections.count();
-
-        # if there are seed tracks, use the current section's measure and
-        # obtain the span from the seed track.  Otherwise just create an empty
-        # section.
-        Section newSection;
-        if (seedTracks) {
-            uint span;
-            for (track :in seedTracks) {
-                t := track[-1].time;
-                if (t > span)
-                    span = t;
-            }
-            newSection = Section(seedTracks, curSection.measure, span);
-        } else {
-            newSection = Section();
-        }
-
-        project.sections.append(newSection);
-
-        controller.sectionCreated();
-        __scheduleSectionChange();
-    }
-
-    int getSectionCount() { return project.sections.count(); }
-    int getSectionIndex() { return curSectionIndex; }
-    int getNextSectionIndex() { return nextSectionIndex; }
-    void setNextSection(int index) {
-        nextSectionIndex = index;
-        __scheduleSectionChange();
-    }
-
-    void runOneCycle() {
-        relTime := getRelTime();
-
-        # see if we need to change sections.
-        if ((nextSectionIndex != curSectionIndex) && mode == PLAY &&
-            relTime >= nextSectionStartTime
-            ) {
-            instrument.stop();
-            __changeSection();
-            markStartTime();
-        }
-
-        # Check for a incoming events on the sequencer, play it and store it
-        # if we're recording.
-        while (sequencer.hasEvent()) {
-            event := sequencer.getEvent();
-            if (event)
-                onInputEvent(event);
-        }
-
-        # if we're recording, get the next event.
-        if (mode == RECORD || mode == PLAY || mode == LATCHED_RECORD) {
-
-            # if we don't currently have a set of cursors, generate them now.
-            if (!trackCursors && curSection.tracks) {
-                trackCursors =
-                    Array[LoopCursor](curSection.tracks.count());
-                for (track :in curSection.tracks)
-                    trackCursors.append(LoopCursor(track));
-            }
-
-            if (trackCursors) {
-                # play all of the events in all of the tracks that are due to
-                # be played.
-                for (cur :in trackCursors) {
-                    # safety check
-                    if (!cur.span)
-                        continue;
-
-                    # calculate the point we're at in this track.
-                    trackPos := relTime % cur.span;
-
-                    # play all events up to that point
-                    __playPendingEvents(cur, trackPos);
-                }
-            }
-        }
-
-        # Run any commands on the queue.
-        while (cmd := __commandQueue.getNonBlocking())
-            cmd(this);
-
-        lastTime = relTime;
-    }
-
-    ## Start a thread to process only the EventManager queue.
-    ##
-    ## This is just a shim to keep some of
-    ## the pieces of functionality of the old system working while we write
-    ## the new one.  Eventually, EventManager should go away.
-    void start() {
-        class MyThread : Thread {
-            @cvars {
-                EventManager em;
-            }
-
-            void run() {
-                while (true) {
-                    cmd := em.__commandQueue.get();
-                    cmd(em);
-                }
-            }
-        }
-
-        MyThread(this).start();
-    }
-
-    ## Returns the fraction of time position / section span as of the last
-    ## runOneCycle().
-    float getTimeFraction() {
-        return (lastTime % curSection.span) / curSection.span;
-    }
-
-    ## Returns true if we're playing existing tracks (either as play or
-    ## record).
-    @final bool playingExistingTracks() {
-        return mode == PLAY ||
-               (mode == RECORD || mode == LATCHED_RECORD) && curSection.tracks;
-    }
-
-    ## Store the track to the current filename.
-    void save() {
-        project.writeTo(SerialWriter(makePath(projectFileName).writer()));
-    }
-
-    ## Load the track and set the filename.  Does nothing if the file doesn't
-    ## exist.
-    void load(String filename) {
-        projectFileName = filename;
-        path := makePath(filename);
-        if (path.exists()) {
-            project.readFrom(SerialReader(path.reader()));
-            curSection = project.sections[0];
-            info `tracks in cur section: $(curSection.tracks.count())`;
-            controller.sectionChanged();
-        }
-    }
-
-    ## Map a wave file to the current section.
-    ## The wave manager must have been defined.
-    WindowBufferAdapter mapWaveFile(String filename) {
-        @assert(waveMan);
-        result := waveMan.addFile(filename);
-
-        # Calculate end time in microseconds.
-        endTime := int64(result.getFrameCount()) * 1000000 /
-                   int64(result.getRate());
-        if ((spanInTicks := usecsToTicks(endTime)) > curSection.span)
-            curSection.span = spanInTicks;
-
-        curSection.tracks.append(
-            Track( filename, Array[Event]![EndTrack(usecsToTicks(endTime))] )
-        );
-        controller.trackAdded();
-        return result;
-    }
-
-    WaveAdapter addWaveModel(WaveModel model, String trackName) {
-        @assert(waveMan);
-        result := waveMan.addWaveModel(model);
-        spanInUSecs := int64(model.frames) * 1000000 / 44100;
-        spanInTicks := usecsToTicks(spanInUSecs);
-        curSection.tracks.append(
-            Track(trackName, Array[Event]![EndTrack(spanInTicks)])
-        );
-        if (spanInTicks > curSection.span)
-            curSection.span = spanInTicks;
-        controller.trackAdded();
-        return result;
-    }
-
-    Port getOutPort(int client, int portNum) {
-        port := __portCache.get(client << 16 | portNum);
-        if (!port) {
-            port = sequencer.makeWritePort(
-                CString(FStr() `crack-$client:$portNum`)
-            );
-            __portCache[client << 16 | portNum] = port;
-        }
-        port.connectTo(client, portNum);
-        return port;
-    }
-
-    void setControllerOffset(uint offset) {
-        controllerOffset = offset;
-    }
-}
-

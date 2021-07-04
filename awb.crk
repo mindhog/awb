@@ -23,7 +23,6 @@ import crack.io cout, cerr, FStr;
 import crack.midi.alsa Port, Queue, Sequencer, SND_SEQ_OPEN_INPUT, SND_SEQ_OPEN_OUTPUT;
 import crack.midi.event merge, ChannelEvent, Event, MidiReader, MidiWriter,
     NoteOn, NoteOff, PitchWheel, ProgramChange, Track;
-import crack.midi.fluidsynth FluidSettings, FluidSynth;
 import crack.process Process, ProcessHandlerImpl;
 import crack.strutil StringArray;
 import crack.sys env;
@@ -34,9 +33,9 @@ import spug.loop.engine engine, AWBEngine;
 import spug.loop.jack WaveManager;
 import spug.loop.tel AppMethods, InterpWrapper;
 import spug.loop.textui captureCerr, TextController;
-import spug.loop.model programNames, ChannelMap, EventManager, Project,
+import spug.loop.model programNames, ChannelMap, Project,
     Section, Controller, WaveTrack, IDLE, LATCHED_RECORD, PLAY, RECORD;
-import spug.loop.instrument FluidSynthInstrument, Instrument, Orchestra;
+import spug.loop.instrument Instrument;
 import spug.ui.base Widget;
 import spug.ui.piano Piano;
 
@@ -395,15 +394,15 @@ class WaveTrackWidget : TrackWidget {
         if (!sampleMap ||
              sampleMap.count() / 2 != width
             ) {
-            nframes := track.model.frames;
+            nframes := track.frames;
             interval := nframes / width;
             sampleMap = Array[int]();
             int max, min;
             for (int i = 0; i < width; ++i) {
-                buf := ManagedWaveBuffer(interval * track.model.channels);
-                track.model.read(i * interval, buf, interval);
+                buf := ManagedWaveBuffer(interval * track.channels);
+                track.read(i * interval, buf, interval);
                 for (int j = 0; j < interval; ++j) {
-                    val := buf.buffer[i * track.model.channels + track.channel];
+                    val := buf.buffer[i * track.channels + track.channel];
                     val = int16(int(val) - 32768);
 #                    if (val > max)
 #                        max = val;
@@ -641,7 +640,7 @@ class TrackPanel : Widget {
     ## Adds a wave track, creating a new track widget.  If 'surface' is not
     ## null, draws the track.
     TrackWidget addTrack(WaveTrack track, uint endTime, Surface surface) {
-        w := WaveTrackWidget(track, track.getName());
+        w := WaveTrackWidget(track, track.name);
         __addTrackWidget(w, surface);
         return w;
     }
@@ -1135,36 +1134,6 @@ outPort := s.makeReadPort('out');
 if (clientNum)
     port.connectTo(clientNum, portNum);
 
-waveMan := WaveManager.create();
-
-FluidSynth synth = {FluidSettings()};
-synth.loadFont('/usr/share/sounds/sf2/FluidR3_GM.sf2', true);
-
-Orchestra orch = [
-    FluidSynthInstrument(synth, 0),
-    FluidSynthInstrument(synth, 1),
-    FluidSynthInstrument(synth, 2),
-    FluidSynthInstrument(synth, 3),
-    FluidSynthInstrument(synth, 4),
-    FluidSynthInstrument(synth, 5),
-    FluidSynthInstrument(synth, 6),
-    FluidSynthInstrument(synth, 7),
-    FluidSynthInstrument(synth, 8),
-    FluidSynthInstrument(synth, 9),
-    FluidSynthInstrument(synth, 10),
-    FluidSynthInstrument(synth, 11),
-    FluidSynthInstrument(synth, 12),
-    FluidSynthInstrument(synth, 13),
-    FluidSynthInstrument(synth, 14),
-    FluidSynthInstrument(synth, 15)
-];
-
-piano := orch.getChild(0);
-piano.noteOn(44, 127);
-import crack.runtime sleep;
-sleep(1);
-piano.noteOff(44);
-
 # Running a process here for some reason zombifies the fluidsynth event
 # thread, so let's not do that.
 #cerr `starting process\n`;
@@ -1187,10 +1156,8 @@ if (cl.getBool('legacy-ui')) {
     interp.define('UI_MODE', SimpleValue('text', 'User interface mode.'));
 }
 
-# TODO: Get this out of here.
-EventManager em = {controller, orch, s, channelMap};
-em.waveMan = waveMan;
-engine = AWBEngine(em, null);
+engine = AWBEngine();
+engine.project.setController(controller);
 
 # Evaluate the user's .awb.crash script
 userConfig := makePath(env['HOME'])/'.awb.crash';
@@ -1204,7 +1171,7 @@ for (arg :in nonFlagArgs.subarray(1)) {
         if (projectFile)
             cout `WARNING: Overwriting existing project from $projectFile\n`;
         projectFile = arg;
-        em.load(arg);
+        engine.project.load(arg);
     } else if (arg.endsWith('.crash')) {
         cout `running script $arg\n`;
         try {
@@ -1214,7 +1181,7 @@ for (arg :in nonFlagArgs.subarray(1)) {
             exit(1);
         }
     } else if (arg.endsWith('.wav')) {
-        em.mapWaveFile(arg);
+        engine.addWaveFile(arg);
     } else {
         cout `ERROR: file with unknown extension: $arg\n`;
     }
@@ -1234,5 +1201,3 @@ if (app)
     app.run();
 else
     textui.run();
-
-waveMan.deactivate();

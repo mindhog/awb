@@ -16,12 +16,12 @@ import crack.net Poller, POLLIN, POLLERR, POLLOUT;
 import crack.process Process;
 import crack.runtime free;
 import crack.midi.event ControlChange, EndTrack, Event, NoteOn, NoteOff, Track;
+import crack.midi.fluidsynth FluidSettings, FluidSynth;
 import crack.time TimeDelta;
 import spug.loop.evtrec makeEventRecorderModule;
-import spug.loop.midieng EventManagerDispatcher, MidiDispatcher, MidiEngine,
-    MidiSequencer, ModelObserver;
-import spug.loop.model EventContext, EventManager, Section;
-import spug.loop.instrument Instrument, Orchestra;
+import spug.loop.midieng MidiDispatcher, MidiEngine, MidiSequencer,
+    ModelObserver;
+import spug.loop.model EventContext, Section;
 import spug.loop.jack jackCallback, RecordBuffer, SequencerWaveModel, Wave,
     WaveAdapter, WaveManager, WaveModel, WindowBufferAdapter;
 
@@ -35,6 +35,8 @@ import collections wrapIterator, Iter;
 
 import .engine engine, makeMidiEngine, AudioFileRecorder, AWBEngine,
     MidiTrackRecorder, Recorder;
+import .instrument FluidSynthInstrument, Instrument, MidiInstrument,
+    Orchestra;
 import .midifile MidiFile;
 import .server startServer;
 
@@ -57,10 +59,32 @@ import .server startServer;
     return 0;
 }
 
-## Returns the event manager's Orchestra object.  This is the object used to
-## play most midi notes from the event manager.
+FluidSynth synth = {FluidSettings()};
+synth.loadFont('/usr/share/sounds/sf2/FluidR3_GM.sf2', true);
+
+Orchestra orch = [
+    FluidSynthInstrument(synth, 0),
+    FluidSynthInstrument(synth, 1),
+    FluidSynthInstrument(synth, 2),
+    FluidSynthInstrument(synth, 3),
+    FluidSynthInstrument(synth, 4),
+    FluidSynthInstrument(synth, 5),
+    FluidSynthInstrument(synth, 6),
+    FluidSynthInstrument(synth, 7),
+    FluidSynthInstrument(synth, 8),
+    FluidSynthInstrument(synth, 9),
+    FluidSynthInstrument(synth, 10),
+    FluidSynthInstrument(synth, 11),
+    FluidSynthInstrument(synth, 12),
+    FluidSynthInstrument(synth, 13),
+    FluidSynthInstrument(synth, 14),
+    FluidSynthInstrument(synth, 15)
+];
+
+## Returns the Orchestra object, which can be used as a routing destination
+## for the midi engine.
 @function Orchestra getOrchestra() {
-    return engine.getOrchestra();
+    return orch;
 }
 
 @function int metro(int beats) {
@@ -180,7 +204,9 @@ import .server startServer;
 
 ## Connect the internal orchestra channel to the given midi client and port.
 @function int channelConnect(int channel, int client, int port) {
-    engine.connectChannelToMidi(channel, client, port);
+    inst := MidiInstrument(engine.getOutPort(client, port),
+                           byte(channel));
+    orch[channel] = inst;
     return 0;
 }
 

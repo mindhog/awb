@@ -17,7 +17,7 @@ import crack.runtime sleep, PollEvt, PollSet;
 import crack.threads Mutex, MutexLock, Thread;
 import crack.time TimeDelta;
 import spug.loop.jack JackPos, JackWrapper, WaveManager, JACK_TRANSPORT_ROLLING;
-import spug.loop.model EventManager, LoopCursor, Section;
+import spug.loop.model EventContext, LoopCursor, ProjectRef, Section;
 
 @import crack.ann assert, cvars, impl, interface, struct;
 
@@ -142,7 +142,7 @@ alias TimeCallback = Functor1[void, TimeEvent];
     ## transport is rolling, we're recording.  Otherwise we're not.
     Track __recordTrack;
 
-    Section __section = Section();
+    ProjectRef __project;
 
     Array[LoopCursor] __trackCursors;
 
@@ -160,6 +160,9 @@ alias TimeCallback = Functor1[void, TimeEvent];
 
     ## Mutex controlling all parameters that can be set by MidiEngine.
     Mutex __lock = Mutex();
+
+    # TODO: A lot of this state information (PPB, ticksPerSecond) belongs in
+    # the Project/Section objects.
 
     ## Pulses per beat.  Note that this can only be set when there are
     ## no tracks.
@@ -215,12 +218,13 @@ alias TimeCallback = Functor1[void, TimeEvent];
     ## Compute the new start time to use at the beginning of a record.
     ## This modifies __startTime to be the new start time.
     @final void __computeStartTime() {
-        if (!__startTime || !__section.span) {
+        span := __project.curSection.span;
+        if (!__startTime || !span) {
             # We haven't yet set start time or don't yet have a span, so just
             # use the current time as the start time.
             __startTime = __pos.usecs;
         } else {
-            spanInSeconds := float(__section.span) / __ticksPerSecond;
+            spanInSeconds := float(span) / __ticksPerSecond;
 
             # Calculate the number of cycles that have elapsed since the last
             # start time.
@@ -233,9 +237,10 @@ alias TimeCallback = Functor1[void, TimeEvent];
     }
 
     @final void __initializeTrackCursors() {
-        __trackCursors = Array[LoopCursor](__section.tracks.count());
+        tracks := __project.curSection.tracks;
+        __trackCursors = Array[LoopCursor](tracks.count());
         debug `midieng: initializing track cursors`;
-        for (track :in __section.tracks) {
+        for (track :in tracks) {
             __trackCursors.append(cur := LoopCursor(track));
             cur.setPos(pos := __getTicks(cur.span));
             debug `midieng: track $(track.name) set to position $pos`;
@@ -247,8 +252,9 @@ alias TimeCallback = Functor1[void, TimeEvent];
     @final void __setTrackCursors(uint pos) {
         debug `midieng: setting track cursors to $pos`;
         # Recreate the track cursors (this should be refactored out).
-        __trackCursors = Array[LoopCursor](__section.tracks.count());
-        for (track :in __section.tracks)
+        tracks := __project.curSection.tracks;
+        __trackCursors = Array[LoopCursor](tracks.count());
+        for (track :in tracks)
             __trackCursors.append(LoopCursor(track));
 
         for (cur :in __trackCursors) {
@@ -310,29 +316,21 @@ alias TimeCallback = Functor1[void, TimeEvent];
         # state, otherwise go directly to "record".  TODO: maybe allow the
         # user to disable latched in the case where they are just recording a
         # midi track.
-        __state = (__section.span || __jack.hasTracks()) ? ST_RECORD :
-                                                           ST_LATCHED;
+        __state = (__project.curSection.span ||
+                   __jack.hasTracks()) ? ST_RECORD : ST_LATCHED;
     }
 
     void __endRecord() {
         info `midieng: saving recorded track`;
         t := __getTicks(0);
         __recordTrack.append(EndTrack(t));
-        __section.markEnding(__recordTrack, t, true);
-        __section.tracks.append(__recordTrack);
-
-        # Until project model gets unified across the old and new
-        # systems, we need to copy the track and send it to the
-        # event manager.
-        if (__modelObserver)
-            __modelObserver.addTrack(cloneTrack(__recordTrack));
-
+        __project.addTrack(__recordTrack);
         __recordTrack = null;
         __state = ST_PLAY;
 
         # Update the track cursors now that we have a new one, then
         # deal with any events that now need to be played immediately.
-        __setTrackCursors(__getTicks(__section.span));
+        __setTrackCursors(__getTicks(__project.curSection.span));
         for (cur :in __trackCursors)
             __playPendingEvents(cur, t);
     }
@@ -363,7 +361,7 @@ alias TimeCallback = Functor1[void, TimeEvent];
                 # Temporarily binding nano's "<<" key to something that clears
                 # everything out.
                 __recordTrack = null;
-                __section = Section();
+                __project.clear();
                 __startTime = 0;
                 __trackCursors = null;
                 __jack.stop();
@@ -413,9 +411,10 @@ alias TimeCallback = Functor1[void, TimeEvent];
         }
     }
 
-    oper init(Jack jack, Sequencer seq) :
+    oper init(Jack jack, Sequencer seq, ProjectRef project) :
         __jack = jack,
-        __seq = seq {
+        __seq = seq,
+        __project = project {
     }
 
     class EventHandler @impl PollEventCallback {
@@ -454,7 +453,8 @@ alias TimeCallback = Functor1[void, TimeEvent];
 
         if (__state != ST_IDLE) {
             # Get the current tick.
-            tick := __getTicks(__section.span);
+            section := __project.curSection;
+            tick := __getTicks(section.span);
 
             # Send a time event.
             if (__timeCallbacks) {
@@ -464,7 +464,7 @@ alias TimeCallback = Functor1[void, TimeEvent];
             }
 
             # See if we need to play anything.
-            if (__section.tracks) {
+            if (section.tracks) {
                 # if we don't currently have a set of cursors, generate
                 # them now.
                 if (!__trackCursors) {
@@ -582,9 +582,14 @@ alias TimeCallback = Functor1[void, TimeEvent];
 
     void setPPB(int ppb) {
         lk := MutexLock(__lock);
-        if (__section.tracks)
+        if (__project.curSection.tracks)
             throw InvalidStateError();
         __ppb = ppb;
+    }
+
+    int getPPB() {
+        lk := MutexLock(__lock);
+        return __ppb;
     }
 
     void setBPM(float bpm) {
@@ -595,6 +600,16 @@ alias TimeCallback = Functor1[void, TimeEvent];
     float getBPM() {
         lk := MutexLock(__lock);
         return __ticksPerSecond * 60.0 / float(__ppb);
+    }
+
+    @final uint usecsToTicks(uint64 usecs) {
+        lk := MutexLock(__lock);
+        return __usecsToTicks(usecs);
+    }
+
+    @final uint64 ticksToUsecs(uint ticks) {
+        lk := MutexLock(__lock);
+        return __ticksToUsecs(ticks);
     }
 
     ## Toggle record mode.
@@ -663,7 +678,6 @@ alias TimeCallback = Functor1[void, TimeEvent];
     ## as immutable.
     void setSection(Section section) {
         lk := MutexLock(__lock);
-        __section = section;
 
         # Fix the track cursors so that the current position is converted to
         # the new section.
@@ -676,9 +690,7 @@ alias TimeCallback = Functor1[void, TimeEvent];
             __updateJackState();
             t = __pos.usecs - __startTime;
         }
-        __setTrackCursors(__section.span ? __usecsToTicks(t) % __section.span :
-                                           0
-                          );
+        __setTrackCursors(section.span ? __usecsToTicks(t) % section.span : 0);
 
         __interrupter.signal();
     }
@@ -709,7 +721,7 @@ alias TimeCallback = Functor1[void, TimeEvent];
         if (__state == ST_IDLE || __state == ST_LATCHED && !__trackCursors) {
             return __usecsToTicks(__lastTime - __startTime);
         } else {
-            return __getTicks(__section.span);
+            return __getTicks(__project.curSection.span);
         }
     }
 
@@ -717,6 +729,13 @@ alias TimeCallback = Functor1[void, TimeEvent];
     ## wrapping to the span duration.
     uint getRecordTicks() {
         return __getTicks(0);
+    }
+
+    ## Returns the underlying sequencer object.
+    Sequencer oper .sequencer() {
+        # We don't need to get the lock, the sequencer can not be changed
+        # after construction.
+        return __seq;
     }
 }
 
@@ -755,8 +774,8 @@ alias TimeCallback = Functor1[void, TimeEvent];
 @final class MidiEngine {
     MidiSequencer __mseq;
 
-    oper init(WaveManager waveMan, Sequencer seq) :
-        __mseq(JackImpl(waveMan), seq) {
+    oper init(WaveManager waveMan, Sequencer seq, ProjectRef project) :
+        __mseq(JackImpl(waveMan), seq, project) {
     }
 
     void start() {
@@ -791,6 +810,11 @@ alias TimeCallback = Functor1[void, TimeEvent];
         __mseq.setPPB(ppb);
     }
 
+    ## Get the current pulses per beat.
+    int getPPB() {
+        return __mseq.getPPB();
+    }
+
     ## Set the tempo in beats per minute.
     void setBPM(float bpm) {
         __mseq.setBPM(bpm);
@@ -798,6 +822,14 @@ alias TimeCallback = Functor1[void, TimeEvent];
 
     float getBPM() {
         return __mseq.getBPM();
+    }
+
+    @final uint usecsToTicks(uint64 usecs) {
+        return __mseq.usecsToTicks(usecs);
+    }
+
+    @final uint64 ticksToUsecs(uint ticks) {
+        return __mseq.ticksToUsecs(ticks);
     }
 
     ## Toggle record mode.
@@ -848,6 +880,8 @@ alias TimeCallback = Functor1[void, TimeEvent];
         return __mseq.getTicks();
     }
 
+    Sequencer oper .sequencer() { return __mseq.sequencer }
+
     Port oper .outPort =(Port port) { return __mseq.outPort = port }
 
     int oper .inputChannel =(int channel) {
@@ -863,22 +897,43 @@ class MidiDispatcher @impl EventProcessor {
     }
 }
 
-## Dispatch to the event manager.
-##
-## This is provided as an adapter so I can continue to use the event manager
-## functionality in applications that don't use EventManager (which is driven
-## from the UI loop).  It would be better to get rid of the EventManager
-## entirely and move its functionality to midi engine.
-class EventManagerDispatcher @impl EventProcessor {
-    @cvars {
-        EventManager __eventManager;
-    }
+## Class to handle mapping controls to legacy event processors.
+class ControllerDispatcher @impl EventProcessor, EventContext {
+
+    Mutex __mutex = Mutex();
+    uint __controllerOffset;
+
+    # Mapping from event byte values to special processing functions for those
+    # events.  Currently only control changes are supported and these are
+    # represented by an integer of form (channel << 8 | controller) + offset.
+    # ("offset" is the value set by setControllerOffset()).
+    HashMap[uint, Functor2[void, Event, EventContext]] __processors = {};
 
     bool oper call(MidiSequencer mseq, Event event) {
-        result := __eventManager.onInputEvent(event);
+        lk := MutexLock(__mutex);
+        # Divert bound events to the correct event processor.
+        if ((cc := ControlChange.cast(event, null)) &&
+            (proc :=
+                __processors.get((uint(cc.channel) << 8) | cc.controller +
+                                 __controllerOffset)
+             )
+            ) {
+            proc(cc, this);
+            return true;
+        }
 
-        # The event manager doesn't know what the current tick is.
-        event.time = mseq.getRecordTicks();
-        return result;
+        return false;
+    }
+
+    void setControllerOffset(uint offset) {
+        lk := MutexLock(__mutex);
+        __controllerOffset = offset;
+    }
+
+    void setEventProcessor(uint eventSelector,
+                           Functor2[void, Event, EventContext] processor
+                           ) {
+        lk := MutexLock(__mutex);
+        __processors[eventSelector] = processor;
     }
 }

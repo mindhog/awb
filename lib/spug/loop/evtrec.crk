@@ -76,6 +76,7 @@ class VolumeControl : ControllerProcessor {
     }
 
     float oper .value=(float vol) {
+        cerr `xxx setting volumne of $track to $vol\n`;
         adapter.mixer.volume = vol;
         out `volume $track $(adapter.mixer.volume)\n`;
         return vol;
