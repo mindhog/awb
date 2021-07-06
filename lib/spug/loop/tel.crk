@@ -202,6 +202,12 @@ Orchestra orch = [
     return 0;
 }
 
+## Save an AWB project file.
+@function int saveProject() {
+    engine.saveClassicProjectFile();
+    return 0;
+}
+
 ## Connect the internal orchestra channel to the given midi client and port.
 @function int channelConnect(int channel, int client, int port) {
     inst := MidiInstrument(engine.getOutPort(client, port),
@@ -866,6 +872,7 @@ class InterpWrapper {
         ctx.define('addMemFile', addMemFile());
         ctx.define('getTracks', getTracks());
         ctx.define('loadProject', loadProject());
+        ctx.define('saveProject', saveProject());
         ctx.define('getOrchestra', getOrchestra());
         ctx.define('metro', metro());
         ctx.define('channel_connect', channelConnect());
