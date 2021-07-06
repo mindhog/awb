@@ -154,6 +154,10 @@ def v {} 'Bring up the text panel UI.' {
             }
             give true
         }
+        tracklist bind $KEY_DEL {
+            [get_engine] deleteTrack [self getSelection]
+            give true
+        }
         centerPane setParcel $tracklist
 
         bind $KEY_SPACE play

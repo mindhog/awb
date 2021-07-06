@@ -811,6 +811,12 @@ class ExportMidiFileCmd : Builtin {
         return 0;
     }
 
+    ## Delete the track in the current section at the specified index.
+    @function(AWBEngine) int deleteTrack(int index) {
+        self.deleteTrack(index);
+        return 0;
+    }
+
     ## Sets the global tempo (in beats per minute).  Different portions of
     ## the piece can have different tempos, but they're all scaled to the
     ## global tempo.
@@ -832,6 +838,7 @@ class ExportMidiFileCmd : Builtin {
     result.define('record', record(engine));
     result.define('togglePlay', togglePlay(engine));
     result.define('addTrack', addTrack(engine));
+    result.define('deleteTrack', deleteTrack(engine));
     result.define('setTempo', setTempo(engine));
     result.define('resetPos', resetPos(engine));
 

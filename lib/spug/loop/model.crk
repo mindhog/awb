@@ -583,6 +583,10 @@ class ProjectRef {
     void deleteTrack(uint index) {
         lk := MutexLock(__mutex);
         __replaceSection(__section.clone().deleteTrack(index));
+
+        lk = null;
+        if (__controller)
+            __controller.trackDeleted(index);
     }
 
     ## Set the "controller" which is actually more of an observer -- it gets

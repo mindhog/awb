@@ -13,6 +13,7 @@ import crash createRootContext, eval, parseBlockArg, parseString, Block,
     Builtin, EvalContext, Obj, ObjOf, SimpleValue;
 import deadly.entry Entry;
 import deadly.layout Column, Container, Frame, Row;
+import deadly.util KEY_DEL, KEY_END, KEY_HOME, KEY_INS;
 import deadly.termlist List;
 import repl repl;
 import .engine engine, AWBEngine;
@@ -679,6 +680,10 @@ class TextController : Object @implements Controller, AppMethods {
         __interp.define('KEY_ENTER', ival(KEY_ENTER));
         __interp.define('KEY_ESC', ival(KEY_ESC));
         __interp.define('KEY_SPACE', ival(KEY_SPACE));
+        __interp.define('KEY_INS', ival(KEY_INS));
+        __interp.define('KEY_DEL', ival(KEY_DEL));
+        __interp.define('KEY_HOME', ival(KEY_HOME));
+        __interp.define('KEY_END', ival(KEY_END));
     }
 
     void run() {
