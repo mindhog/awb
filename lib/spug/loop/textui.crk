@@ -466,6 +466,8 @@ alias ListObj = ObjOf[List];
         return 0;
     }
 
+    @function(List) int getSelection() { return self.selection }
+
     model := Array[String]();
     list := List(parent, model);
     addToContainer(parent, list, size);
@@ -473,6 +475,7 @@ alias ListObj = ObjOf[List];
     result.define('bind', BindCmd[List](list, result));
     result.define('add', add(list));
     result.define('setFocus', setFocus(list));
+    result.define('getSelection', getSelection(list));
     return result;
 }
 
@@ -608,6 +611,7 @@ class TextController : Object @implements Controller, AppMethods {
             result := TrackListObj(list);
             result.define('getSelection', TrackList.getSelection(list));
             result.define('setSelection', TrackList.setSelection(list));
+            result.define('setFocus', setFocus(list));
             result.define('bind', BindCmd[List](list, result));
             self.__trackLists.append(list);
             return result;

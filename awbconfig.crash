@@ -130,6 +130,30 @@ def EntryBar {parent size label enterCallback} {
     }
 }
 
+def makeMenu {parent alternate} {
+    var menu [List $parent -1]
+    parent setParcel $menu
+    menu setFocus 1
+    var result [object {
+        var actions [array]
+        def add {text block} {
+            menu add $text
+            actions append $block
+        }
+
+        def selected {} {
+            var action [actions get [menu getSelection]]
+            $action
+            parent setParcel $alternate
+            alternate setFocus 1
+            give true
+        }
+    }]
+    menu bind $KEY_ENTER { result selected }
+
+    give $result
+}
+
 def v {} 'Bring up the text panel UI.' {
 
     # Override builtin play, which still just starts the event manager.
@@ -144,14 +168,9 @@ def v {} 'Bring up the text panel UI.' {
 
         var tracklist [TrackList $centerPane -1]
         tracklist bind $KEY_ENTER {
-            var menu [List $centerPane -1]
-            menu add 'Do foo'
-            menu add 'Do bar'
-            centerPane setParcel $menu
-            menu bind $KEY_ENTER {
-                centerPane setParcel $tracklist
-                give true
-            }
+            var menu [makeMenu $centerPane $tracklist]
+            menu add 'Rename track' [def f {} { prerr 'track renamed' }]
+            menu add 'Do something else' [def f {} { prerr 'something else' }]
             give true
         }
         tracklist bind $KEY_DEL {
