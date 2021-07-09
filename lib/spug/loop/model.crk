@@ -26,7 +26,7 @@ import crack.time Time_add = add, Time, TimeDelta;
 
 @import crack.ann assert, cvars, impl, implements, interface;
 @import crack.protobuf.ann protobuf;
-@import .ann immut, nullable;
+@import .ann immut, nullable, over;
 
 ## Defines a midi bank.  This can be applied to an Orchestra object to change
 ## the instrument configuration for a given channel.
@@ -70,6 +70,9 @@ class WavePlayerBank : Object @implements Bank {
 @interface OmniTrack {
     ## The track name.
     @abstract String oper .name();
+
+    ## Clone the track with a new name.
+    @abstract OmniTrack rename(String name);
 }
 
 class AudioTrack @impl OmniTrack {
@@ -80,6 +83,10 @@ class AudioTrack @impl OmniTrack {
 
     String oper .name() { return __name; }
     uint oper .span() { return __span }
+
+    OmniTrack rename(String name) {
+        return AudioTrack(name, __span);
+    }
 }
 
 class WaveTrack : AudioTrack {
@@ -96,6 +103,10 @@ class WaveTrack : AudioTrack {
     uint oper .frames() { return __model.frames }
     int oper .channel() { return __channel }
 
+    @over OmniTrack rename(String name) {
+        return WaveTrack(__model, __channel, name, span);
+    }
+
     ## Read a sequence of samples into 'outputs'.
     ##
     ## pos: position (frame number) to read from.
@@ -110,10 +121,19 @@ class WaveTrack : AudioTrack {
 }
 
 class MidiTrack @impl OmniTrack {
-    Track __track;
+    @cvars {
+        Track __track;
+    }
 
     String oper .name() { return __track.name }
     Track oper .track() { return __track }
+
+    @over OmniTrack rename(String name) {
+        events := Array[Event]();
+        for (event :in __track)
+            events.append(event);
+        return MidiTrack(Track(name, events));
+    }
 }
 
 ## This is a "section" of the piece.  A section consists of a group of tracks
@@ -215,6 +235,22 @@ class Section {
             return this;
         }
 
+        Mut replaceTrack(uint index, OmniTrack track) {
+            if (t := MidiTrack.cast(track, null)) {
+                tracks[index] = t.track;
+                cerr `xxx replaced track $index.  New tracks:\n`;
+                for (x :in tracks)
+                    cerr `xxx $(x.name)\n`;
+            } else if (t := WaveTrack.cast(track, null)) {
+                waves[index - tracks.count()] = t;
+            } else {
+                throw Exception(
+                    FStr() `Unknown track type $(track.class.name)`
+                );
+            }
+            return this;
+        }
+
         void readFrom(SerialReader src) {
             measure = src.readUInt();
             span = src.readUInt();
@@ -240,6 +276,15 @@ class Section {
 
     @static Mut makeMut() {
         return Mut(Section());
+    }
+
+    ## Returns an immutable OmniTrack wrapper around the specified track (midi
+    ## or audio).
+    OmniTrack getTrack(uint index) {
+        if (index > tracks.count())
+            return waves[index - tracks.count()];
+
+        return MidiTrack(tracks[index]);
     }
 
     void writeTo(SerialWriter out) {
@@ -411,6 +456,7 @@ class Project {
 @interface Controller {
     @abstract void changeState(int oldState, int newState);
     @abstract void trackAdded();
+    @abstract void trackReplaced(uint index, OmniTrack track);
     @abstract void waveAdded();
     @abstract void trackDeleted(uint index);
     @abstract void sectionCreated();
@@ -531,6 +577,17 @@ class ProjectRef {
         lk = null;
         if (__controller)
             __controller.trackAdded();
+    }
+
+    ## Replace the track in the specified index in the current section with
+    ## "newTrack".
+    void replaceTrack(uint index, OmniTrack newTrack) {
+        lk := MutexLock(__mutex);
+        __replaceSection(__section.clone().replaceTrack(index, newTrack));
+
+        lk = null;
+        if (__controller)
+            __controller.trackReplaced(index, newTrack);
     }
 
     ## Create a new section.  If we're in "play" mode, make the new section

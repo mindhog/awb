@@ -115,6 +115,10 @@ def MidiState {parent size} {
     }
 }
 
+## Display an entry bar in the given "parent" window.
+##
+## Call "enterCallback" with the entry text and restore the original parcel
+## when the user presses "enter".
 def EntryBar {parent size label enterCallback} {
     object {
         var row [Row $parent $size]
@@ -130,6 +134,11 @@ def EntryBar {parent size label enterCallback} {
     }
 }
 
+## Start a new menu.
+##
+## 'parent' is the container in which to place the menu (should be a Frame)
+## and 'alternate' is the Window that we restore the focus to after the menu
+## goes away (should provide the "setFocus" method).
 def makeMenu {parent alternate} {
     var menu [List $parent -1]
     parent setParcel $menu
@@ -143,9 +152,13 @@ def makeMenu {parent alternate} {
 
         def selected {} {
             var action [actions get [menu getSelection]]
-            $action
+
+            # Clean up the menu, restore focus to the originator.
             parent setParcel $alternate
             alternate setFocus 1
+
+            # Do the menu item action.
+            $action
             give true
         }
     }]
@@ -167,9 +180,19 @@ def v {} 'Bring up the text panel UI.' {
         var centerPane [Frame $mainColumn -1]
 
         var tracklist [TrackList $centerPane -1]
+        def renameTrack {} {
+            def callback {text} {
+                var eng [get_engine]
+                var section [eng getCurrentSection]
+                var sel [tracklist getSelection]
+                var track [section getTrack $sel]
+                eng replaceTrack $sel [track rename $text]
+            }
+            EntryBar $bottomBar 1 'New name:' $callback
+        }
         tracklist bind $KEY_ENTER {
             var menu [makeMenu $centerPane $tracklist]
-            menu add 'Rename track' [def f {} { prerr 'track renamed' }]
+            menu add 'Rename track' $renameTrack
             menu add 'Do something else' [def f {} { prerr 'something else' }]
             give true
         }

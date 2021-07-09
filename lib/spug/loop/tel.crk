@@ -21,7 +21,7 @@ import crack.time TimeDelta;
 import spug.loop.evtrec makeEventRecorderModule;
 import spug.loop.midieng MidiDispatcher, MidiEngine, MidiSequencer,
     ModelObserver;
-import spug.loop.model EventContext, Section;
+import spug.loop.model EventContext, OmniTrack, Section;
 import spug.loop.jack jackCallback, RecordBuffer, SequencerWaveModel, Wave,
     WaveAdapter, WaveManager, WaveModel, WindowBufferAdapter;
 
@@ -549,10 +549,10 @@ Obj makeTrack(Track track) {
     return result;
 }
 
-## Returns the currently active "Section" object.
-@function Obj getCurrentSection() {
-    result := Obj();
+alias SectionObj = ObjOf[Section];
 
+## Returns the currently active "Section" object.
+@function SectionObj getCurrentSection() {
     ## Returns the specified track from the current section.
     @function(Section) Obj getTrack(int index) {
         return makeTrack(self.tracks[index]);
@@ -564,6 +564,7 @@ Obj makeTrack(Track track) {
     }
 
     section := engine.getCurrentSection();
+    result := SectionObj(section);
     result.define('getTrack', getTrack(section));
     result.define('getMeasureSize', getMeasureSize(section));
     return result;
@@ -778,6 +779,28 @@ class ExportMidiFileCmd : Builtin {
     return MidiTrackRecorder();
 }
 
+alias OmniTrackObj = ObjOf[OmniTrack];
+
+OmniTrackObj makeOmniTrackObj(OmniTrack track) {
+    @function(OmniTrack) OmniTrackObj rename(String name) {
+        return makeOmniTrackObj(self.rename(name));
+    }
+
+    result := OmniTrackObj(track);
+    result.define('rename', rename(track));
+    return result;
+}
+
+SectionObj makeSectionObj(Section section) {
+    @function(Section) OmniTrackObj getTrack(int index) {
+        return makeOmniTrackObj(self.getTrack(uint(index)));
+    }
+
+    result := SectionObj(section);
+    result.define('getTrack', getTrack(section));
+    return result;
+}
+
 ## Get the new engine facade.
 @function Obj get_engine() {
     result := ObjOf[AWBEngine](engine);
@@ -812,6 +835,11 @@ class ExportMidiFileCmd : Builtin {
         return 0;
     }
 
+    ## Returns the current section.
+    @function(AWBEngine) SectionObj getCurrentSection() {
+        return makeSectionObj(self.getCurrentSection());
+    }
+
     @function(AWBEngine) int addTrack(Track track) {
         self.addTrack(track);
         return 0;
@@ -820,6 +848,12 @@ class ExportMidiFileCmd : Builtin {
     ## Delete the track in the current section at the specified index.
     @function(AWBEngine) int deleteTrack(int index) {
         self.deleteTrack(index);
+        return 0;
+    }
+
+    ## Replace the specified track in the current section with the new track.
+    @function(AWBEngine) int replaceTrack(int index, OmniTrack track) {
+        self.replaceTrack(index, track);
         return 0;
     }
 
@@ -845,8 +879,10 @@ class ExportMidiFileCmd : Builtin {
     result.define('togglePlay', togglePlay(engine));
     result.define('addTrack', addTrack(engine));
     result.define('deleteTrack', deleteTrack(engine));
+    result.define('replaceTrack', replaceTrack(engine));
     result.define('setTempo', setTempo(engine));
     result.define('resetPos', resetPos(engine));
+    result.define('getCurrentSection', getCurrentSection(engine));
 
     return result;
 }

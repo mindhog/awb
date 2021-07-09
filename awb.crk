@@ -34,7 +34,8 @@ import spug.loop.jack WaveManager;
 import spug.loop.tel AppMethods, InterpWrapper;
 import spug.loop.textui captureCerr, TextController;
 import spug.loop.model programNames, ChannelMap, Project,
-    Section, Controller, WaveTrack, IDLE, LATCHED_RECORD, PLAY, RECORD;
+    Section, Controller, MidiTrack, OmniTrack, WaveTrack, IDLE,
+    LATCHED_RECORD, PLAY, RECORD;
 import spug.loop.instrument Instrument;
 import spug.ui.base Widget;
 import spug.ui.piano Piano;
@@ -675,6 +676,18 @@ class TrackPanel : Widget {
         draw(surface);
     }
 
+    void trackReplaced(Surface surface, uint index, OmniTrack track) {
+        if (t := MidiTrack.cast(track, null)) {
+            __elems[index] = MIDITrackWidget(t.track, t.track[-1].time);
+        } else if (t := WaveTrack.cast(track, null)) {
+            __elems[index] = WaveTrackWidget(t, t.name);
+        } else {
+            throw Exception(
+                FStr() `Unknown OmniTrack type: $(track.class.name)`
+            );
+        }
+    }
+
     void sectionChanged() {
         __elems.clear();
         for (track :in engine.getCurrentSection().tracks)
@@ -870,6 +883,10 @@ class App : Object @implements AppMethods, KeyboardHandler, MouseButtonHandler,
     void trackDeleted(uint index) {
         trackPanel.trackDeleted(app.surface, index);
         app.flip();
+    }
+
+    void trackReplaced(uint index, OmniTrack track) {
+        trackPanel.trackReplaced(app.surface, index, track);
     }
 
     void sectionCreated() {

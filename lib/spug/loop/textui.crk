@@ -17,14 +17,14 @@ import deadly.util KEY_DEL, KEY_END, KEY_HOME, KEY_INS;
 import deadly.termlist List;
 import repl repl;
 import .engine engine, AWBEngine;
-import .model Controller;
+import .model Controller, OmniTrack;
 import .midieng MidiEngine, TimeCallback, TimeEvent;
 import .tel AppMethods, CrashCallback, InterpWrapper;
 
 import types FloatObj, IntObj;
 @import ann function;
-
 @import crack.ann cvars, impl, implements, interface;
+@import .ann over;
 
 class AppContext {}
 
@@ -88,6 +88,10 @@ class TrackList : List {
 
     void trackDeleted() {
         reloadTracks();
+    }
+
+    @over void trackReplaced(uint index, OmniTrack track) {
+        model[index] = track.name;
     }
 
     @function(TrackList) int getSelection() {
@@ -526,6 +530,11 @@ class TextController : Object @implements Controller, AppMethods {
     void trackDeleted(uint index) {
         for (tl :in __trackLists)
             tl.trackDeleted();
+    }
+
+    void trackReplaced(uint index, OmniTrack track) {
+        for (tl :in __trackLists)
+            tl.trackReplaced(index, track);
     }
 
     void sectionCreated() {

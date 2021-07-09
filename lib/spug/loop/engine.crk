@@ -20,7 +20,8 @@ import .midieng ControllerDispatcher, EventProcessor, MidiDispatcher,
     MidiEngine, MidiSequencer, ModelObserver, ST_IDLE, ST_PLAY, ST_LATCHED,
     ST_RECORD;
 import .midifile MidiFile;
-import .model AudioTrack, EventContext, ProjectRef, Section, WaveTrack;
+import .model AudioTrack, EventContext, OmniTrack, ProjectRef, Section,
+    WaveTrack;
 
 @import crack.ann assert, cvars, impl;
 @import .ann immut;
@@ -205,6 +206,11 @@ class AWBEngine @impl ModelObserver {
 
     void addTrack(Track track) {
         __project.addTrack(track);
+    }
+
+    ## Replace the indexed track in the current section.
+    void replaceTrack(uint index, OmniTrack track) {
+        __project.replaceTrack(index, track);
     }
 
     ## Add a wave file as a track in the current section.
