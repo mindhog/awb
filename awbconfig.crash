@@ -119,7 +119,9 @@ def MidiState {parent size} {
 ##
 ## Call "enterCallback" with the entry text and restore the original parcel
 ## when the user presses "enter".
-def EntryBar {parent size label enterCallback} {
+##
+## "restoreFocus" is a widget to restore focus to.
+def EntryBar {parent size label enterCallback restoreFocus} {
     object {
         var row [Row $parent $size]
         var label [StatefulText $row 10 $label]
@@ -130,6 +132,7 @@ def EntryBar {parent size label enterCallback} {
         entry bind $KEY_ENTER {
             enterCallback [entry getText]
             parent setParcel $lastParcel
+            restoreFocus setFocus [+ 1]
         }
     }
 }
@@ -188,7 +191,7 @@ def v {} 'Bring up the text panel UI.' {
                 var track [section getTrack $sel]
                 eng replaceTrack $sel [track rename $text]
             }
-            EntryBar $bottomBar 1 'New name:' $callback
+            EntryBar $bottomBar 1 'New name:' $callback $tracklist
         }
         tracklist bind $KEY_ENTER {
             var menu [makeMenu $centerPane $tracklist]
