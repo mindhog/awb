@@ -238,9 +238,6 @@ class Section {
         Mut replaceTrack(uint index, OmniTrack track) {
             if (t := MidiTrack.cast(track, null)) {
                 tracks[index] = t.track;
-                cerr `xxx replaced track $index.  New tracks:\n`;
-                for (x :in tracks)
-                    cerr `xxx $(x.name)\n`;
             } else if (t := WaveTrack.cast(track, null)) {
                 waves[index - tracks.count()] = t;
             } else {
