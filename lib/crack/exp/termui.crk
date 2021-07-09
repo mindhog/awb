@@ -346,11 +346,19 @@ class TermApp {
         sigaction(SIGWINCH, sa, null);
     }
 
-    void onEvent(Event event) {
+    bool onEvent(Event event) {
         if (__focus) {
+            # Give every widget in the ancestor hierarchy of the focused
+            # widget the opportunity to handle the event until one of them
+            # returns true, indicating handling should be terminated.
             cur := __focus;
-            while (!cur.onEvent(event) && (cur = cur.getParent())) ;
+            while (cur) {
+                if (cur.onEvent(event))
+                    return true;
+                cur = cur.getParent();
+            }
         }
+        return false;
     }
 
     class EventHandler @impl PollEventCallback {

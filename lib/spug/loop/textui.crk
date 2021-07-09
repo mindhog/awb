@@ -41,15 +41,19 @@ class App : TermApp {
 
     oper init(AppContext context) : __context = context {}
 
-    void onEvent(Event event) {
+    bool onEvent(Event event) {
+        # First give the child widgets the opportunity to process it.
+        if (TermApp.onEvent(event))
+            return true;
+
         if (ke := KeyEvent.cast(event, null)) {
             if ((cb := appBindings.get(ke.key)) && cb(__context))
-                return;
+                return true;
             else if (ke.key == b'q')
                 terminate();
         }
 
-        TermApp.onEvent(event);
+        return false;
     }
 }
 
