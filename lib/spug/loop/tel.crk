@@ -5,6 +5,7 @@
 import crack.audio.wavfile ManagedWaveBuffer, WaveBuffer, WaveDef;
 import crack.strutil split, StringArray;
 import crack.cont.array Array;
+import crack.cont.hashmap HashMap;
 import crack.fs makePath;
 import crack.functor Functor0, Functor1, Functor2;
 import crack.io cin, cout, cerr, FStr;
@@ -15,12 +16,13 @@ import crack.midi.alsa PortInfo, Sequencer, SND_SEQ_OPEN_OUTPUT,
 import crack.net Poller, POLLIN, POLLERR, POLLOUT;
 import crack.process Process;
 import crack.runtime free;
-import crack.midi.event ControlChange, EndTrack, Event, NoteOn, NoteOff, Track;
+import crack.midi.event ChannelEvent, ControlChange, EndTrack, Event,
+    NoteEvent, NoteOn, NoteOff, Track;
 import crack.midi.fluidsynth FluidSettings, FluidSynth;
 import crack.time TimeDelta;
 import spug.loop.evtrec makeEventRecorderModule;
-import spug.loop.midieng MidiDispatcher, MidiEngine, MidiSequencer,
-    ModelObserver;
+import spug.loop.midieng EventProcessor, MidiDispatcher, MidiEngine,
+    MidiSequencer, ModelObserver;
 import spug.loop.model EventContext, OmniTrack, Section;
 import spug.loop.jack jackCallback, RecordBuffer, SequencerWaveModel, Wave,
     WaveAdapter, WaveManager, WaveModel, WindowBufferAdapter;
@@ -312,9 +314,11 @@ class PortDescriptor {
     return ControlChange.cast(event).value;
 }
 
-alias EventProcessor = Functor2[void, Event, EventContext];
+# Note that this is the _old style_ EventProcessor, prefer the
+# midieng.EventProcessor instead.
+alias LegacyEventProcessor = Functor2[void, Event, EventContext];
 
-class VolumeControl @impl EventProcessor {
+class VolumeControl @impl LegacyEventProcessor {
     WindowBufferAdapter adapter;
 
     oper init(WindowBufferAdapter adapter) : adapter = adapter {}
@@ -325,7 +329,7 @@ class VolumeControl @impl EventProcessor {
     }
 }
 
-@function EventProcessor volumeControl(WindowBufferAdapter adapter) {
+@function LegacyEventProcessor volumeControl(WindowBufferAdapter adapter) {
     return VolumeControl(adapter);
 }
 
@@ -336,7 +340,7 @@ class VolumeControl @impl EventProcessor {
     return 0;
 }
 
-class PanControl @impl EventProcessor {
+class PanControl @impl LegacyEventProcessor {
     WindowBufferAdapter adapter;
 
     oper init(WindowBufferAdapter adapter) : adapter = adapter {}
@@ -348,7 +352,7 @@ class PanControl @impl EventProcessor {
     }
 }
 
-@function EventProcessor panControl(WindowBufferAdapter adapter) {
+@function LegacyEventProcessor panControl(WindowBufferAdapter adapter) {
     return PanControl(adapter);
 }
 
@@ -366,7 +370,7 @@ class PanControl @impl EventProcessor {
 }
 
 ## Event processor that can run a crash script.
-class CrashScriptEventProcessor @impl EventProcessor {
+class CrashScriptEventProcessor @impl LegacyEventProcessor {
     EvalContext __context;
     ActiveFunc __func;
 
@@ -386,7 +390,7 @@ class CrashScriptEventProcessor @impl EventProcessor {
 
 ## CrashEventProcessor <crash-func>
 ##
-## Creates an event processor from a crash function.
+## Creates a legacy event processor from a crash function.
 class CrashEventProcessorCmd : Builtin {
     Object invoke(EvalContext context, Array[Object] args) {
         if (args.count() != 1)
@@ -409,7 +413,7 @@ const
 ## The parameters are the offset (a value to be added to the channel/value
 ## index) and the valueRule (which determines how the value of the controller
 ## affects the offset).
-class ControllerOffsetChange @impl EventProcessor {
+class ControllerOffsetChange @impl LegacyEventProcessor {
     @cvars {
         uint offset;
         int valueRule;
@@ -432,12 +436,16 @@ class ControllerOffsetChange @impl EventProcessor {
 
 ## Bind an event processor to a control number (channel << 8 + controller +
 ## offset).
-@function int bindController(int controlNumber, EventProcessor processor) {
+@function int bindController(int controlNumber,
+                             LegacyEventProcessor processor
+                             ) {
     engine.addEventProcessor(controlNumber, processor);
     return 0;
 }
 
-@function int addEventProcessor(int eventSelector, EventProcessor processor) {
+@function int addEventProcessor(int eventSelector,
+                                LegacyEventProcessor processor
+                                ) {
     engine.addEventProcessor(eventSelector, processor);
     return 0;
 }
@@ -801,6 +809,98 @@ SectionObj makeSectionObj(Section section) {
     return result;
 }
 
+## An input processor that maps one note to another in NoteOn/NoteOff events.
+class NoteMapper @impl EventProcessor {
+    HashMap[int, int] __map = {};
+
+    void map(int orgNote, int newNote) {
+        __map[orgNote] = newNote;
+    }
+
+    bool oper call(MidiSequencer seq, Event event) {
+        if (e := NoteEvent.cast(event, null)) {
+            e.note = byte(__map.get(e.note, e.note));
+        }
+        return false;
+    }
+}
+
+alias NoteMapperObj = ObjOf[NoteMapper];
+
+## Returns a NoteMapper object, which is an event processor that maps one note
+## to another.
+##
+## NoteMapper has a "map" method that accepts to integers and causes the
+## mapper to do the translation for a specific note.
+@function NoteMapperObj makeNoteMapper() {
+
+    @function(NoteMapper) int map(int orgNote, int newNote) {
+        self.map(orgNote, newNote);
+        return 0;
+    }
+
+    self := NoteMapper();
+    result := NoteMapperObj(self);
+    result.define('map', map(self));
+    return result;
+}
+
+## An input processor that converts the channel of all channel events to the
+## specified value.
+class ChannelMapper @impl EventProcessor {
+    @cvars {
+        ## The new channel number for all output events.
+        int newChannel;
+    }
+
+    bool oper call(MidiSequencer seq, Event event) {
+        if (e := ChannelEvent.cast(event, null))
+            e.channel = byte(newChannel);
+        return false;
+    }
+}
+
+alias ChannelMapperObj = ObjOf[ChannelMapper];
+
+## Returns a new channel mapper object, which changes the channel of all
+## ChannelEvent's to the value specified in the argument.
+@function ChannelMapperObj makeChannelMapper(int newChannel) {
+    return ChannelMapperObj(ChannelMapper(newChannel));
+}
+
+## An input processor that delegates to another input processor for a channel
+## event on a specific channel.
+class ChannelPredicate @impl EventProcessor {
+    @cvars {
+        ## The channel to invoke the delgated processor for.
+        int channel;
+
+        ## The processor to be delgated to.
+        EventProcessor processor;
+    }
+
+    bool oper call(MidiSequencer seq, Event event) {
+        if ((e := ChannelEvent.cast(event, null)) && e.channel == channel)
+            return processor(seq, event);
+        else
+            return false;
+    }
+}
+
+alias ChannelPredicateObj = ObjOf[ChannelPredicate];
+
+## Returns a new channel predicate object.
+##
+## Channel predicates delgate to another input processor for events on a
+## specific channel.
+##
+## ChannelPredicate <channel> <delegate-processor>
+@function ChannelPredicateObj makeChannelPredicate(int channel,
+                                                   EventProcessor delegate
+                                                   ) {
+    return ChannelPredicateObj(ChannelPredicate(channel, delegate));
+}
+
 ## Get the new engine facade.
 @function Obj get_engine() {
     result := ObjOf[AWBEngine](engine);
@@ -871,6 +971,18 @@ SectionObj makeSectionObj(Section section) {
         return 0;
     }
 
+    ## Add an input processor to the midi input event chain.
+    @function(AWBEngine) int addInputProcessor(EventProcessor processor) {
+        self.addInputProcessor(processor);
+        return 0;
+    }
+
+    ## Add an output processor to the midi input event chain.
+    @function(AWBEngine) int addOutputProcessor(EventProcessor processor) {
+        self.addOutputProcessor(processor);
+        return 0;
+    }
+
     result.define('play', play(engine));
     result.define('pause', pause(engine));
     result.define('addRecorder', addRecorder(engine));
@@ -882,6 +994,8 @@ SectionObj makeSectionObj(Section section) {
     result.define('replaceTrack', replaceTrack(engine));
     result.define('setTempo', setTempo(engine));
     result.define('resetPos', resetPos(engine));
+    result.define('addInputProcessor', addInputProcessor(engine));
+    result.define('addOutputProcessor', addOutputProcessor(engine));
     result.define('getCurrentSection', getCurrentSection(engine));
 
     return result;
@@ -923,6 +1037,9 @@ class InterpWrapper {
         ctx.define('makeMidiTrackRecorder', makeMidiTrackRecorder());
         ctx.define('makeControllerOffsetChange',
                          makeControllerOffsetChange());
+        ctx.define('NoteMapper', makeNoteMapper());
+        ctx.define('ChannelMapper', makeChannelMapper());
+        ctx.define('ChannelPredicate', makeChannelPredicate());
         ctx.define('bindController', bindController());
         ctx.define('addEventProcessor', addEventProcessor());
         ctx.define('CrashEventProcessor', CrashEventProcessorCmd());
