@@ -48,19 +48,25 @@ def makeProject {} {
     give $result
 }
 
+# For Nano.  Channel and CC are both track number for volume, pan is the
+# volume CC + 16.
+#def getVolCC {} { + [* 256 $trackNum] $trackNum }
+#def getPanCC {} { + [getVolCC] 16 }
+
+# For Nektar.  Channel 15 * 256 + 12 for volume, channel 15 * 256 + 30 for pan.
+def getVolCC {} { + 3852 $trackNum }
+def getPanCC {} { + 3870 $trackNum }
+
+
 # Adds a new track.
 def track {file} {
-    var volCC [+ [* 256 $trackNum] $trackNum]
-    var panCC [+ $volCC 16]
-    $project addTrack $file $volCC $panCC
+    $project addTrack $file [getVolCC] [getPanCC]
     set trackNum [+ $trackNum 1]
 }
 
 # Adds a new "bus" (pass-through).
 def bus {inputs} {
-    var volCC [+ [* 256 $trackNum] $trackNum]
-    var panCC [+ $volCC 16]
-    $project addPassThrough $inputs $volCC $panCC
+    $project addPassThrough $inputs [getVolCC] [getPanCC]
     set trackNum [+ $trackNum 1]
 }
 
