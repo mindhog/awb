@@ -980,6 +980,16 @@ class RecordBuffer {
     }
 }
 
+## Return 'val' clipped to the range of -1.0  to +1.0.
+float clip(float val) {
+    if (val > 1.0)
+        return 1.0;
+    else if (val < -1.0)
+        return -1.0;
+    else
+        return val;
+}
+
 class Recorder @impl Functor1[void, JackWrapper] {
 
     @cvars {
@@ -999,9 +1009,9 @@ class Recorder @impl Functor1[void, JackWrapper] {
 
         for (int i; i < jack.frameCount; ++i) {
             outBuf.buffer[(outBuf.recordPos + i * 2) % outBuf.size] =
-                int16(lbuf[i] * 32768.0);
+                int16(clip(lbuf[i]) * 32767.0);
             outBuf.buffer[(outBuf.recordPos + i * 2 + 1) % outBuf.size] =
-                int16(rbuf[i] * 32768.0);
+                int16(clip(rbuf[i]) * 32767.0);
             ol[i] = ol[i] + lbuf[i];
             or[i] = or[i] + rbuf[i];
 
