@@ -95,30 +95,107 @@ def getGain {track} {
     $project getGain $track
 }
 
-def MidiState {parent size} {
+var MidiRecorder [object {
+    var eng [get_engine]
+
+    def activate {} {
+        eng addRecorder [makeMidiTrackRecorder]
+    }
+
+    def deactivate {} {
+        eng clearRecorders
+    }
+}]
+
+var AudioRecorder [object {
+    var filename 'recording.wav'
+    var enabled [+ 0]
+    var eng [get_engine]
+
+    def addRecorder {} {
+        eng addRecorder [makeAudioFileRecorder $filename]
+    }
+
+    def activate {} {
+        set enabled [+ 1]
+        addRecorder
+    }
+
+    def deactivate {} {
+        set enabled [+ 0]
+        eng clearRecorders
+    }
+
+    def setFilename {newFilename} {
+        set filename $newFilename
+        if {give $enabled} {
+            # Replace the existing recorder.
+            eng clearRecorders
+            addRecorder
+        }
+    }
+
+    def getFilename {} {
+        give $filename
+    }
+}]
+
+def ToggleButton {parent size text model} \
+    'Stateful text button that allows you to toggle the state of a model
+    object.
+
+    "model" must support "activate" and "deactivate" methods.
+
+    usage: MidiState <parent> <size> <text> <recorder>
+    ' \
+{
     object {
         var active [+ 0]
-        var win [StatefulText $parent $size 'Midi']
-        var eng [get_engine]
+        var win [StatefulText $parent $size $text]
         win bind $KEY_ENTER {
             if {give $active} {
-                win setNormalAttr 130
+                win setNormalAttr 66
                 win setUnfocusedAttr 2
                 set active [+ 0]
-                eng clearRecorders
+                model deactivate
             } else {
-                self setNormalAttr 129
+                self setNormalAttr 65
                 self setUnfocusedAttr 1
                 set active [+ 1]
-                eng addRecorder [makeMidiTrackRecorder]
+                model activate
             }
 
             give 'true'
         }
 
-        win setNormalAttr 130
+        win setNormalAttr 66
         win setUnfocusedAttr 2
     }
+}
+
+def ActionButton {parent size text action} \
+    'Stateful text button that performs an action.
+
+    "action" is a command object that takes no arguments.
+
+    usage: ActionButton <parent> <size> <text> <action>
+    ' \
+{
+    var self [
+        object {
+            var win [StatefulText $parent $size $text]
+            win bind $KEY_ENTER {
+                action
+            }
+
+            def setText {text} {
+                win setText $text
+            }
+
+            win setNormalAttr 71
+            win setUnfocusedAttr 2
+        }
+    ]
 }
 
 ## Display an entry bar in the given "parent" window.
@@ -184,7 +261,37 @@ def v {} 'Bring up the text panel UI.' {
     }
 
     runUI {
-        MidiState $mainColumn 1
+
+        def setAudioFilename {} {
+            def callback {text} {
+                audioFilenameActionButton setText $text
+                AudioRecorder setFilename [format $text '.wav']
+            }
+            EntryBar $bottomBar 1 'Audio Record Filename:' $callback $tracklist
+        }
+
+        var midiRecordingName 'midi-recording'
+        [get_engine] setMidiRecordTrackName $midiRecordingName
+        def setMidiRecordingName {} {
+            def callback {text} {
+                midiTrackNameActionButton setText $text
+                set midiRecordingName $text
+                [get_engine] setMidiRecordTrackName $midiRecordingName
+            }
+            EntryBar $bottomBar 1 'Midi Record Track name:' $callback \
+                $tracklist
+        }
+
+        # Create a row of buttons to control midi/audio recording.
+        var stateRow [Row $mainColumn 1]
+        ToggleButton $stateRow 5 'Midi' $MidiRecorder
+        var midiTrackNameActionButton [
+            ActionButton $stateRow 16 $midiRecordingName $setMidiRecordingName
+        ]
+        ToggleButton $stateRow 6 'Audio' $AudioRecorder
+        var audioFilenameActionButton [
+            ActionButton $stateRow 16 'recording' $setAudioFilename
+        ]
 
         var centerPane [Frame $mainColumn -1]
 
@@ -216,7 +323,7 @@ def v {} 'Bring up the text panel UI.' {
         bind $KEY_RIGHT fwd
 
         # Lower-case "r" to record.
-        bind 114 {[get_engine] record}
+        bind 114 {[get_engine] toggleRecord}
 
         setStatusText 'AWB -- <Space> toggle play, <q> to quit, <Left> back, <Right> Forward'
 

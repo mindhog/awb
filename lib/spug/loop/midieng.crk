@@ -142,6 +142,9 @@ alias TimeCallback = Functor1[void, TimeEvent];
     ## transport is rolling, we're recording.  Otherwise we're not.
     Track __recordTrack;
 
+    ## The name to be assigned to any midi tracks that are recorded.
+    String __recordTrackName = 'midi-record-track';
+
     ProjectRef __project;
 
     Array[LoopCursor] __trackCursors;
@@ -306,7 +309,7 @@ alias TimeCallback = Functor1[void, TimeEvent];
         @assert(!__recordTrack);
         # Create a record track, make sure the transport is rolling.
         info `midieng: Starting record`;
-        __recordTrack = Track('midi-record-track');
+        __recordTrack = Track(__recordTrackName);
         if (__transportState != JACK_TRANSPORT_ROLLING) {
             __jack.start();
             __updateJackState();
@@ -737,6 +740,12 @@ alias TimeCallback = Functor1[void, TimeEvent];
         # after construction.
         return __seq;
     }
+
+    ## Set the track name to be used for all subsequent midi recordings.
+    void setRecordTrackName(String name) {
+        lk := MutexLock(__lock);
+        __recordTrackName = name;
+    }
 }
 
 @final class JackImpl @impl Jack {
@@ -878,6 +887,11 @@ alias TimeCallback = Functor1[void, TimeEvent];
     ## that this will not change when idle.
     uint getTicks() {
         return __mseq.getTicks();
+    }
+
+    ## Set the track name to be used for all subsequent midi recordings.
+    void setRecordTrackName(String name) {
+        __mseq.setRecordTrackName(name);
     }
 
     Sequencer oper .sequencer() { return __mseq.sequencer }

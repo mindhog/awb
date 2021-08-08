@@ -124,6 +124,11 @@ class AWBEngine @impl ModelObserver {
         __state = ST_PLAY;
     }
 
+    void __closeAllRecorders() {
+        for (rec :in __recorders)
+            rec.close(this);
+    }
+
     ## Pause midi and jack.  This also ends recording.
     void pause() {
         if (__state == ST_IDLE) {
@@ -135,10 +140,8 @@ class AWBEngine @impl ModelObserver {
         __midi.togglePlay(); # TODO: see notes above.
 
         ## Close out all recorders if recording.
-        if (__state == ST_RECORD) {
-            for (rec :in __recorders)
-                rec.close(this);
-        }
+        if (__state == ST_RECORD)
+            __closeAllRecorders();
 
         __state = ST_IDLE;
     }
@@ -165,6 +168,9 @@ class AWBEngine @impl ModelObserver {
         if (!__recorders)
             throw AssertionError('No recorders defined.');
 
+        if (__state == ST_RECORD)
+            throw AssertionError('Already recording.');
+
         for (rec :in __recorders)
             rec.init(this);
 
@@ -190,10 +196,14 @@ class AWBEngine @impl ModelObserver {
 
     ## Start/stop recording.  If we're already recording, go into "play" state.
     void toggleRecord() {
-        if (__state == ST_RECORD)
-            play();
-        else
+        if (__state == ST_RECORD) {
+            if (__midiRecordArmed)
+                __midi.toggleRecord();
+            __closeAllRecorders();
+            __state = ST_PLAY;
+        } else {
             record();
+        }
     }
 
     ## Put the engine into "latched for record" mode.
@@ -242,6 +252,11 @@ class AWBEngine @impl ModelObserver {
         file := MidiFile.read(makePath(filename).reader());
         __project.addTracks(file.tracks);
         __midi.setPPB(file.ticksPerQN);
+    }
+
+    ## Set the track name to be used for all subsequent midi recordings.
+    void setMidiRecordTrackName(String name) {
+        __midi.setRecordTrackName(name);
     }
 
     ## Returns the engine's audio sample rate.
@@ -470,6 +485,7 @@ class AudioFileRecorder : Recorder {
 
     void close(AWBEngine engine) {
         buf.finish();
+        engine.addWaveFile(filename);
     }
 }
 

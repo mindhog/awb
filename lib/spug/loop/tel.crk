@@ -930,6 +930,12 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
         return 0;
     }
 
+    ## Toggle record mode.
+    @function(AWBEngine) int toggleRecord() {
+        self.toggleRecord();
+        return 0;
+    }
+
     @function(AWBEngine) int togglePlay() {
         self.togglePlay();
         return 0;
@@ -983,11 +989,17 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
         return 0;
     }
 
+    @function(AWBEngine) int setMidiRecordTrackName(String name) {
+        self.setMidiRecordTrackName(name);
+        return 0;
+    }
+
     result.define('play', play(engine));
     result.define('pause', pause(engine));
     result.define('addRecorder', addRecorder(engine));
     result.define('clearRecorders', clearRecorders(engine));
     result.define('record', record(engine));
+    result.define('toggleRecord', toggleRecord(engine));
     result.define('togglePlay', togglePlay(engine));
     result.define('addTrack', addTrack(engine));
     result.define('deleteTrack', deleteTrack(engine));
@@ -997,6 +1009,7 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
     result.define('addInputProcessor', addInputProcessor(engine));
     result.define('addOutputProcessor', addOutputProcessor(engine));
     result.define('getCurrentSection', getCurrentSection(engine));
+    result.define('setMidiRecordTrackName', setMidiRecordTrackName(engine));
 
     return result;
 }
