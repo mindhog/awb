@@ -64,6 +64,11 @@ def track {file} {
     set trackNum [+ $trackNum 1]
 }
 
+def midiTrack {file} 'Add a new midi track: midiTrack <file>' {
+    prerr [format 'loading midi file ' $file '\n']
+    [getAWBEngine] loadMidiFile $file
+}
+
 # Adds a new "bus" (pass-through).
 def bus {inputs} {
     $project addPassThrough $inputs [getVolCC] [getPanCC]
@@ -253,6 +258,26 @@ def makeMenu {parent alternate} {
     give $result
 }
 
+var projectFilename 'project.crash'
+
+## Save the current project.
+def saveProject {} {
+    # Export all of the midi tracks to midi files.
+    var i [+ 0]
+    var out [open $projectFilename w]
+    out write 'import [evalfile /home/mmuller/w/awb/awbconfig.crash] '
+    out write 'makeProject track vol pan gain midiTrack\n'
+    out write 'var project [makeProject]\n'
+    [getTracks] each track {
+        if {track isMidi} {
+            exportMidiFile [format [track getName] '.mid'] 0
+            out write [format 'midiTrack ' [track getName] '.mid\n']
+        } else {
+            out write [format 'track ' [track getName] '\n']
+        }
+    }
+}
+
 def v {} 'Bring up the text panel UI.' {
 
     # Override builtin play, which still just starts the event manager.
@@ -321,6 +346,7 @@ def v {} 'Bring up the text panel UI.' {
         bind $KEY_SPACE play
         bind $KEY_LEFT bak
         bind $KEY_RIGHT fwd
+        bind $KEY_F2 saveProject
 
         # Lower-case "r" to record.
         bind 114 {[get_engine] toggleRecord}

@@ -298,7 +298,7 @@ class Project {
 
     ## Adds a track given the name of a wave file.
     void addTrack(String filename, int volumeController, int panController) {
-        adapter := engine.addWaveFile((dir/filename).getFullName());
+        adapter := engine.addWaveFile((dir/filename).getFullName(), filename);
         __addChannel(adapter, volumeController, panController);
 
         # Add the new track to the log.

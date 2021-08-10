@@ -224,7 +224,7 @@ class AWBEngine @impl ModelObserver {
     }
 
     ## Add a wave file as a track in the current section.
-    WindowBufferAdapter addWaveFile(String filename) {
+    WindowBufferAdapter addWaveFile(String filename, String trackName) {
         result := __jack.addFile(filename);
 
         # Calculate end time in microseconds.
@@ -232,9 +232,15 @@ class AWBEngine @impl ModelObserver {
                    uint64(result.getRate());
 
         spanInTicks := __midi.usecsToTicks(endTime);
-        __project.addTrack(AudioTrack(filename, spanInTicks));
+        __project.addTrack(AudioTrack(trackName, spanInTicks));
 
         return result
+    }
+
+    ## Add a wave file as a track in the current section, use 'filename' as
+    ## the track name.
+    WindowBufferAdapter addWaveFile(String filename) {
+        return addWaveFile(filename, filename);
     }
 
     ## Adds a new WaveModel track.
@@ -250,8 +256,21 @@ class AWBEngine @impl ModelObserver {
     ## Add all tracks of a midi file to the engine.
     void addMidiFile(String filename) {
         file := MidiFile.read(makePath(filename).reader());
+
+        # Set the track names, just use the filename
+        if (file.tracks.count() == 1) {
+            file.tracks[0].name =
+                filename.endsWith('.mid') ? filename.slice(0, -4) : filename;
+        } else {
+            for (trackIter :on file.tracks)
+                trackIter.elem().name =
+                    FStr() `$(filename):$(trackIter.index)`;
+        }
         __project.addTracks(file.tracks);
-        __midi.setPPB(file.ticksPerQN);
+
+        # We can't do this here because it asserts that no tracks exist in
+        # the midi engine.  TODO: find a better way to deal with this.
+        #__midi.setPPB(file.ticksPerQN);
     }
 
     ## Set the track name to be used for all subsequent midi recordings.

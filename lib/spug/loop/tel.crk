@@ -32,7 +32,7 @@ import crash createRootContext, eval, parseBlockArg, ActiveFunc, Block, Builtin,
     EvalContext, Obj, ObjOf, SimpleValue, Value;
 import repl repl;
 import stdlib stdlib;
-import types FloatObj, IntObj;
+import types BoolObj, FloatObj, IntObj;
 import collections wrapIterator, Iter;
 
 import .engine engine, makeMidiEngine, AudioFileRecorder, AWBEngine,
@@ -222,9 +222,18 @@ Orchestra orch = [
     return self.name;
 }
 
+## Returns true if the track is a midi track.
+@function(Track) bool Track_isMidi() {
+    # This is kind of weak, we need to convert all tracks to OmniTrack.  But
+    # for now, we can recognize a midi track as a track having more than one
+    # event (the TrackEnd event is present for both midi and audio tracks).
+    return self.count() > 1;
+}
+
 ObjOf[Track] makeTrackObj(Track track) {
     result := ObjOf[Track](track);
     result.define('getName', Track_getName(track));
+    result.define('isMidi', Track_isMidi(track));
     return result;
 }
 
