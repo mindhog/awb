@@ -23,7 +23,7 @@ import crack.time TimeDelta;
 import spug.loop.evtrec makeEventRecorderModule;
 import spug.loop.midieng EventProcessor, MidiDispatcher, MidiEngine,
     MidiSequencer, ModelObserver;
-import spug.loop.model EventContext, OmniTrack, Section;
+import spug.loop.model EventContext, MidiTrack, OmniTrack, Section;
 import spug.loop.jack jackCallback, RecordBuffer, SequencerWaveModel, Wave,
     WaveAdapter, WaveManager, WaveModel, WindowBufferAdapter;
 
@@ -218,22 +218,38 @@ Orchestra orch = [
     return 0;
 }
 
-@function(Track) String Track_getName() {
-    return self.name;
-}
+alias TrackObj = ObjOf[Track];
 
-## Returns true if the track is a midi track.
-@function(Track) bool Track_isMidi() {
-    # This is kind of weak, we need to convert all tracks to OmniTrack.  But
-    # for now, we can recognize a midi track as a track having more than one
-    # event (the TrackEnd event is present for both midi and audio tracks).
-    return self.count() > 1;
-}
+TrackObj makeTrackObj(Track track) {
+    result := TrackObj(track);
 
-ObjOf[Track] makeTrackObj(Track track) {
-    result := ObjOf[Track](track);
-    result.define('getName', Track_getName(track));
-    result.define('isMidi', Track_isMidi(track));
+    @function(Track) String getName() {
+        return self.name;
+    }
+
+    ## Returns true if the track is a midi track.
+    @function(Track) bool isMidi() {
+        # This is kind of weak, we need to convert all tracks to OmniTrack.
+        # But for now, we can recognize a midi track as a track having more
+        # than one event (the TrackEnd event is present for both midi and
+        # audio tracks).
+        return self.count() > 1;
+    }
+
+    ## Dump the track to standard output.
+    @function(Track) int dump() {
+        cout `$self\n`;
+        return 0;
+    }
+
+    @function(Track) TrackObj crunch(int ticks) {
+        return makeTrackObj(MidiTrack.crunch(self, ticks));
+    }
+
+    result.define('getName', getName(track));
+    result.define('isMidi', isMidi(track));
+    result.define('dump', dump(track));
+    result.define('crunch', crunch(track));
     return result;
 }
 
@@ -553,26 +569,13 @@ class ShellCmd : Builtin {
     }
 }
 
-Obj makeTrack(Track track) {
-    result := Obj();
-
-    ## Dump the track to standard output.
-    @function(Track) int dump() {
-        cout `$self\n`;
-        return 0;
-    }
-
-    result.define('dump', dump(track));
-    return result;
-}
-
 alias SectionObj = ObjOf[Section];
 
 ## Returns the currently active "Section" object.
 @function SectionObj getCurrentSection() {
     ## Returns the specified track from the current section.
     @function(Section) Obj getTrack(int index) {
-        return makeTrack(self.tracks[index]);
+        return makeTrackObj(self.tracks[index]);
     }
 
     ## Returns the number of clock ticks in a measure.

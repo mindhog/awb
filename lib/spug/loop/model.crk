@@ -134,6 +134,25 @@ class MidiTrack @impl OmniTrack {
             events.append(event);
         return MidiTrack(Track(name, events));
     }
+
+    ## Static version of crunch() that works on plain track objects.
+    @static Track crunch(Track track, uint ticks) {
+        events := Array[Event]();
+        for (event :in track) {
+            e := event.clone();
+            e.time = e.time < ticks ? 0 : e.time - ticks;
+            events.append(e);
+        }
+        return Track(track.name, events);
+    }
+
+    ## Return a copy of the track with all events shifted back in time by
+    ## 'ticks'.  Any events originally between 0 and 'ticks' are given a time
+    ## of zero, effectively "crunching" all events in the shifted region to
+    ## the beginning of the track.
+    @final MidiTrack crunch(uint ticks) {
+        return MidiTrack(crunch(__track, ticks));
+    }
 }
 
 ## This is a "section" of the piece.  A section consists of a group of tracks
