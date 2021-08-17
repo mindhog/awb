@@ -23,7 +23,7 @@ import .model Controller, OmniTrack;
 import .midieng MidiEngine, TimeCallback, TimeEvent;
 import .tel AppMethods, CrashCallback, InterpWrapper;
 
-import types FloatObj, IntObj;
+import types BoolObj, FloatObj, IntObj;
 @import ann function;
 @import crack.ann cvars, impl, implements, interface;
 @import .ann over;
@@ -312,6 +312,11 @@ class KeyCallback[WidgetType] @impl Functor2[bool, WidgetType, Event] {
         return self.normalAttr = byte(attr);
     }
 
+    @function(StatefulText) int setFocus(bool focus) {
+        self.setFocus(focus);
+        return 0;
+    }
+
     self := StatefulText(parent, text);
     addToContainer(parent, self, size);
     result := ObjOf[StatefulText](self);
@@ -324,6 +329,7 @@ class KeyCallback[WidgetType] @impl Functor2[bool, WidgetType, Event] {
     result.define('setUnfocusedAttr', setUnfocusedAttr(self));
     result.define('getNormalAttr', getNormalAttr(self));
     result.define('setNormalAttr', setNormalAttr(self));
+    result.define('setFocus', setFocus(self));
     return result;
 }
 

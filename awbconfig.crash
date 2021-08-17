@@ -197,6 +197,10 @@ def ActionButton {parent size text action} \
                 win setText $text
             }
 
+            def getWindow {} {
+                give $win
+            }
+
             win setNormalAttr 71
             win setUnfocusedAttr 2
         }
@@ -258,6 +262,87 @@ def makeMenu {parent alternate} {
     give $result
 }
 
+def AudioSource {name left right} {
+    var self [object {
+        # Alias the connect/disconnect functions so we can override and
+        # delegate.
+        var con $connect
+        var dis $disconnect
+
+        def connect {} 'connect the source to AWB input' {
+            prerr [format 'calling connect ' $left ' and ' $right '\n']
+            con $left 'awb:left_in'
+            con $right 'awb:right_in'
+        }
+
+        def disconnect {} 'disconnect the source from AWB input' {
+            dis $left 'awb:left_in'
+            dis $right 'awb:right_in'
+        }
+
+        def getName {} { give $name }
+        def makeAction {textWidget} {
+            def action {} {
+                RecordSourceManager connect $self
+                textWidget setText $name
+            }
+        }
+    }]
+}
+
+var NullAudioSource [
+    var self [object {
+        def connect {} {}
+        def disconnect {} {}
+        def getName {} { give 'null' }
+        def makeAction {textWidget} {
+            def action {} {
+                RecordSourceManager connect $self
+                textWidget setText 'null'
+            }
+        }
+    }]
+]
+
+var RecordSourceManager [
+    object {
+        # Currently connected audio source.
+        var cur $NullAudioSource
+
+        ## Connect an audio source to the AWB recording inputs.
+        ##
+        ## source: AudioSource instance.
+        def connect {source} {
+            if {give $cur} {
+                cur disconnect
+            }
+            source connect
+            set cur $source
+        }
+
+        ## Returns the name of the current audio source.
+        def getCurrentName {} { cur getName }
+    }
+]
+
+# Audio sources.  Add your local sources to this array in your .awb.crash file.
+# Example:
+#   import [evalfile awbconfig.crash] sources AudioSource
+#   sources add [AudioSource 'zyn' 'zynaddsubfx:out_1' 'system:capture_2']
+var sources [
+    array \
+        $NullAudioSource \
+        [AudioSource 'sys' 'system:capture_1' 'system:capture_2']
+]
+
+# Show the menu of audio sources for audio recording.
+def showAudioSourceMenu {parent alternate textWidget} {
+    var menu [makeMenu $parent $alternate]
+    [sources iter] each source {
+        menu add [source getName] [source makeAction $textWidget]
+    }
+}
+
 var projectFilename 'project.crash'
 
 ## Save the current project.
@@ -314,6 +399,14 @@ def v {} 'Bring up the text panel UI.' {
             ActionButton $stateRow 16 $midiRecordingName $setMidiRecordingName
         ]
         ToggleButton $stateRow 6 'Audio' $AudioRecorder
+        var audioSourceButton [
+            ActionButton $stateRow 8 [RecordSourceManager getCurrentName] [
+                def showMenu {} {
+                    showAudioSourceMenu $centerPane $tracklist \
+                        $audioSourceButton
+                }
+            ]
+        ]
         var audioFilenameActionButton [
             ActionButton $stateRow 16 'recording' $setAudioFilename
         ]

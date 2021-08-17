@@ -15,6 +15,7 @@ import crack.runtime free, sleep;
 import crack.threads Mutex, MutexLock, Thread;
 import crack.time Time;
 
+import .sysextra jack_disconnect;
 import .processors bufferFrameCount, AudioBuffer, BufferVector, Component;
 
 @import crack.ann assert, cvars, impl, implements;
@@ -153,6 +154,11 @@ class JackWrapper {
     ##  right_in - right channel input
     @final void connect(CString source, CString dest) {
         __client.connect(source.buffer, dest.buffer);
+    }
+
+    ## Disconnect a source jack port from a destination port.
+    @final void disconnect(CString source, CString dest) {
+        jack_disconnect(__client, source.buffer, dest.buffer);
     }
 
     ## Pause playback/record.  Deactivate has the undesirable consequence of

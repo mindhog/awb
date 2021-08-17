@@ -335,6 +335,21 @@ class PortDescriptor {
     return 0;
 }
 
+@function int disconnect(String source, String dest) {
+    sd := PortDescriptor(source);
+    dd := PortDescriptor(dest);
+    if (sd.mode != PM_JACK)
+        throw Exception(
+            FStr() `Source port $source in disconnect() is not a jack port.`
+        );
+    if (dd.mode != PM_JACK)
+        throw Exception(
+            FStr() `Destination port $dest in disconnect() is not a jack port.`
+        );
+    engine.getWaveManager().disconnect(CString(source), CString(dest));
+    return 0;
+}
+
 @function int Ev_getValue(Event event) {
     return ControlChange.cast(event).value;
 }
@@ -1052,6 +1067,7 @@ class InterpWrapper {
         ctx.define('metro', metro());
         ctx.define('channel_connect', channelConnect());
         ctx.define('connect', connect());
+        ctx.define('disconnect', disconnect());
         ctx.define('Ev_getValue', Ev_getValue());
         ctx.define('volumeControl', volumeControl());
         ctx.define('setVolume', setVolume());
