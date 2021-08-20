@@ -1,0 +1,16 @@
+## Useful annotations.
+##
+## Some of these should be moved into the crack libraries.
+
+import crack.compiler CrackContext;
+
+## Annotation that indicates that a return value or argument should be treated
+## as immutable.
+void immut(CrackContext ctx) {}
+
+## Annotation that indicates that the method it precedes is an override of a
+## method in a base class or interface.
+void over(CrackContext ctx) {}
+
+## Annotation that indicates that a field/parameter/return value may be null.
+void nullable(CrackContext ctx) {}
