@@ -932,6 +932,8 @@ class ControllerDispatcher @impl EventProcessor, EventContext {
                                  __controllerOffset)
              )
             ) {
+            # Release the mutex and call the external processor.
+            lk = null;
             proc(cc, this);
             return true;
         }
