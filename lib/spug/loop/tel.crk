@@ -83,10 +83,31 @@ Orchestra orch = [
     FluidSynthInstrument(synth, 15)
 ];
 
+alias InstrumentObj = ObjOf[Instrument];
+
+InstrumentObj makeInstrumentObj(Instrument inst) {
+    @function(Instrument) int setProgram(int programNumber) {
+        self.programChange(byte(programNumber));
+        return programNumber;
+    }
+
+    result := InstrumentObj(inst);
+    result.define('setProgram', setProgram(inst));
+    return result;
+}
+
+alias OrchestraObj = ObjOf[Orchestra];
+
 ## Returns the Orchestra object, which can be used as a routing destination
 ## for the midi engine.
-@function Orchestra getOrchestra() {
-    return orch;
+@function OrchestraObj getOrchestra() {
+    @function(Orchestra) InstrumentObj getInstrument(int index) {
+        return makeInstrumentObj(orch.getChild(byte(index)));
+    }
+
+    result := OrchestraObj(orch);
+    result.define('getInstrument', getInstrument(orch));
+    return result;
 }
 
 @function int metro(int beats) {
