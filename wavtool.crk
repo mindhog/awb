@@ -52,8 +52,11 @@ class TrackInfo {
         # Verify that the frame count appears accurate.
         src.seek(0, SEEK_END);
         expectedCount :=
-            (src.tell() - __dataStart) / (BYTES_PER_SAMPLE * wave.channels);
-        if (expectedCount != wave.frameCount) {
+            (src.tell() - __dataStart) / int64(BYTES_PER_SAMPLE * wave.channels);
+
+        # XXX It looks like this is still hitting the bug where seek/tell is
+        # broken on my laptop, so ignore this check if expected count is zero.
+        if (expectedCount != wave.frameCount && expectedCount != 0) {
             cerr I`bad frame count, expected $expectedCount, got \
                    $(wave.frameCount)\n`;
             wave.frameCount = expectedCount;

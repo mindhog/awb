@@ -32,8 +32,8 @@ class FileSource : WaveModel {
         # Verify that the frame count appears accurate.
         src.seek(0, SEEK_END);
         expectedCount :=
-            (src.tell() - __dataStart) / (BYTES_PER_SAMPLE * wave.channels);
-        if (expectedCount != wave.frameCount) {
+            (src.tell() - __dataStart) / int64(BYTES_PER_SAMPLE * wave.channels);
+        if (expectedCount != wave.frameCount && expectedCount != 0) {
             cerr I`bad frame count, expected $expectedCount, got \
                    $(wave.frameCount)\n`;
             wave.frameCount = expectedCount;
@@ -187,10 +187,12 @@ class Renderer {
     }
 
     void closeFile() {
-        if (__outDef)
+        if (__outDef) {
             __outDef.finish(__outFile);
-        else
-            throw Exception('"finish" called without an outfile');
+            __outDef = null;
+        } else {
+            throw Exception('"close" or "finish" called without an outfile');
+        }
     }
 }
 
