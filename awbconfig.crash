@@ -1,27 +1,12 @@
 # Standard configuration stuff.
 
+# Some bindings for the old UI (pretty much unused).
+
 # bind '-' to 'bak'
 app bind 45 [callback { bak }]
 
 # bind '=' (under '+') to fwd
 app bind 61 [callback { fwd }]
-
-connect fluidsynth:left system:playback_1
-connect fluidsynth:right system:playback_2
-connect awb:left system:playback_1
-connect awb:right system:playback_2
-
-# Connect a midi device to AWB's midi input (this depends on selected midi
-# device numbers and therefore sucks).
-#shell aconnect 28:0 128:0
-if {== $UI_MODE text} {
-    connect 'midi:nanoKONTROL2/nanoKONTROL2 MIDI 1'  'midi:AWBX/in'
-} else {
-    connect 'midi:nanoKONTROL2/nanoKONTROL2 MIDI 1'  'midi:AWB/in'
-}
-
-# 899833 stray_mark
-# 2181881 101_brain_damaged.wav
 
 # Keeps track of the next track to be allocated with the "track" command.
 var trackNum 0
@@ -48,19 +33,40 @@ def makeProject {} {
     give $result
 }
 
-# For Nano.  Channel and CC are both track number for volume, pan is the
-# volume CC + 16.
-#def getVolCC {} { + [* 256 $trackNum] $trackNum }
-#def getPanCC {} { + [getVolCC] 16 }
+# Default "track controller functions" -- see info below.
+var tcf [object {
+    def getVolCC {trackNum} {
+        + [* $trackNum 256] 7
+    }
 
-# For Nektar.  Channel 15 * 256 + 12 for volume, channel 15 * 256 + 30 for pan.
-def getVolCC {} { + 3852 $trackNum }
-def getPanCC {} { + 3870 $trackNum }
+    def getPanCC {trackNum} {
+        + [* $trackNum 256] 10
+    }
+}]
 
+def setTCF {newTCF} \
+  'Set the track controller functions, an object with getVolCC(trackNum) and
+   getPanCC(trackNum) methods that return the numeric controller ids for a
+   given track number.
+
+   Controller numbers correspond to midi_channel * 256 + midi_CC_code +
+   controller_offset, where controller_offset is a parameter of the midi
+   engine that can be set using ControllerOffsetChangeProcessor.  The offset
+   allows controller bank switching (in which the controller number is
+   itself modulated by a prior CC message) which seems to be a feature of some
+   controllers.  See makeControllerOffsetChange for details.
+
+   The default TCF set assumes that the track maps to the midi channel and
+   that the volume and pan controllers are just the normal controllers for
+   those parameters (7, and 10, respectively).
+
+   setTCF <tcf-object>' {
+    set tcf $newTCF
+}
 
 # Adds a new track.
-def track {file} {
-    $project addTrack $file [getVolCC] [getPanCC]
+def track {file} 'Add a new track file: track <filename>' {
+    $project addTrack $file [tcf getVolCC $trackNum] [tcf getPanCC $trackNum]
     set trackNum [+ $trackNum 1]
 }
 
@@ -71,7 +77,8 @@ def midiTrack {file} 'Add a new midi track: midiTrack <file>' {
 
 # Adds a new "bus" (pass-through).
 def bus {inputs} {
-    $project addPassThrough $inputs [getVolCC] [getPanCC]
+    $project addPassThrough $inputs [tcf getVolCC $trackNum] \
+        [tcf getPanCC $trackNum]
     set trackNum [+ $trackNum 1]
 }
 
@@ -327,7 +334,7 @@ var RecordSourceManager [
 
 # Audio sources.  Add your local sources to this array in your .awb.crash file.
 # Example:
-#   import [evalfile awbconfig.crash] sources AudioSource
+#   import [load_module awbconfig.crash] sources AudioSource
 #   sources add [AudioSource 'zyn' 'zynaddsubfx:out_1' 'system:capture_2']
 var sources [
     array \
@@ -344,13 +351,14 @@ def showAudioSourceMenu {parent alternate textWidget} {
 }
 
 var projectFilename 'project.crash'
+var midiOutChannel [+ 0]
 
 ## Save the current project.
 def saveProject {} {
     # Export all of the midi tracks to midi files.
     var i [+ 0]
     var out [open $projectFilename w]
-    out write 'import [evalfile /home/mmuller/w/awb/awbconfig.crash] '
+    out write 'import [load_module /home/mmuller/w/awb/awbconfig.crash] '
     out write 'makeProject track vol pan gain midiTrack\n'
     out write 'var project [makeProject]\n'
     [getTracks] each track {
@@ -392,11 +400,28 @@ def v {} 'Bring up the text panel UI.' {
                 $tracklist
         }
 
+        def setMidiOutChannel {} {
+            def callback {text} {
+                var newChannel [format [+ $text]]
+                if {== $newChannel '0.000000'} {
+                    # Need to report an error here.
+                    return
+                } else {
+                    midiOutChannelActionButton setText $text
+                    [getAWBEngine] setInputChannel $newChannel
+                }
+            }
+            EntryBar $bottomBar 1 'Midi out channel:' $callback $tracklist
+        }
+
         # Create a row of buttons to control midi/audio recording.
         var stateRow [Row $mainColumn 1]
         ToggleButton $stateRow 5 'Midi' $MidiRecorder
         var midiTrackNameActionButton [
             ActionButton $stateRow 16 $midiRecordingName $setMidiRecordingName
+        ]
+        var midiOutChannelActionButton [
+            ActionButton $stateRow 4 [format $midiOutChannel] $setMidiOutChannel
         ]
         ToggleButton $stateRow 6 'Audio' $AudioRecorder
         var audioSourceButton [
