@@ -1,0 +1,26 @@
+#!/usr/local/bin/crack
+# This is a simple program that just listens to a midi port and writes the
+# events it receives to standard output.
+
+import crack.io cout;
+import crack.runtime sleep;
+import crack.midi.alsa Sequencer, SND_SEQ_OPEN_INPUT, SND_SEQ_OPEN_OUTPUT;
+import crack.midi.event Event;
+import spug.loop.midieng EventProcessor, MidiEngine, MidiSequencer;
+import spug.loop.model ProjectRef;
+import spug.loop.jack WaveManager;
+
+bool eventHandler(MidiSequencer seq, Event event) {
+    cout `$event\n`;
+    return false;
+}
+
+seq := Sequencer(SND_SEQ_OPEN_OUTPUT | SND_SEQ_OPEN_INPUT, 0);
+seq.seq.set_client_name('midimon'.buffer);
+seq.makeWritePort('in');
+eng := MidiEngine(WaveManager.create(), seq, ProjectRef());
+eng.addInputProcessor(EventProcessor.Wrap(eventHandler));
+eng.start();
+
+while (true)
+    sleep(1);
