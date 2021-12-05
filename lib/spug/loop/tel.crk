@@ -766,8 +766,22 @@ class ExportMidiFileCmd : Builtin {
         return 0;
     }
 
+    ## Enable/disable monitoring.  If monitoring is enabled, the record signal
+    ## is copied to the output mix.
+    @function(RecordBuffer) bool enableMonitor(bool monitor) {
+        self.monitor = monitor;
+        return monitor;
+    }
+
+    ## Returns true if the recorder is monitoring.
+    @function(RecordBuffer) bool monitor() {
+        return self.monitor;
+    }
+
     result := Obj();
     result.define('finish', finish(buf));
+    result.define('enableMonitor', enableMonitor(buf));
+    result.define('monitor', monitor(buf));
     return result;
 }
 
@@ -827,8 +841,23 @@ class ExportMidiFileCmd : Builtin {
     return 0;
 }
 
-@function AudioFileRecorder makeAudioFileRecorder(String filename) {
-    return AudioFileRecorder(filename);
+alias AudioFileRecorderObj = ObjOf[AudioFileRecorder];
+
+@function AudioFileRecorderObj makeAudioFileRecorder(String filename) {
+    inst := AudioFileRecorder(filename);
+    result := AudioFileRecorderObj(inst);
+
+    @function(AudioFileRecorder) bool enableMonitor(bool enabled) {
+        return self.monitor = enabled;
+    }
+
+    @function(AudioFileRecorder) bool monitor() {
+        return self.monitor;
+    }
+
+    result.define('enableMonitor', enableMonitor(inst));
+    result.define('monitor', monitor(inst));
+    return result;
 }
 
 @function MidiTrackRecorder makeMidiTrackRecorder() {

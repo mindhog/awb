@@ -976,13 +976,36 @@ class RecordBuffer {
         savedPos,
 
         ## Set to nonzero when we're finished recording.
-        finished;
+        finished,
+
+        ## If non-zero, indicates that record output should be sent to the
+        ## main mix.
+        __monitor;
+
+    ## We use this mutex to lock out access to the "monitor"
+    ## variable when modifying it.
+    Mutex __mutex = Mutex();
 
     uint size = 1024 * 1024;
     array[int16] buffer = array[int16](1024 * 1024);
 
     void finish() {
         finished += 1;
+    }
+
+    @final bool oper .monitor() {
+        return __monitor;
+    }
+
+    ## Enable/disable monitoring.  This should not be done from the jack
+    ## thread.
+    @final bool oper .monitor=(bool state) {
+        lk := MutexLock(__mutex);
+        if (state && !__monitor)
+            __monitor += 1;
+        else if (!state && __monitor)
+            __monitor -= 1;
+        return state;
     }
 }
 
@@ -1018,8 +1041,10 @@ class Recorder @impl Functor1[void, JackWrapper] {
                 int16(clip(lbuf[i]) * 32767.0);
             outBuf.buffer[(outBuf.recordPos + i * 2 + 1) % outBuf.size] =
                 int16(clip(rbuf[i]) * 32767.0);
-            ol[i] = ol[i] + lbuf[i];
-            or[i] = or[i] + rbuf[i];
+            if (outBuf.monitor) {
+                ol[i] = ol[i] + lbuf[i];
+                or[i] = or[i] + rbuf[i];
+            }
 
         }
         outBuf.recordPos += jack.frameCount * 2;

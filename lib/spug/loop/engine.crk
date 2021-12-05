@@ -490,6 +490,7 @@ class AWBEngine @impl ModelObserver {
 ## Records from jack audio to a stereo wave file.
 class AudioFileRecorder : Recorder {
     RecordBuffer buf;
+    bool __monitor;
     @cvars {
         String filename;
     }
@@ -499,6 +500,7 @@ class AudioFileRecorder : Recorder {
         out := makePath(filename).writer();
         def.writeHeader(out);
         buf = engine.getWaveManager().beginRecord(def, out);
+        buf.monitor = __monitor;
 
     }
 
@@ -506,6 +508,15 @@ class AudioFileRecorder : Recorder {
         buf.finish();
         engine.addWaveFile(filename);
     }
+
+    bool oper .monitor=(bool enabled) {
+        if (buf)
+            buf.monitor = enabled;
+        __monitor = enabled;
+        return enabled;
+    }
+
+    bool oper .monitor() { return buf ? buf.monitor : __monitor }
 }
 
 class MidiTrackRecorder : Recorder {
