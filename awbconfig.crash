@@ -11,6 +11,9 @@ app bind 61 [callback { fwd }]
 # Keeps track of the next track to be allocated with the "track" command.
 var trackNum 0
 
+# The current project.
+var project 0
+
 def makeProject {} {
     var result [[evtrec] Project $scriptDir]
 
@@ -29,6 +32,9 @@ def makeProject {} {
         }
         print 'done with control event\n'
     }
+
+    # Store in the project variable.
+    set project $result
 
     give $result
 }
