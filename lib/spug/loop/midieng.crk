@@ -244,6 +244,10 @@ alias TimeCallback = Functor1[void, TimeEvent];
         __trackCursors = Array[LoopCursor](tracks.count());
         debug `midieng: initializing track cursors`;
         for (track :in tracks) {
+            # Ignore tracks containing only an end event.
+            if (track.count() < 2)
+                continue;
+
             __trackCursors.append(cur := LoopCursor(track));
             cur.setPos(pos := __getTicks(cur.span));
             debug `midieng: track $(track.name) set to position $pos`;
