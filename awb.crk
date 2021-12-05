@@ -1156,65 +1156,69 @@ if (clientNum)
 #cerr `starting process\n`;
 #Process(StringArray!['./connect']).run(ProcessHandlerImpl());
 
-channelMap := ChannelMap();
-App app;
-InterpWrapper interp;
-TextController textui;
-Controller controller;
-if (cl.getBool('legacy-ui')) {
-    controller = app = App(channelMap);
-    interp = InterpWrapper(app);
-    app.setInterp(interp);
-    interp.define('UI_MODE', SimpleValue('sdl', 'User interface mode.'));
-} else {
-    controller = textui = TextController();
-    interp = InterpWrapper(textui);
-    textui.setInterp(interp);
-    interp.define('UI_MODE', SimpleValue('text', 'User interface mode.'));
-}
-
-engine = AWBEngine();
-engine.project.setController(controller);
-
-# Evaluate the user's .awb.crash script
-userConfig := makePath(env['HOME'])/'.awb.crash';
-if (userConfig.exists())
-    interp.evalScript(userConfig.getFullName());
-
-String projectFile;
-for (arg :in nonFlagArgs.subarray(1)) {
-    if (arg.endsWith('.awb')) {
-        cout `loading awb project $arg\n`;
-        if (projectFile)
-            cout `WARNING: Overwriting existing project from $projectFile\n`;
-        projectFile = arg;
-        engine.project.load(arg);
-    } else if (arg.endsWith('.crash')) {
-        cout `running script $arg\n`;
-        try {
-            interp.evalScript(arg);
-        } catch (Exception ex) {
-            cerr `Got exception:\n$ex\n`;
-            exit(1);
-        }
-    } else if (arg.endsWith('.wav')) {
-        engine.addWaveFile(arg);
+try {
+    channelMap := ChannelMap();
+    App app;
+    InterpWrapper interp;
+    TextController textui;
+    Controller controller;
+    if (cl.getBool('legacy-ui')) {
+        controller = app = App(channelMap);
+        interp = InterpWrapper(app);
+        app.setInterp(interp);
+        interp.define('UI_MODE', SimpleValue('sdl', 'User interface mode.'));
     } else {
-        cout `ERROR: file with unknown extension: $arg\n`;
+        controller = textui = TextController();
+        interp = InterpWrapper(textui);
+        textui.setInterp(interp);
+        interp.define('UI_MODE', SimpleValue('text', 'User interface mode.'));
     }
-}
 
-const B := '\033[34;40m';
-const E := '\033[37;40;1m';
-const N := '\033[0m';
-const H := '\033[33;40m';
-const T := '\033[36;40;0m';
-const mindhog := '\033[32;40mmind\033[33;40mHog';
-cout `$B=============================================$N\n`;
-cout `$B| $(H)AWB$N - $mindhog$T's Audio Workbench.          $B|$N\n`;
-cout `$B| $T"$(E)help$T" to list commands,  "$(E)v$T" for panel.  $B|$N\n`;
-cout `$B=============================================$N\n`;
-if (app)
-    app.run();
-else
-    textui.run();
+    engine = AWBEngine();
+    engine.project.setController(controller);
+
+    # Evaluate the user's .awb.crash script
+    userConfig := makePath(env['HOME'])/'.awb.crash';
+    if (userConfig.exists())
+        interp.evalScript(userConfig.getFullName());
+
+    String projectFile;
+    for (arg :in nonFlagArgs.subarray(1)) {
+        if (arg.endsWith('.awb')) {
+            cout `loading awb project $arg\n`;
+            if (projectFile)
+                cout `WARNING: Overwriting existing project from $projectFile\n`;
+            projectFile = arg;
+            engine.project.load(arg);
+        } else if (arg.endsWith('.crash')) {
+            cout `running script $arg\n`;
+            try {
+                interp.evalScript(arg);
+            } catch (Exception ex) {
+                cerr `Got exception:\n$ex\n`;
+                exit(1);
+            }
+        } else if (arg.endsWith('.wav')) {
+            engine.addWaveFile(arg);
+        } else {
+            cout `ERROR: file with unknown extension: $arg\n`;
+        }
+    }
+
+    const B := '\033[34;40m';
+    const E := '\033[37;40;1m';
+    const N := '\033[0m';
+    const H := '\033[33;40m';
+    const T := '\033[36;40;0m';
+    const mindhog := '\033[32;40mmind\033[33;40mHog';
+    cout `$B=============================================$N\n`;
+    cout `$B| $(H)AWB$N - $mindhog$T's Audio Workbench.          $B|$N\n`;
+    cout `$B| $T"$(E)help$T" to list commands,  "$(E)v$T" for panel.  $B|$N\n`;
+    cout `$B=============================================$N\n`;
+    if (app)
+        app.run();
+    else
+        textui.run();
+} catch (Exception ex) {
+    cerr `Error in awb main: $ex\n`;
+}
