@@ -22,15 +22,18 @@ import .processors Component;
 alias EventProcessor = Functor2[void, Event, EventContext];
 
 @abstract class ControllerProcessor @impl EventProcessor {
+    @abstract float oper .value=(float val);
 
+    @abstract float convertControllerValue(int val);
+}
+
+## Direct controller processor sets its value directly from the adjusted value
+## of the controller.  The adjustment is done by convertControllerValue().
+@abstract class DirectControllerProcessor : ControllerProcessor {
     @cvars {
         WaveManager waveMan;
         Formatter out;
     }
-
-    @abstract float oper .value=(float val);
-
-    @abstract float convertControllerValue(int val);
 
     void oper call(Event event, EventContext ctx) {
         # TODO: only want to see the last of these for a given time position
@@ -39,7 +42,7 @@ alias EventProcessor = Functor2[void, Event, EventContext];
     }
 }
 
-class Panner : ControllerProcessor {
+class Panner : DirectControllerProcessor {
     PCMTrackAdapter adapter;
     WaveManager waveMan;
     int track;
@@ -47,7 +50,7 @@ class Panner : ControllerProcessor {
               Formatter out,
               int track
               ) :
-        ControllerProcessor(waveMan, out),
+        DirectControllerProcessor(waveMan, out),
         adapter = adapter,
         track = track {
     }
@@ -63,20 +66,19 @@ class Panner : ControllerProcessor {
     }
 }
 
-class VolumeControl : ControllerProcessor {
+class VolumeControl : DirectControllerProcessor {
     PCMTrackAdapter adapter;
     int track;
     oper init(PCMTrackAdapter adapter, WaveManager waveMan,
               Formatter out,
               int track
               ) :
-        ControllerProcessor(waveMan, out),
+        DirectControllerProcessor(waveMan, out),
         adapter = adapter,
         track = track {
     }
 
     float oper .value=(float vol) {
-        cerr `xxx setting volumne of $track to $vol\n`;
         adapter.mixer.volume = vol;
         out `volume $track $(adapter.mixer.volume)\n`;
         return vol;
@@ -151,7 +153,7 @@ class ScriptProcessor @impl EventProcessor {
 ## Subscribers are in the form of Functor2[void, int, int] objects, they are
 ## passed two integers: the current parameter value and the current
 ## controller value.
-class SmartController @impl EventProcessor {
+class SmartController : ControllerProcessor {
 
     alias Subscriber = Functor2[void, float, float];
 
@@ -185,6 +187,9 @@ class SmartController @impl EventProcessor {
         __notifySubscribers();
         return val;
     }
+
+    # We don't actually use this.
+    float convertControllerValue(int val) { return 0 }
 
     void oper call(Event event, EventContext ctx) {
         cur := ControlChange.cast(event).value;
@@ -236,8 +241,8 @@ class Project {
     class Channel {
         @cvars {
             PCMTrackAdapter __adapter;
-            SmartController __vol;
-            SmartController __pan;
+            ControllerProcessor __vol;
+            ControllerProcessor __pan;
         }
 
         void setVol(float volume) {
@@ -281,16 +286,14 @@ class Project {
     void __addChannel(PCMTrackAdapter adapter, int volumeController,
                       int panController
                       ) {
-        pan := SmartController(Panner(adapter, engine.getWaveManager(), out,
-                                      __trackIndex
-                                      )
-                               );
+        # TODO: Make it configurable so we wrap these in
+        # SmartControllerProcessor if desired.  Also, make
+        # SmartControllerProcessor not suck.  Or just get rid of it.
+        pan := Panner(adapter, engine.getWaveManager(), out, __trackIndex );
         engine.addEventProcessor(panController, pan);
-        vol := SmartController(VolumeControl(adapter, engine.getWaveManager(),
-                                             out,
-                                             __trackIndex
-                                             )
-                               );
+        vol := VolumeControl(adapter, engine.getWaveManager(), out,
+                             __trackIndex
+                             );
         engine.addEventProcessor(volumeController, vol);
         ++__trackIndex;
         __channels.append(Channel(adapter, vol, pan));
