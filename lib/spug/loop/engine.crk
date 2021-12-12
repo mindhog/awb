@@ -7,7 +7,7 @@ import crack.cont.treemap TreeMap;
 import crack.fs makePath;
 import crack.functor Functor1, Functor2;
 import crack.io cerr, FStr;
-import crack.lang AssertionError, CString;
+import crack.lang AssertionError, CString, InvalidArgumentError;
 import crack.midi.alsa Port, Sequencer, SND_SEQ_OPEN_INPUT,
     SND_SEQ_OPEN_OUTPUT;
 import crack.midi.event Event, Track;
@@ -406,12 +406,21 @@ class AWBEngine @impl ModelObserver {
         file.write(makePath(filename).writer());
     }
 
-    ## Begin recording to the specified file, return a RecordBuffer.
-    RecordBuffer recordFile(String filename) {
+    ## Begin recording to the specified stereo file, return a RecordBuffer.
+    RecordBuffer recordStereoFile(String filename) {
         def := WaveDef(2, 44100, 16);
         out := makePath(filename).writer();
         def.writeHeader(out);
-        return __jack.beginRecord(def, out);
+        return __jack.beginRecord(def, out, 0);
+    }
+
+    ## Begin recording to the specified mono file, return a RecordBuffer.
+    ## 'channel' is zero to record from the left channel, 1 from the right.
+    RecordBuffer recordMonoFile(String filename, int channel) {
+        def := WaveDef(1, 44100, 16);
+        out := makePath(filename).writer();
+        def.writeHeader(out);
+        return __jack.beginRecord(def, out, channel);
     }
 
     ## Clear the entire project state.
@@ -487,19 +496,42 @@ class AWBEngine @impl ModelObserver {
     }
 }
 
+const LEFT := 1;
+const RIGHT := 2;
+
 ## Records from jack audio to a stereo wave file.
 class AudioFileRecorder : Recorder {
     RecordBuffer buf;
     bool __monitor;
     @cvars {
         String filename;
+
+        ## A bitmap of channel constants (LEFT and/or RIGHT) to record from.
+        ## If one is specified, record mono.  Record stereo if both are
+        ## specified.
+        int channels;
     }
 
     void init(AWBEngine engine) {
-        def := WaveDef(2, engine.getAudioRate(), 16);
+        WaveDef def;
+        int channel;
+        if (channels == 3) {
+            def = WaveDef(2, engine.getAudioRate(), 16);
+        } else {
+            def = WaveDef(1, engine.getAudioRate(), 16);
+            if (channels == LEFT)
+                channel = 0;
+            else if (channels == RIGHT)
+                channel = 1;
+            else
+                throw InvalidArgumentError(
+                    FStr() I`Bad channel map (1, 2, or 3 expected, got \
+                             $channels`
+                );
+        }
         out := makePath(filename).writer();
         def.writeHeader(out);
-        buf = engine.getWaveManager().beginRecord(def, out);
+        buf = engine.getWaveManager().beginRecord(def, out, channel);
         buf.monitor = __monitor;
 
     }

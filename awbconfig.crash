@@ -1,5 +1,7 @@
 # Standard configuration stuff.
 
+import [collections] map
+
 # Some bindings for the old UI (pretty much unused).
 
 # bind '-' to 'bak'
@@ -81,7 +83,8 @@ def midiTrack {file} 'Add a new midi track: midiTrack <file>' {
     [getAWBEngine] loadMidiFile $file
 }
 
-# Adds a new "bus" (pass-through).
+## Adds a new "bus" (pass-through).  Argument is an array of one or two input
+## ports (e.g. left_in, right_in).
 def bus {inputs} {
     $project addPassThrough $inputs [tcf getVolCC $trackNum] \
         [tcf getPanCC $trackNum]
@@ -129,9 +132,11 @@ var AudioRecorder [object {
     var filename 'recording.wav'
     var enabled [+ 0]
     var eng [get_engine]
+    var channels $STEREO
 
     def addRecorder {} {
-        eng addRecorder [makeAudioFileRecorder $filename]
+        prerr [format 'adding recorder for ' $channels '\n']
+        eng addRecorder [makeAudioFileRecorder $filename $channels]
     }
 
     def activate {} {
@@ -155,6 +160,18 @@ var AudioRecorder [object {
 
     def getFilename {} {
         give $filename
+    }
+
+
+    def setChannels {ch} \
+        'Set the record channels.
+
+         recorder setChannels <ch>
+            <ch> is an integer bitmap.  Use the constants $LEFT, $RIGHT and
+            $STEREO to record from the left, right and both channels,
+            respectively.
+        ' {
+        set channels $ch
     }
 }]
 
@@ -275,7 +292,7 @@ def makeMenu {parent alternate} {
     give $result
 }
 
-def AudioSource {name left right} {
+def StereoSource {name left right} {
     var self [object {
         # Alias the connect/disconnect functions so we can override and
         # delegate.
@@ -286,11 +303,42 @@ def AudioSource {name left right} {
             prerr [format 'calling connect ' $left ' and ' $right '\n']
             con $left 'awb:left_in'
             con $right 'awb:right_in'
+            AudioRecorder setChannels $STEREO
         }
 
         def disconnect {} 'disconnect the source from AWB input' {
             dis $left 'awb:left_in'
             dis $right 'awb:right_in'
+        }
+
+        def getName {} { give $name }
+        def makeAction {textWidget} {
+            def action {} {
+                RecordSourceManager connect $self
+                textWidget setText $name
+            }
+        }
+    }]
+}
+
+## A MonoSource is specified with a name, a jack source port and an input
+## channel ("left" or "right").
+def MonoSource {name source channel} {
+    var self [object {
+        # Alias the connect/disconnect functions so we can override and
+        # delegate.
+        var con $connect
+        var dis $disconnect
+
+        def connect {} 'connect the source to AWB input' {
+            con $source [format 'awb:' $channel '_in']
+            AudioRecorder setChannels [
+                [map left $LEFT right $RIGHT] get $channel
+            ]
+        }
+
+        def disconnect {} 'disconnect the source from AWB input' {
+            dis $source [format 'awb:' $channel '_in']
         }
 
         def getName {} { give $name }
@@ -340,12 +388,13 @@ var RecordSourceManager [
 
 # Audio sources.  Add your local sources to this array in your .awb.crash file.
 # Example:
-#   import [load_module awbconfig.crash] sources AudioSource
-#   sources add [AudioSource 'zyn' 'zynaddsubfx:out_1' 'system:capture_2']
+#   import [load_module awbconfig.crash] sources MonoSource StereoSource
+#   sources add [StereoSource 'zyn' 'zynaddsubfx:out_1' 'system:capture_2']
+#   sources add [MonoSource 'System Left' 'zynaddsubfx:out_1' left]
 var sources [
     array \
         $NullAudioSource \
-        [AudioSource 'sys' 'system:capture_1' 'system:capture_2']
+        [StereoSource 'sys' 'system:capture_1' 'system:capture_2']
 ]
 
 # Show the menu of audio sources for audio recording.

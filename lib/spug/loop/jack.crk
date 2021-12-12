@@ -9,7 +9,7 @@ import crack.fs makePath;
 import crack.functor Function1, Functor1;
 import crack.io cout, cerr, FStr, Reader, SeekableReader, SeekableWriter,
     SEEK_SET;
-import crack.lang Buffer, CString, Exception;
+import crack.lang Buffer, CString, Exception, InvalidArgumentError;
 import crack.math max, abs;
 import crack.runtime free, sleep;
 import crack.threads Mutex, MutexLock, Thread;
@@ -1019,11 +1019,19 @@ float clip(float val) {
         return val;
 }
 
-class Recorder @impl Functor1[void, JackWrapper] {
+
+@abstract class Recorder @impl Functor1[void, JackWrapper] {
 
     @cvars {
         RecordBuffer outBuf;
     }
+
+    bool oper .finished() { return outBuf.finished }
+}
+
+class StereoRecorder : Recorder {
+
+    oper init(RecordBuffer outBuf) : Recorder(outBuf) {}
 
     void oper call(JackWrapper jack) {
         if (outBuf.finished) {
@@ -1048,6 +1056,40 @@ class Recorder @impl Functor1[void, JackWrapper] {
 
         }
         outBuf.recordPos += jack.frameCount * 2;
+    }
+}
+
+class MonoRecorder : Recorder {
+
+    ## Input channel (0 is left, 1 is right).
+    int channel;
+
+    oper init(RecordBuffer outBuf, int channel) :
+        Recorder(outBuf),
+        channel = channel {
+    }
+
+    void oper call(JackWrapper jack) {
+        if (outBuf.finished) {
+            jack.removeProcessor(this);
+            return;
+        }
+
+        buf := channel ? jack.right_in.getBuffer(jack.frameCount) :
+                         jack.left_in.getBuffer(jack.frameCount);
+        ol := jack.left.getBuffer(jack.frameCount);
+        or := jack.right.getBuffer(jack.frameCount);
+
+        for (int i; i < jack.frameCount; ++i) {
+            outBuf.buffer[(outBuf.recordPos + i) % outBuf.size] =
+                int16(clip(buf[i]) * 32767.0);
+            if (outBuf.monitor) {
+                sample := buf[i] / 2;
+                ol[i] = ol[i] + sample;
+                or[i] = or[i] + sample;
+            }
+        }
+        outBuf.recordPos += jack.frameCount;
     }
 
     bool oper .finished() { return outBuf.finished }
@@ -1201,12 +1243,23 @@ class WaveManager : JackWrapper {
 
     ## Begin recording.  To end the record call the finish() method on the
     ## returned RecordBuffer.
-    ## 'def' should have been initialized with def.writeHeader(out);
-    RecordBuffer beginRecord(WaveDef def, SeekableWriter out) {
+    ## 'def' should have been initialized with def.writeHeader(out).  It must
+    ## be either a stereo (2 channel) wave or a mono (1 channel) wave.  If it
+    ## is mono, 'channel' indicates which of the two input channels to record
+    ## on (0 for left, 1 for right).  If stereo, 'channel' is ignored.
+    RecordBuffer beginRecord(WaveDef def, SeekableWriter out, int channel) {
         buf := RecordBuffer();
-        recorder := Recorder(buf);
+        Recorder recorder;
+        if (def.channels == 1) {
+            recorder = MonoRecorder(buf, channel);
+        } else if (def.channels == 2) {
+            recorder = StereoRecorder(buf);
+        } else {
+            throw InvalidArgumentError('WaveDef for beginRecord() must be '
+                                        'stero or mono.');
+        }
         WriteThread(buf, def, out).start();
-        addProcessor(Recorder(buf));
+        addProcessor(recorder);
 
         return buf;
     }

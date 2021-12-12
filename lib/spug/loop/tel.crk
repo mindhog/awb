@@ -36,7 +36,7 @@ import types BoolObj, FloatObj, IntObj;
 import collections wrapIterator, Iter;
 
 import .engine engine, makeMidiEngine, AudioFileRecorder, AWBEngine,
-    MidiTrackRecorder, Recorder;
+    MidiTrackRecorder, Recorder, LEFT, RIGHT;
 import .instrument FluidSynthInstrument, Instrument, MidiInstrument,
     Orchestra;
 import .midifile MidiFile;
@@ -756,10 +756,11 @@ class ExportMidiFileCmd : Builtin {
     }
 }
 
-## Begin recording.  Returns a RecordBuffer object that you can call 'finish'
-## on when done.
+## Begin recording to a stereo file.  Returns a RecordBuffer object that you
+## can call 'finish' on when done.
 @function Obj recordFile(String filename) {
-    buf := engine.recordFile(filename);
+    RecordBuffer buf;
+    buf = engine.recordStereoFile(filename);
 
     @function(RecordBuffer) int finish() {
         self.finish();
@@ -843,8 +844,9 @@ class ExportMidiFileCmd : Builtin {
 
 alias AudioFileRecorderObj = ObjOf[AudioFileRecorder];
 
-@function AudioFileRecorderObj makeAudioFileRecorder(String filename) {
-    inst := AudioFileRecorder(filename);
+@function
+AudioFileRecorderObj makeAudioFileRecorder(String filename, int channels) {
+    inst := AudioFileRecorder(filename, channels);
     result := AudioFileRecorderObj(inst);
 
     @function(AudioFileRecorder) bool enableMonitor(bool enabled) {
@@ -1150,6 +1152,9 @@ class InterpWrapper {
         ctx.define('CVR_MULT', SimpleValue(IntObj(CVR_MULT)));
         ctx.define('get_engine', get_engine());
         ctx.define('start_server', startServer());
+        ctx.define('LEFT', SimpleValue(IntObj(LEFT)));
+        ctx.define('RIGHT', SimpleValue(IntObj(RIGHT)));
+        ctx.define('STEREO', SimpleValue(IntObj(LEFT | RIGHT)));
     }
 
     oper init(AppMethods app) {
