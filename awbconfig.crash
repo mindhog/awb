@@ -52,6 +52,14 @@ var tcf [object {
     }
 }]
 
+def importer {symbols} \
+    'Returns an import statement that imports "symbols" from the config
+    script.' {
+
+    format 'import [load_module /home/mmuller/w/awb/awbconfig.crash] ' \
+        $symbols '\n'
+}
+
 def setTCF {newTCF} \
   'Set the track controller functions, an object with getVolCC(trackNum) and
    getPanCC(trackNum) methods that return the numeric controller ids for a
@@ -75,6 +83,17 @@ def setTCF {newTCF} \
 # Adds a new track.
 def track {file} 'Add a new track file: track <filename>' {
     $project addTrack $file [tcf getVolCC $trackNum] [tcf getPanCC $trackNum]
+    set trackNum [+ $trackNum 1]
+}
+
+def track {file} 'Add a new track file: track <filename>' {
+    $project addTrack $file [tcf getVolCC $trackNum] [tcf getPanCC $trackNum]
+    set trackNum [+ $trackNum 1]
+}
+
+def trackwm {model name loader} 'Add a WaveModel track.' {
+    $project addWaveModel $model $name $loader [tcf getVolCC $trackNum] \
+        [tcf getPanCC $trackNum]
     set trackNum [+ $trackNum 1]
 }
 
@@ -129,14 +148,41 @@ var MidiRecorder [object {
 }]
 
 var AudioRecorder [object {
-    var filename 'recording.wav'
+    var trackName 'recording'
     var enabled [+ 0]
     var eng [get_engine]
     var channels $STEREO
 
     def addRecorder {} {
         prerr [format 'adding recorder for ' $channels '\n']
-        eng addRecorder [makeAudioFileRecorder $filename $channels]
+        # Preserve the current filename for the callback.
+        var tn $trackName
+        var fn [format $trackName '.wav']
+        var recorder [makeAudioFileRecorder $fn $channels]
+        recorder setCloseCallback [callback {
+            prerr [format 'start pos is ' [recorder startPos]]
+            var pos [recorder startPos]
+            if {== $pos [+ 0]} {
+                track $fn
+            } else {
+                # Non-zero aligned track.
+                # Write a crash file that builds a sequencer wave object and
+                # then just evaluate it to add the new model to the current
+                # system.
+                var crashfile [format $tn '.crash']
+                var out [open $crashfile w]
+                out write [importer 'trackwm']
+                out write 'var t [makeSequencerWaveModel]\n'
+                out write [format 't add ' $pos ' [readWave ' $fn ']\n']
+                out write [
+                    format 'trackwm $t ' $tn ' \'evalfile ' $tn '.crash\'\n'
+                ]
+                set out null
+
+                evalfile $crashfile
+            }
+        }]
+        eng addRecorder $recorder
     }
 
     def activate {} {
@@ -149,8 +195,8 @@ var AudioRecorder [object {
         eng clearRecorders
     }
 
-    def setFilename {newFilename} {
-        set filename $newFilename
+    def setTrackName {newTrackName} {
+        set trackName $newTrackName
         if {give $enabled} {
             # Replace the existing recorder.
             eng clearRecorders
@@ -158,10 +204,9 @@ var AudioRecorder [object {
         }
     }
 
-    def getFilename {} {
-        give $filename
+    def getTrackName {} {
+        give $trackName
     }
-
 
     def setChannels {ch} \
         'Set the record channels.
@@ -413,8 +458,7 @@ def saveProject {} {
     # Export all of the midi tracks to midi files.
     var i [+ 0]
     var out [open $projectFilename w]
-    out write 'import [load_module /home/mmuller/w/awb/awbconfig.crash] '
-    out write 'makeProject track vol pan gain midiTrack\n'
+    out write [importer 'makeProject track vol pan gain midiTrack']
     out write 'var project [makeProject]\n'
     [getTracks] each track {
         if {track isMidi} {
@@ -438,7 +482,7 @@ def v {} 'Bring up the text panel UI.' {
         def setAudioFilename {} {
             def callback {text} {
                 audioFilenameActionButton setText $text
-                AudioRecorder setFilename [format $text '.wav']
+                AudioRecorder setTrackName $text
             }
             EntryBar $bottomBar 1 'Audio Record Filename:' $callback $tracklist
         }
@@ -488,7 +532,8 @@ def v {} 'Bring up the text panel UI.' {
             ]
         ]
         var audioFilenameActionButton [
-            ActionButton $stateRow 16 'recording' $setAudioFilename
+            ActionButton $stateRow 16 [AudioRecorder getTrackName] \
+                $setAudioFilename
         ]
 
         var centerPane [Frame $mainColumn -1]

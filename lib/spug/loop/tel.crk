@@ -138,11 +138,13 @@ alias OrchestraObj = ObjOf[Orchestra];
     return Wave.read(makePath(filename).reader());
 }
 
+alias SequencerWaveModelObj = ObjOf[SequencerWaveModel];
+
 ## Create a SequencerWaveModel, a sequence of Wave objects (see readWave)
 ## positioned in time.
 ## These should be treated as immutable after being added to the event manager
 ## using addWaveModel.
-@function Obj makeSequencerWaveModel() {
+@function SequencerWaveModelObj makeSequencerWaveModel() {
 
     ## Adds a Wave to the sequence at the specified position ('pos' is an
     ## offset in frames).
@@ -200,7 +202,7 @@ alias OrchestraObj = ObjOf[Orchestra];
     }
 
     swm := SequencerWaveModel();
-    result := Obj();
+    result := SequencerWaveModelObj(swm);
     result.define('add', add(swm));
     result.define('append', append(swm));
     result.define('frames', frames(swm));
@@ -779,10 +781,17 @@ class ExportMidiFileCmd : Builtin {
         return self.monitor;
     }
 
+    ## Returns the start position of the recording.
+    @function(RecordBuffer) int startPos() {
+        return self.startPos;
+    }
+
     result := Obj();
     result.define('finish', finish(buf));
     result.define('enableMonitor', enableMonitor(buf));
     result.define('monitor', monitor(buf));
+    result.define('startPos', startPos(buf));
+
     return result;
 }
 
@@ -857,8 +866,20 @@ AudioFileRecorderObj makeAudioFileRecorder(String filename, int channels) {
         return self.monitor;
     }
 
+    alias VoidFunctor = Functor0[void];
+    @function(AudioFileRecorder) int setCloseCallback(VoidFunctor cb) {
+        self.closeCallback = cb;
+        return 0;
+    }
+
+    @function(AudioFileRecorder) int startPos() {
+        return self.buf.startPos;
+    }
+
     result.define('enableMonitor', enableMonitor(inst));
     result.define('monitor', monitor(inst));
+    result.define('setCloseCallback', setCloseCallback(inst));
+    result.define('startPos', startPos(inst));
     return result;
 }
 

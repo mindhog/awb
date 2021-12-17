@@ -5,7 +5,7 @@ import crack.audio.wavfile WaveDef;
 import crack.cont.array Array;
 import crack.cont.treemap TreeMap;
 import crack.fs makePath;
-import crack.functor Functor1, Functor2;
+import crack.functor Functor0, Functor1, Functor2;
 import crack.io cerr, FStr;
 import crack.lang AssertionError, CString, InvalidArgumentError;
 import crack.midi.alsa Port, Sequencer, SND_SEQ_OPEN_INPUT,
@@ -503,6 +503,11 @@ const RIGHT := 2;
 class AudioFileRecorder : Recorder {
     RecordBuffer buf;
     bool __monitor;
+
+    ## Callback to be invoked when "close()" is called (when the recording is
+    ## completed).
+    Functor0[void] closeCallback;
+
     @cvars {
         String filename;
 
@@ -538,7 +543,8 @@ class AudioFileRecorder : Recorder {
 
     void close(AWBEngine engine) {
         buf.finish();
-        engine.addWaveFile(filename);
+        if (closeCallback)
+            closeCallback();
     }
 
     bool oper .monitor=(bool enabled) {

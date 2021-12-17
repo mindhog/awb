@@ -80,6 +80,16 @@ class JackWrapper {
         __processors.append(processor);
     }
 
+    ## Insert a processor at the head of the chain.
+    ##
+    ## Note that most processors should generally be added using
+    ## addProcessor(), as this is more efficient in most cases.
+    ## insertFirstProcessor() should be reserved for things like Seeker that
+    ## influence state for subsequent processors.
+    void insertFirstProcessor(Functor1[void, JackWrapper] processor) {
+        __processors.insert(0, processor);
+    }
+
     void removeProcessor(Functor1[void, JackWrapper] processor) {
         for (iter :on __processors) {
             # Since we may be iterating over this loop, don't delete here,
@@ -277,6 +287,24 @@ class Mixer @impl Component {
 
     void deactivate() {
         __active = false;
+    }
+}
+
+## A jack processor that sets the current start frame and removes itself from
+## the processing chain.
+##
+## This should normally be added with "insertFirstProcessor" rather than
+## "addProcessors" so that it affects the frame position for subsequent
+## processors.
+class Seeker @impl Functor1[void, JackWrapper] {
+
+    @cvars {
+        uint32 newStartFrame;
+    }
+
+    void oper call(JackWrapper jack) {
+        jack.setStartFrame(newStartFrame);
+        jack.removeProcessor(this);
     }
 }
 
@@ -495,8 +523,14 @@ class Wave : ManagedWaveBuffer {
 
     ## Concatenate 'other' onto the end of this wave.
     void extend(WaveBuffer other) {
-        if (size + other.size > cap)
-            grow(cap * 2);
+        if (!other.size)
+            return;
+        if (size + other.size > cap) {
+            if (!cap)
+                grow(other.size);
+            else
+                grow(cap * 2);
+        }
         for (int i = 0; i < other.size; ++i)
             buffer[size + i] = other.buffer[i];
         size = size + other.size;
@@ -975,6 +1009,11 @@ class RecordBuffer {
         ## has been written to a file.
         savedPos,
 
+        ## The starting frame of the recording (obtained by calling
+        ## getStartFrame() on the jack wrapper during the first cycle where
+        ## this is undefined (i.e. has value -1).
+        startPos,
+
         ## Set to nonzero when we're finished recording.
         finished,
 
@@ -988,6 +1027,11 @@ class RecordBuffer {
 
     uint size = 1024 * 1024;
     array[int16] buffer = array[int16](1024 * 1024);
+
+    oper init() {
+        # Initialize this to -1.
+        startPos -= 1;
+    }
 
     void finish() {
         finished += 1;
@@ -1038,6 +1082,10 @@ class StereoRecorder : Recorder {
             jack.removeProcessor(this);
             return;
         }
+
+        # Initialize the buffer start position if it is undefined.
+        if (outBuf.startPos == -1)
+            outBuf.startPos += jack.getStartFrame() + 1;
 
         lbuf := jack.left_in.getBuffer(jack.frameCount);
         rbuf := jack.right_in.getBuffer(jack.frameCount);
@@ -1235,6 +1283,8 @@ class WaveManager : JackWrapper {
     void seek(uintz frame) {
         for (adapter :in adapters)
             adapter.seek(frame);
+
+        insertFirstProcessor(Seeker(uint32(frame)));
     }
 
     uintz tell() {

@@ -9,7 +9,7 @@ import crack.lang Exception, StaticString;
 import crack.midi.event ChannelEvent, ControlChange, Event;
 import crash parseBlockArg, Block, Builtin, EvalContext, Obj;
 import spug.loop.model EventContext;
-import spug.loop.jack WaveManager, PCMTrackAdapter;
+import spug.loop.jack WaveManager, WaveModel, PCMTrackAdapter;
 import types BoolObj, FloatObj, IntObj;
 import .engine AWBEngine;
 import .plugins PluginInstance, PluginLibrary;
@@ -308,6 +308,22 @@ class Project {
         out `load $(dir/filename)\n`;
     }
 
+    ## Adds a new wave model (complete with channel controls).
+    ##
+    ## In addition to the model itself, 'trackName' is the name displayed for
+    ## the track, and 'loader' is the (crash) string inserted into the
+    ## logfile to cause the track to be loaded during a replay.
+    void addWaveModel(WaveModel model, String trackName, String loader,
+                      int volumeController,
+                      int panController
+                      ) {
+        adapter := engine.addWaveModel(model, trackName);
+        __addChannel(adapter, volumeController, panController);
+
+        # Add the new track to the log.
+        out `$loader\n`;
+    }
+
     void addPassThrough(Array[String] inputs, int volumeController,
                         int panController
                         ) {
@@ -382,6 +398,18 @@ class Project {
                                         int volumeController
                                         ) {
     self.addTrack(filename, panController, volumeController);
+    return 0;
+}
+
+@function(Project) int Project_addWaveModel(WaveModel model,
+                                            String trackName,
+                                            String loader,
+                                            int panController,
+                                            int volumeController
+                                            ) {
+    self.addWaveModel(model, trackName, loader, panController,
+                      volumeController
+                      );
     return 0;
 }
 
@@ -482,6 +510,7 @@ Obj makeEventRecorderModule(AWBEngine engine) {
         obj := Obj();
         proj := Project(self.engine, dir);
         obj.define('addTrack', Project_addTrack(proj));
+        obj.define('addWaveModel', Project_addWaveModel(proj));
         obj.define('addPassThrough', Project_addPassThrough(proj));
         obj.define('setGain', Project_setGain(proj));
         obj.define('getGain', Project_getGain(proj));
