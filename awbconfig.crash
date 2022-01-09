@@ -174,8 +174,12 @@ var AudioRecorder [object {
                 out write [importer 'trackwm']
                 out write 'var t [makeSequencerWaveModel]\n'
                 out write [format 't add ' $pos ' [readWave ' $fn ']\n']
+                var ti [[getTracks] count]
+                var logfileLoader [
+                    format 'seq\\nadd_wave ' $ti ' ' $pos ' ' $tn '.wav\\n'
+                ]
                 out write [
-                    format 'trackwm $t ' $tn ' \'evalfile ' $tn '.crash\'\n'
+                    format 'trackwm $t ' $tn ' \'' $logfileLoader '\'\n'
                 ]
                 set out null
 

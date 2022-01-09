@@ -437,6 +437,14 @@ class Scan {
         return 0;
     }
 
+    @function(Scan) int seq() {
+        return 0;
+    }
+
+    @function(Scan) int add_wave(int track, int pos, String filename) {
+        return 0;
+    }
+
     @function(Scan) int pan(int track, float val) {
         self.pans[track] = val;
         return 0;
@@ -507,6 +515,8 @@ if (argv[1] == 'legacy_mix') {
     ctx.define('forward', Scan.forward(scan));
     ctx.define('outfile', Scan.outfile(scan));
     ctx.define('load', Scan.load(scan));
+    ctx.define('seq', Scan.seq(scan));
+    ctx.define('add_wave', Scan.add_wave(scan));
     ctx.define('pan', Scan.pan(scan));
     ctx.define('volume', Scan.volume(scan));
     ctx.define('gain', Scan.gain(scan));

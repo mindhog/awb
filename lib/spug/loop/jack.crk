@@ -488,16 +488,21 @@ class PassThroughAdapter : PCMTrackAdapter {
 
     ## Returns the number of channels in the wave.
     @abstract uint oper .channels();
+
+    ## Returns the frame rate of the wave model.
+    @abstract int oper .rate();
 }
 
 ## A WaveBuffer containing the full contents of a file and information on the
 ## number of channels.
 class Wave : ManagedWaveBuffer {
     int channels;
+    int rate;
 
-    oper init(int channels, int cap) :
+    oper init(int channels, int cap, int rate) :
         channels = channels,
-        ManagedWaveBuffer(cap) {
+        ManagedWaveBuffer(cap),
+        rate = rate {
     }
 
     void grow(uintz newCap) {
@@ -544,7 +549,7 @@ class Wave : ManagedWaveBuffer {
     @static Wave read(Reader src) {
         def := readWave(src);
         buf := ManagedWaveBuffer(4096);
-        wave := Wave(def.channels, def.frameCount * def.channels);
+        wave := Wave(def.channels, def.frameCount * def.channels, def.rate);
         while (def.read(src, buf))
             wave.extend(buf);
         return wave;
@@ -566,7 +571,7 @@ class WaveAdapter : PCMTrackAdapter {
     oper init(WaveModel model) :
         PCMTrackAdapter(model.channels),
         model = model,
-        __buf(model.channels, 4096) {
+        __buf(model.channels, 4096, model.rate) {
     }
 
     void process(BufferVector bufs, uint32 frameCount) {
@@ -613,6 +618,10 @@ class SimpleWaveModel : WaveModel {
     uint oper .channels() {
         return data.channels;
     }
+
+    int oper .rate() {
+        return data.rate;
+    }
 }
 
 ## A wave model that is a proxy for a sequence of other wave buffers.
@@ -629,10 +638,13 @@ class SequencerWaveModel : WaveModel {
 
         WaveBuffer buf;
 
-        oper init(uint start, int channels, WaveBuffer buf) :
+        int rate;
+
+        oper init(uint start, int channels, WaveBuffer buf, int rate) :
             start = start,
             channels = channels,
-            buf = buf {
+            buf = buf,
+            rate = rate {
         }
 
         int oper .end() { return buf.size / channels + start }
@@ -704,6 +716,8 @@ class SequencerWaveModel : WaveModel {
     ## Number of channels is always 2, which is kind of lame but adequate for
     ## now, since this model basically mixes everything to two channel anyway.
     uint oper .channels() { return 2 }
+
+    int oper .rate() { return __bufs ? __bufs[-1].rate : 0 }
 
     void read(uint pos, WaveBuffer out, uint frames) {
         __clearOutBuf(out);

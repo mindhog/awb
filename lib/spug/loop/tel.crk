@@ -149,7 +149,10 @@ alias SequencerWaveModelObj = ObjOf[SequencerWaveModel];
     ## Adds a Wave to the sequence at the specified position ('pos' is an
     ## offset in frames).
     @function(SequencerWaveModel) int add(int pos, Wave wave) {
-        self.add(SequencerWaveModel.PositionedBuffer(pos, wave.channels, wave));
+        self.add(SequencerWaveModel.PositionedBuffer(pos, wave.channels, wave,
+                                                     wave.rate
+                                                     )
+                 );
         return 0;
     }
 
@@ -159,7 +162,8 @@ alias SequencerWaveModelObj = ObjOf[SequencerWaveModel];
         pos := self.frames;
         self.add(SequencerWaveModel.PositionedBuffer(pos,
                                                      wave.channels,
-                                                     wave
+                                                     wave,
+                                                     wave.rate
                                                      )
                  );
         return pos;

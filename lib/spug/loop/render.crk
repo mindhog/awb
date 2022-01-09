@@ -10,7 +10,7 @@ import crack.lang Exception;
 import crash createRootContext, eval, Builtin, EvalContext, Obj;
 import types FloatObj, IntObj;
 
-import .jack JackWrapper, WaveAdapter, WaveModel;
+import .jack JackWrapper, SequencerWaveModel, Wave, WaveAdapter, WaveModel;
 import .plugincmds makeEffectObj;
 import .plugins PluginInstance, PluginLibrary;
 
@@ -59,6 +59,10 @@ class FileSource : WaveModel {
     uint oper .channels() {
         return wave.channels;
     }
+
+    int oper .rate() {
+        return wave.rate;
+    }
 }
 
 const uint32 SAMPLES_PER_CHUNK = 1024;
@@ -73,9 +77,9 @@ class Renderer {
     SeekableWriter __outFile;
     WaveDef __outDef;
 
-    class Track {
+    @abstract class Track {
         @cvars {
-            FileSource model;
+            WaveModel model;
             WaveAdapter adapter;
         }
 
@@ -92,10 +96,59 @@ class Renderer {
             return val;
         }
 
-        int oper .rate() { return model.wave.rate }
-        uint oper .frames() { return model.wave.frameCount }
+        int oper .rate() { return model.rate }
+        uint oper .frames() { return model.frames }
         void insertPlugin(PluginInstance plugin) {
             adapter.insertComponent(plugin);
+        }
+
+        @abstract void addWave(uint pos, Wave wave);
+    }
+
+    ## Track that wraps a simple wave file.
+    class WaveTrack : Track {
+
+        FileSource fsModel;
+
+        oper init(FileSource model, WaveAdapter adapter) :
+            Track(model, adapter),
+            fsModel = model {
+        }
+
+        void addWave(uint pos, Wave wave) {
+            throw Exception('Track is not a SequencerWaveModel');
+        }
+    }
+
+    ## Track that holds a SequencerWaveModel.
+    class SeqTrack : Track {
+        SequencerWaveModel seqModel;
+        int __rate = -1;
+
+        oper init(SequencerWaveModel seqModel, WaveAdapter adapter) :
+            Track(seqModel, adapter),
+            seqModel = seqModel {
+        }
+
+        int oper .rate() {
+            if (__rate == -1)
+                throw Exception('Attempting to get a rate from a sequencer '
+                                "track that hasn't been fully defined yet.");
+            return __rate;
+        }
+
+        void addWave(uint pos, Wave wave) {
+            if (__rate == -1)
+                __rate = wave.rate;
+            else if (wave.rate != __rate)
+                throw Exception('Adding wave with a different rate to a '
+                                'sequence.');
+            seqModel.add(SequencerWaveModel.PositionedBuffer(pos,
+                                                             wave.channels,
+                                                             wave,
+                                                             wave.rate
+                                                             )
+                         );
         }
     }
 
@@ -121,11 +174,29 @@ class Renderer {
         __outDef.writeHeader(__outFile);
     }
 
-    void addTrack(Path filename) {
+    ## Add the file as a wave track and return the new track index.
+    int addTrack(Path filename) {
         model := FileSource(filename);
         adapter := WaveAdapter(model);
         __jack.addProcessor(adapter);
-        __trackInfo.append(Track(model, adapter));
+        __trackInfo.append(WaveTrack(model, adapter));
+        return __trackInfo.count() - 1;
+    }
+
+    ## Create a new, empty SeqTrack and return the new track index.
+    int createSeqTrack() {
+        model := SequencerWaveModel();
+        adapter := WaveAdapter(model);
+        __jack.addProcessor(adapter);
+        __trackInfo.append(SeqTrack(model, adapter));
+        return __trackInfo.count() - 1;
+    }
+
+    ## Add a new wave to a sequencer track.
+    ##
+    ## This will cause a runtime error if the track is not a SeqTrack.
+    void addWave(int track, int pos, Wave wave) {
+        __trackInfo[track].addWave(pos, wave);
     }
 
     void writeBuffers(uint32 frames) {
@@ -214,12 +285,24 @@ PluginLibrary plugins;
 
 ## Load 'filename' into the project.  Returns the new track index.
 @function(Renderer) int load(String filename) {
-    self.addTrack(makePath(filename));
+    return self.addTrack(makePath(filename));
+}
+
+## Create a new sequence.  Returns the new track index.
+##
+## Waves must be added to the sequence using "add_wave" before it can be used.
+@function(Renderer) int seq() {
+    return self.createSeqTrack();
+}
+
+## Adds a wave file to the specified track at the given position.
+@function(Renderer) int add_wave(int track, int pos, String filename) {
+    self.addWave(track, pos, Wave.read(makePath(filename).reader()));
     return 0;
 }
 
 ## Set the panning for a given track index.
-@function (Renderer)int pan(int track, float val) {
+@function(Renderer) int pan(int track, float val) {
     self.setPan(track, val);
     return 0;
 }
@@ -263,6 +346,8 @@ void defineRendererFuncs(EvalContext ctx) {
     ctx.define('forward', forward(renderer));
     ctx.define('outfile', outfile(renderer));
     ctx.define('load', load(renderer));
+    ctx.define('seq', seq(renderer));
+    ctx.define('add_wave', add_wave(renderer));
     ctx.define('pan', pan(renderer));
     ctx.define('volume', volume(renderer));
     ctx.define('gain', gain(renderer));
