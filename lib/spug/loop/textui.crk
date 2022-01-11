@@ -312,7 +312,7 @@ class KeyCallback[WidgetType] @impl Functor2[bool, WidgetType, Event] {
         return self.normalAttr = byte(attr);
     }
 
-    @function(StatefulText) int setFocus(bool focus) {
+    @function(StatefulText) int setFocus(int focus) {
         self.setFocus(focus);
         return 0;
     }
@@ -333,11 +333,21 @@ class KeyCallback[WidgetType] @impl Functor2[bool, WidgetType, Event] {
     return result;
 }
 
+alias RowObj = ObjOf[Row];
+
 ## Make a "Row" layout control, which manages a row of child windows.
-@function Row makeRow(Window parent, int size) {
+@function RowObj makeRow(Window parent, int size) {
     self := Row(parent);
     addToContainer(parent, self, size);
-    return self;
+
+    @function(Row) int setFocus(int focus) {
+        self.setFocus(focus);
+        return 0;
+    }
+
+    result := RowObj(self);
+    result.define('setFocus', setFocus(self));
+    return result;
 }
 
 ## Make a "Column" layout control, which manages a row of child windows.

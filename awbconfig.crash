@@ -280,6 +280,10 @@ def ActionButton {parent size text action} \
                 give $win
             }
 
+            def setFocus {focus} {
+                win setFocus $focus
+            }
+
             win setNormalAttr 71
             win setUnfocusedAttr 2
         }
@@ -488,7 +492,8 @@ def v {} 'Bring up the text panel UI.' {
                 audioFilenameActionButton setText $text
                 AudioRecorder setTrackName $text
             }
-            EntryBar $bottomBar 1 'Audio Record Filename:' $callback $tracklist
+            EntryBar $bottomBar 1 'Audio Record Filename:' $callback \
+                $audioFilenameActionButton
         }
 
         var midiRecordingName 'midi-recording'
@@ -500,7 +505,7 @@ def v {} 'Bring up the text panel UI.' {
                 [get_engine] setMidiRecordTrackName $midiRecordingName
             }
             EntryBar $bottomBar 1 'Midi Record Track name:' $callback \
-                $tracklist
+                $midiTrackNameActionButton
         }
 
         def setMidiOutChannel {} {
@@ -514,7 +519,8 @@ def v {} 'Bring up the text panel UI.' {
                     [getAWBEngine] setInputChannel $newChannel
                 }
             }
-            EntryBar $bottomBar 1 'Midi out channel:' $callback $tracklist
+            EntryBar $bottomBar 1 'Midi out channel:' $callback \
+                $midiOutChannelActionButton
         }
 
         # Create a row of buttons to control midi/audio recording.
@@ -530,7 +536,7 @@ def v {} 'Bring up the text panel UI.' {
         var audioSourceButton [
             ActionButton $stateRow 8 [RecordSourceManager getCurrentName] [
                 def showMenu {} {
-                    showAudioSourceMenu $centerPane $tracklist \
+                    showAudioSourceMenu $centerPane $stateRow \
                         $audioSourceButton
                 }
             ]
