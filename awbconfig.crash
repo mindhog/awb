@@ -315,9 +315,10 @@ def EntryBar {parent size label enterCallback restoreFocus} {
 ## Start a new menu.
 ##
 ## 'parent' is the container in which to place the menu (should be a Frame)
-## and 'alternate' is the Window that we restore the focus to after the menu
-## goes away (should provide the "setFocus" method).
-def makeMenu {parent alternate} {
+## and 'alternate' is the Window that we restore the parcel to after the menu
+## goes away.  'lastFocus' is the Window that we return the focus to (should
+## provide the "setFocus" method).
+def makeMenu {parent alternate lastFocus} {
     var menu [List $parent -1]
     parent setParcel $menu
     menu setFocus 1
@@ -333,7 +334,7 @@ def makeMenu {parent alternate} {
 
             # Clean up the menu, restore focus to the originator.
             parent setParcel $alternate
-            alternate setFocus 1
+            lastFocus setFocus 1
 
             # Do the menu item action.
             $action
@@ -452,7 +453,7 @@ var sources [
 
 # Show the menu of audio sources for audio recording.
 def showAudioSourceMenu {parent alternate textWidget} {
-    var menu [makeMenu $parent $alternate]
+    var menu [makeMenu $parent $alternate $textWidget]
     [sources iter] each source {
         menu add [source getName] [source makeAction $textWidget]
     }
@@ -536,7 +537,7 @@ def v {} 'Bring up the text panel UI.' {
         var audioSourceButton [
             ActionButton $stateRow 8 [RecordSourceManager getCurrentName] [
                 def showMenu {} {
-                    showAudioSourceMenu $centerPane $stateRow \
+                    showAudioSourceMenu $centerPane $tracklist \
                         $audioSourceButton
                 }
             ]
@@ -560,7 +561,7 @@ def v {} 'Bring up the text panel UI.' {
             EntryBar $bottomBar 1 'New name:' $callback $tracklist
         }
         tracklist bind $KEY_ENTER {
-            var menu [makeMenu $centerPane $tracklist]
+            var menu [makeMenu $centerPane $tracklist $tracklist]
             menu add 'Rename track' $renameTrack
             menu add 'Do something else' [def f {} { prerr 'something else' }]
             give true
