@@ -26,6 +26,8 @@ int jackCallback(uint32 nframes, voidptr arg);
 
 class JackPos : Object, JackPosition {}
 
+mycerr := cerr;
+
 class JackWrapper {
 
     JackClient __client;
@@ -84,7 +86,7 @@ class JackWrapper {
     ##
     ## Note that most processors should generally be added using
     ## addProcessor(), as this is more efficient in most cases.
-    ## insertFirstProcessor() should be reserved for things like Seeker that
+    ## insertFirstProcessor() should be reserved for things that
     ## influence state for subsequent processors.
     void insertFirstProcessor(Functor1[void, JackWrapper] processor) {
         __processors.insert(0, processor);
@@ -190,7 +192,10 @@ class JackWrapper {
     @final uint32 getStartFrame() { return __startFrame }
 
     # Sets the current start frame.
-    @final void setStartFrame(uint32 startFrame) { __startFrame = startFrame }
+    @final void setStartFrame(uint32 startFrame) {
+        mycerr `xxx setting start frame to $startFrame\n`;
+        __startFrame = startFrame;
+    }
 
     @final JackClient getClient() {
         return __client;
@@ -287,24 +292,6 @@ class Mixer @impl Component {
 
     void deactivate() {
         __active = false;
-    }
-}
-
-## A jack processor that sets the current start frame and removes itself from
-## the processing chain.
-##
-## This should normally be added with "insertFirstProcessor" rather than
-## "addProcessors" so that it affects the frame position for subsequent
-## processors.
-class Seeker @impl Functor1[void, JackWrapper] {
-
-    @cvars {
-        uint32 newStartFrame;
-    }
-
-    void oper call(JackWrapper jack) {
-        jack.setStartFrame(newStartFrame);
-        jack.removeProcessor(this);
     }
 }
 
@@ -1298,7 +1285,7 @@ class WaveManager : JackWrapper {
         for (adapter :in adapters)
             adapter.seek(frame);
 
-        insertFirstProcessor(Seeker(uint32(frame)));
+        setStartFrame(uint32(frame));
     }
 
     uintz tell() {
