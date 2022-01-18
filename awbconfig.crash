@@ -147,11 +147,31 @@ var MidiRecorder [object {
     }
 }]
 
+def or {a b} {
+    if {give $a} {
+        give true
+    } elif {give $b} {
+        give true
+    } else {
+        give ''
+    }
+}
+
+def findUniqueAudioTrack {} {
+    var i 1
+    while {or [exists [format 'track' $i '.crash']] \
+              [exists [format 'track' $i '.wav']]} {
+        set i [+ $i 1]
+    }
+    format 'track' $i
+}
+
 var AudioRecorder [object {
-    var trackName 'recording'
+    var trackName [findUniqueAudioTrack]
     var enabled [+ 0]
     var eng [get_engine]
     var channels $STEREO
+    var control ''
 
     def addRecorder {} {
         prerr [format 'adding recorder for ' $channels '\n']
@@ -185,6 +205,12 @@ var AudioRecorder [object {
 
                 evalfile $crashfile
             }
+
+            # Fix the recording name.
+            set trackName [findUniqueAudioTrack]
+            if {give $control} {
+                control setText $trackName
+            }
         }]
         eng addRecorder $recorder
     }
@@ -198,6 +224,8 @@ var AudioRecorder [object {
         set enabled [+ 0]
         eng clearRecorders
     }
+
+    def isEnabled {} { give $enabled }
 
     def setTrackName {newTrackName} {
         set trackName $newTrackName
@@ -222,6 +250,10 @@ var AudioRecorder [object {
         ' {
         set channels $ch
     }
+
+    def setControl {newControl} {
+        set control $newControl
+    }
 }]
 
 def ToggleButton {parent size text model} \
@@ -243,13 +275,17 @@ def ToggleButton {parent size text model} \
                 set active [+ 0]
                 model deactivate
             } else {
-                self setNormalAttr 65
-                self setUnfocusedAttr 1
-                set active [+ 1]
-                model activate
+                activate
             }
 
             give 'true'
+        }
+
+        def activate {} {
+            win setNormalAttr 65
+            win setUnfocusedAttr 1
+            set active [+ 1]
+            model activate
         }
 
         win setNormalAttr 66
@@ -533,7 +569,10 @@ def v {} 'Bring up the text panel UI.' {
         var midiOutChannelActionButton [
             ActionButton $stateRow 4 [format $midiOutChannel] $setMidiOutChannel
         ]
-        ToggleButton $stateRow 6 'Audio' $AudioRecorder
+        var audioRecordBtn [ToggleButton $stateRow 6 'Audio' $AudioRecorder]
+        if {AudioRecorder isEnabled} {
+            audioRecordBtn activate
+        }
         var audioSourceButton [
             ActionButton $stateRow 8 [RecordSourceManager getCurrentName] [
                 def showMenu {} {
@@ -546,6 +585,7 @@ def v {} 'Bring up the text panel UI.' {
             ActionButton $stateRow 16 [AudioRecorder getTrackName] \
                 $setAudioFilename
         ]
+        AudioRecorder setControl $audioFilenameActionButton
 
         var centerPane [Frame $mainColumn -1]
 
