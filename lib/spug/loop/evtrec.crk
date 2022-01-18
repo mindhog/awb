@@ -7,7 +7,7 @@ import crack.functor Functor2;
 import crack.io cerr, Formatter, FStr, StandardFormatter;
 import crack.lang Exception, StaticString;
 import crack.midi.event ChannelEvent, ControlChange, Event;
-import crash parseBlockArg, Block, Builtin, EvalContext, Obj;
+import crash parseBlockArg, Block, Builtin, EvalContext, Obj, ParmInfo;
 import spug.loop.model EventContext;
 import spug.loop.jack WaveManager, WaveModel, PCMTrackAdapter;
 import types BoolObj, FloatObj, IntObj;

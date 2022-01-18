@@ -1,7 +1,7 @@
 ## Crash commands for controlling plugins.
 
 import crack.cont.array Array;
-import crash Builtin, EvalContext, Obj;
+import crash Builtin, EvalContext, Obj, ParmInfo;
 import types FloatObj, IntObj;
 import .plugins PluginInstance;
 

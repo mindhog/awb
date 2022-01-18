@@ -29,7 +29,7 @@ import spug.loop.jack jackCallback, RecordBuffer, SequencerWaveModel, Wave,
 
 import collections collections;
 import crash createRootContext, eval, parseBlockArg, ActiveFunc, Block, Builtin,
-    EvalContext, Obj, ObjOf, SimpleValue, Value;
+    EvalContext, Obj, ObjOf, ParmInfo, SimpleValue, Value;
 import repl repl;
 import stdlib stdlib;
 import types BoolObj, FloatObj, IntObj;

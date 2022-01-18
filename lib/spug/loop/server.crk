@@ -30,7 +30,7 @@ import crack.net InetAddress;
 import crack.net.comm2 Comm, Connection, ConnectionFactory, NewConnection,
     UserHandler;
 import crack.protobuf Field, Message, ProtoWriter;
-import crash Builtin, EvalContext;
+import crash Builtin, EvalContext, ParmInfo;
 import types IntObj;
 
 import .engine AWBEngine;

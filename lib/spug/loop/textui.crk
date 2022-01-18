@@ -10,7 +10,7 @@ import crack.lang AppendBuffer, Exception;
 import crack.net Poller;
 import crack.net.pollqueue PollQueue;
 import crash createRootContext, eval, parseBlockArg, parseString, Block,
-    Builtin, EvalContext, Obj, ObjOf, SimpleValue;
+    Builtin, EvalContext, Obj, ObjOf, ParmInfo, SimpleValue;
 import deadly.entry Entry;
 import deadly.layout Column, Container, Frame, Row;
 import deadly.util convertKey, KEY_F1, KEY_F2, KEY_F3, KEY_F4, KEY_F5, KEY_F6,

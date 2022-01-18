@@ -7,7 +7,7 @@ import crack.functor Functor1;
 import crack.io cerr, cout, SeekableReader, SeekableWriter, StandardFormatter,
     SEEK_END, SEEK_SET;
 import crack.lang Exception;
-import crash createRootContext, eval, Builtin, EvalContext, Obj;
+import crash createRootContext, eval, Builtin, EvalContext, Obj, ParmInfo;
 import types FloatObj, IntObj;
 
 import .jack JackWrapper, SequencerWaveModel, Wave, WaveAdapter, WaveModel;
