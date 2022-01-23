@@ -30,7 +30,6 @@ import crash SimpleValue;
 #import crack.ccl CCLInterpreter;
 
 import spug.loop.engine engine, AWBEngine;
-import spug.loop.jack WaveManager;
 import spug.loop.tel AppMethods, InterpWrapper;
 import spug.loop.textui captureCerr, TextController;
 import spug.loop.model programNames, ChannelMap, Project,
