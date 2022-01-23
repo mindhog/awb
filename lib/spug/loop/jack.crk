@@ -26,8 +26,6 @@ int jackCallback(uint32 nframes, voidptr arg);
 
 class JackPos : Object, JackPosition {}
 
-mycerr := cerr;
-
 class JackWrapper {
 
     JackClient __client;
@@ -192,10 +190,7 @@ class JackWrapper {
     @final uint32 getStartFrame() { return __startFrame }
 
     # Sets the current start frame.
-    @final void setStartFrame(uint32 startFrame) {
-        mycerr `xxx setting start frame to $startFrame\n`;
-        __startFrame = startFrame;
-    }
+    @final void setStartFrame(uint32 startFrame) { __startFrame = startFrame }
 
     @final JackClient getClient() {
         return __client;
@@ -1123,6 +1118,10 @@ class MonoRecorder : Recorder {
             jack.removeProcessor(this);
             return;
         }
+
+        # Initialize the buffer start position if it is undefined.
+        if (outBuf.startPos == -1)
+            outBuf.startPos += jack.getStartFrame() + 1;
 
         buf := channel ? jack.right_in.getBuffer(jack.frameCount) :
                          jack.left_in.getBuffer(jack.frameCount);
