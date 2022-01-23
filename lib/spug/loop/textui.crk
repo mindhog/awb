@@ -7,6 +7,7 @@ import crack.exp.termui Event, KeyEvent, TermApp, Window, KEY_UP, KEY_DOWN,
 import crack.functor Functor0, Functor1, Functor2;
 import crack.io cerr, cout, FStr, StandardFormatter, StringFormatter;
 import crack.lang AppendBuffer, Exception;
+import crack.logger cerrLogger;
 import crack.net Poller;
 import crack.net.pollqueue PollQueue;
 import crash createRootContext, eval, parseBlockArg, parseString, Block,
@@ -604,8 +605,10 @@ class TextController : Object @implements Controller, AppMethods {
 
                 StandardFormatter tempOut = cout, tempErr = cerr;
                 cout = StringFormatter();
-                if (captureCerr)
+                if (captureCerr) {
                     cerr = StringFormatter();
+                    cerrLogger.setFormatter(cerr);
+                }
 
                 Exception error;
                 try {
@@ -618,8 +621,10 @@ class TextController : Object @implements Controller, AppMethods {
                 }
 
                 cout = tempOut;
-                if (tempErr !is cerr)
+                if (tempErr !is cerr) {
                     cerr = tempErr;
+                    cerrLogger.setFormatter(cerr);
+                }
 
                 context.popFuncFrame();
                 self.__trackLists.clear();
