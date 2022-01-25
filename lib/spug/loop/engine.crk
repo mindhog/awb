@@ -155,6 +155,19 @@ class AWBEngine @impl ModelObserver {
         __recorders.append(path);
     }
 
+    ## Remove a recorder.
+    ##
+    ## It is currently illegal to call this when the engine is recording.
+    void removeRecorder(Recorder rec) {
+        @assert(__state != ST_RECORD);
+        for (i :on __recorders) {
+            if (i.elem() is rec) {
+                __recorders.delete(i.index);
+                break;
+            }
+        }
+    }
+
     ## Clears all record paths.
     ##
     ## Again, it is currently illegal to call this when the engine is recording.

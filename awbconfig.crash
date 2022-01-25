@@ -137,13 +137,22 @@ def getGain {track} {
 
 var MidiRecorder [object {
     var eng [get_engine]
+    var active [+ 0]
+    var recorder ''
 
     def activate {} {
-        eng addRecorder [makeMidiTrackRecorder]
+        set recorder [makeMidiTrackRecorder]
+        eng addRecorder $recorder
+        set active [+ 1]
     }
 
     def deactivate {} {
-        eng clearRecorders
+        eng removeRecorder $recorder
+        set active [+ 0]
+    }
+
+    def isEnabled {} {
+        give $active
     }
 }]
 
@@ -172,14 +181,17 @@ var AudioRecorder [object {
     var eng [get_engine]
     var channels $STEREO
     var control ''
+    var recorder ''
 
     def addRecorder {} {
         prerr [format 'adding recorder for ' $channels '\n']
         # Preserve the current filename for the callback.
-        var tn $trackName
-        var fn [format $trackName '.wav']
-        var recorder [makeAudioFileRecorder $fn $channels]
+        set recorder [makeAudioFileRecorder [format $trackName '.wav'] \
+                                            $channels]
         recorder setCloseCallback [callback {
+            var tn $trackName
+            # We have to recalculate this
+            var fn [format $trackName '.wav']
             prerr [format 'start pos is ' [recorder startPos]]
             var pos [recorder startPos]
             if {== $pos [+ 0]} {
@@ -211,6 +223,7 @@ var AudioRecorder [object {
             if {give $control} {
                 control setText $trackName
             }
+            recorder setFilename [format $trackName '.wav']
         }]
         eng addRecorder $recorder
     }
@@ -222,7 +235,7 @@ var AudioRecorder [object {
 
     def deactivate {} {
         set enabled [+ 0]
-        eng clearRecorders
+        eng removeRecorder $recorder
     }
 
     def isEnabled {} { give $enabled }
@@ -230,9 +243,7 @@ var AudioRecorder [object {
     def setTrackName {newTrackName} {
         set trackName $newTrackName
         if {give $enabled} {
-            # Replace the existing recorder.
-            eng clearRecorders
-            addRecorder
+            recorder setFilename [format $trackName '.wav']
         }
     }
 
@@ -260,7 +271,7 @@ def ToggleButton {parent size text model} \
     'Stateful text button that allows you to toggle the state of a model
     object.
 
-    "model" must support "activate" and "deactivate" methods.
+    "model" must support "activate", "deactivate" and "isEnabled" methods.
 
     usage: MidiState <parent> <size> <text> <recorder>
     ' \
@@ -288,8 +299,13 @@ def ToggleButton {parent size text model} \
             model activate
         }
 
-        win setNormalAttr 66
-        win setUnfocusedAttr 2
+        if {model isEnabled} {
+            win setNormalAttr 65
+            win setUnfocusedAttr 1
+        } else {
+            win setNormalAttr 66
+            win setUnfocusedAttr 2
+        }
     }
 }
 
@@ -570,9 +586,6 @@ def v {} 'Bring up the text panel UI.' {
             ActionButton $stateRow 4 [format $midiOutChannel] $setMidiOutChannel
         ]
         var audioRecordBtn [ToggleButton $stateRow 6 'Audio' $AudioRecorder]
-        if {AudioRecorder isEnabled} {
-            audioRecordBtn activate
-        }
         var audioSourceButton [
             ActionButton $stateRow 8 [RecordSourceManager getCurrentName] [
                 def showMenu {} {

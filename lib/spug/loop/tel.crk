@@ -880,10 +880,16 @@ AudioFileRecorderObj makeAudioFileRecorder(String filename, int channels) {
         return self.buf.startPos;
     }
 
+    @function(AudioFileRecorder) int setFilename(String filename) {
+        self.filename = filename;
+        return 0;
+    }
+
     result.define('enableMonitor', enableMonitor(inst));
     result.define('monitor', monitor(inst));
     result.define('setCloseCallback', setCloseCallback(inst));
     result.define('startPos', startPos(inst));
+    result.define('setFilename', setFilename(inst));
     return result;
 }
 
@@ -1024,6 +1030,11 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
         return 0;
     }
 
+    @function(AWBEngine) int removeRecorder(Recorder rec) {
+        self.removeRecorder(rec);
+        return 0;
+    }
+
     @function(AWBEngine) int clearRecorders() {
         self.clearRecorders();
         return 0;
@@ -1101,6 +1112,7 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
     result.define('play', play(engine));
     result.define('pause', pause(engine));
     result.define('addRecorder', addRecorder(engine));
+    result.define('removeRecorder', removeRecorder(engine));
     result.define('clearRecorders', clearRecorders(engine));
     result.define('record', record(engine));
     result.define('toggleRecord', toggleRecord(engine));
