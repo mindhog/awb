@@ -459,6 +459,10 @@ class Scan {
         return 0;
     }
 
+    @function(Scan) int insertEffect(int track, String effect) {
+        return 0;
+    }
+
     @function(Scan) int finish() {
         return 0;
     }
@@ -520,6 +524,7 @@ if (argv[1] == 'legacy_mix') {
     ctx.define('pan', Scan.pan(scan));
     ctx.define('volume', Scan.volume(scan));
     ctx.define('gain', Scan.gain(scan));
+    ctx.define('insertEffect', Scan.insertEffect(scan));
     ctx.define('finish', Scan.finish(scan));
     ctx.define('close', Scan.close(scan));
     ctx.define('collectStats', Scan.collectStats(scan));
