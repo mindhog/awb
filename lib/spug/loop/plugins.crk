@@ -22,9 +22,16 @@ class Port {
     LilvPlugin __plugin;
     LilvPort __port;
 
-    oper init(LilvPlugin plugin, LilvPort port) :
+    float __min, __max, __default;
+
+    oper init(LilvPlugin plugin, LilvPort port, float min, float max,
+              float default
+              ) :
         __plugin = plugin,
-        __port = port {
+        __port = port,
+        __min = min,
+        __max = max,
+        __default = default {
     }
 
     String getName() {
@@ -42,6 +49,10 @@ class Port {
     uint32 getIndex() {
         return __plugin.getPortIndex(__port);
     }
+
+    float oper .min() { return __min }
+    float oper .max() { return __max }
+    float oper .default() { return __default }
 }
 
 class Plugin;
@@ -56,15 +67,27 @@ class Plugin {
     class PortIter {
         LilvPlugin __plugin;
         uint32 __i, __numPorts;
+        Array[float] __mins, __maxs, __defaults;
 
-        oper init(LilvPlugin plugin) :
+        oper init(LilvPlugin plugin, Array[float] mins, Array[float] maxs,
+                  Array[float] defaults
+                  ) :
             __plugin = plugin,
-            __numPorts = plugin.getNumPorts() {
+            __numPorts = plugin.getNumPorts(),
+            __mins = mins,
+            __maxs = maxs,
+            __defaults = defaults {
         }
 
         void next() { ++__i }
         bool isTrue() { return __i < __numPorts }
-        Port elem() { return Port(__plugin, __plugin.getPortByIndex(__i)) }
+
+        Port elem() {
+            return Port(__plugin, __plugin.getPortByIndex(__i),
+                        __mins[__i], __maxs[__i], __defaults[__i]
+                        );
+        }
+
         PortIter iter() { return this }
     }
 
@@ -80,20 +103,33 @@ class Plugin {
 
     uint32 getNumPorts() { return __rep.getNumPorts() }
 
+    ## Gets the port parameters, consisting of mininums, maximums and defaults.
+    void getPortParams(Array[float] min, Array[float] max,
+                       Array[float] defaults
+                       ) {
+
+        # Make sure the arrays are all big enough.
+        np := getNumPorts();
+        if (min.capacity() < np)
+            min.grow(np);
+        if (max.capacity() < np)
+            max.grow(np);
+        if (defaults.capacity() < np)
+            defaults.grow(np);
+
+        __rep.getPortRanges(min.data(), max.data(), defaults.data());
+    }
+
     PortIter iterPorts() {
-        return PortIter(__rep);
+        np := getNumPorts();
+        Array[float] mins = {np, 0}, maxs = {np, 0}, defaults = {np, 0};
+        getPortParams(mins, maxs, defaults);
+        return PortIter(__rep, mins, maxs, defaults);
     }
 
     PluginInstance makeInstance(float64 sampleRate) {
         return _makePluginInstance(this, __rep.instantiate(sampleRate, null));
     }
-
-#    ## Gets the port parameters, consisting of mininums, maximums and defaults.
-#    void getPortParams(Array[float] min, Array[float] max,
-#                       Array[float] defaults
-#                       ) {
-#        if (min.capacity() < getNumPorts()
-#        min.grow(
 
     ## Returns an array of defaults for all ports.
     Array[float] getDefaults() {
@@ -115,6 +151,8 @@ class PluginInstance @impl Component {
     Array[Array[float]] __inBufs,  __outBufs;
     Array[float] __controls;
 
+    Array[Port] __ports;
+
     ## Mapping of control name to control index.
     TreeMap[String, int] __controlsByName = {};
 
@@ -122,6 +160,12 @@ class PluginInstance @impl Component {
         __plugin = plugin,
         __rep = rep,
         __controls = plugin.getDefaults().clone() {
+
+        # Construct the port array.
+        __ports = Array[Port]();
+        for (port :in plugin.iterPorts()) {
+            __ports.append(port);
+        }
 
         __rep.activate();
     }
@@ -212,6 +256,10 @@ class PluginInstance @impl Component {
 
     float getControlValue(String name) {
         return __controls[__controlsByName[name]];
+    }
+
+    Port getPortByName(String name) {
+        return __ports[__controlsByName[name]];
     }
 
     void run(int numFrames) {

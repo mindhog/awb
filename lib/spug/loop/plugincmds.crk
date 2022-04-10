@@ -1,11 +1,26 @@
 ## Crash commands for controlling plugins.
 
 import crack.cont.array Array;
-import crash Builtin, EvalContext, Obj, ParmInfo;
+import crash Builtin, EvalContext, Obj, ObjOf, ParmInfo;
 import types FloatObj, IntObj;
-import .plugins PluginInstance;
+import .plugins PluginInstance, Port;
 
 @import ann function;
+
+@function(Port)
+float Port_min() {
+    return self.min;
+}
+
+@function(Port)
+float Port_max() {
+    return self.max;
+}
+
+@function(Port)
+float Port_default() {
+    return self.default;
+}
 
 @function(PluginInstance)
 int PluginInstance_setControl(String name, float val) {
@@ -18,10 +33,22 @@ float PluginInstance_getControlVal(String name) {
     return self.getControlValue(name);
 }
 
+alias PortObj = ObjOf[Port];
+
+@function(PluginInstance)
+PortObj PluginInstance_getPortByName(String name) {
+    port := self.getPortByName(name);
+    result := PortObj(port);
+    result.define('min', Port_min(port));
+    result.define('max', Port_max(port));
+    result.define('default', Port_max(port));
+    return result;
+}
+
 Obj makeEffectObj(PluginInstance plugin) {
     obj := Obj();
     obj.define('setControl', PluginInstance_setControl(plugin));
     obj.define('getControlVal', PluginInstance_getControlVal(plugin));
+    obj.define('getPortByName', PluginInstance_getPortByName(plugin));
     return obj;
 }
-
