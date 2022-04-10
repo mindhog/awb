@@ -6,12 +6,17 @@
 @generateExtension spug.loop.sysextra {
     @filename 'sysextra.cc'
     @inject '#include <jack/jack.h>\n'
+    @inject '#include <math.h>\n'
     @inject 'typedef jack_client_t JackClient;\n'
     @inject 'struct _jack_client { int x; };\n'
+    @inject 'double crk_pow(double a, double b) { return pow(a, b); }\n';
     @crack 'import crack.ext._jack JackClient;'
 
     @extern JackClient
 
     int jack_disconnect(JackClient client, byteptr src, byteptr dest);
+
+    @cname crk_pow
+    float64 pow(float64 a, float64 b);
 }
 
