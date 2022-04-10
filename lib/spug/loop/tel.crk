@@ -24,6 +24,7 @@ import spug.loop.evtrec makeEventRecorderModule;
 import spug.loop.midieng EventProcessor, MidiDispatcher, MidiEngine,
     MidiSequencer, ModelObserver;
 import spug.loop.model EventContext, MidiTrack, OmniTrack, Section;
+import spug.loop.sysextra pow;
 import spug.loop.jack jackCallback, RecordBuffer, SequencerWaveModel, Wave,
     WaveAdapter, WaveManager, WaveModel, WindowBufferAdapter;
 
@@ -1130,6 +1131,24 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
     return result;
 }
 
+## Compute the y value of a parabola with coefficients a, b, and c (standard
+## form, "ax^2 + bx + c") for value x.
+##
+## In the context of audio processing, this is useful for translating linear
+## controller values parabolically to effect parameters (for example, the Calf
+## EQ has a minimum of 0.015625 and a maximum of 64 and we want that default
+## to be about half way through the range).
+@function float parabola(float a, float b, float c, float x) {
+    return a * (x * x) + b * x + c;
+}
+
+## Returns base ** (exp_coefficient * x**2), which is useful for creating
+## curves with very low ascent rates and very high values at the end of the
+## range.
+@function float curve1(float base, float exp_coefficient, float x) {
+    return pow(base, exp_coefficient * x * x);
+}
+
 class InterpWrapper {
 
     EvalContext __rootCtx = createRootContext();
@@ -1189,6 +1208,8 @@ class InterpWrapper {
         ctx.define('CVR_MULT', SimpleValue(IntObj(CVR_MULT)));
         ctx.define('get_engine', get_engine());
         ctx.define('start_server', startServer());
+        ctx.define('parabola', parabola());
+        ctx.define('curve1', curve1());
         ctx.define('LEFT', SimpleValue(IntObj(LEFT)));
         ctx.define('RIGHT', SimpleValue(IntObj(RIGHT)));
         ctx.define('STEREO', SimpleValue(IntObj(LEFT | RIGHT)));
