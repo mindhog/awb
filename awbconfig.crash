@@ -183,6 +183,8 @@ var AudioRecorder [object {
     var control ''
     var recorder ''
 
+    var lastTrackName ''
+
     def addRecorder {} {
         prerr [format 'adding recorder for ' $channels '\n']
         # Preserve the current filename for the callback.
@@ -219,6 +221,7 @@ var AudioRecorder [object {
             }
 
             # Fix the recording name.
+            set lastTrackName $trackName
             set trackName [findUniqueAudioTrack]
             if {give $control} {
                 control setText $trackName
@@ -264,6 +267,13 @@ var AudioRecorder [object {
 
     def setControl {newControl} {
         set control $newControl
+    }
+
+    ## Redo the last recording from the beginning.
+    def redo {} {
+        setTrackName $lastTrackName
+        [get_engine] deleteTrack [- [[getTracks] count] 1]
+        seek 0
     }
 }]
 
@@ -531,6 +541,15 @@ def saveProject {} {
     }
 }
 
+var _audioSource ''
+
+## Sets the audio source to the named menu item.
+##
+## This currently only works when called outside of visual mode.
+def setAudioSource {sourceItemName} {
+    set _audioSource $sourceItemName
+}
+
 def v {} 'Bring up the text panel UI.' {
 
     # Override builtin play, which still just starts the event manager.
@@ -594,6 +613,16 @@ def v {} 'Bring up the text panel UI.' {
                 }
             ]
         ]
+
+        # If the project script defined the audio source, set it now.
+        if {give $_audioSource} {
+            [sources iter] each source {
+                if {== [source getName] $_audioSource} {
+                    [source makeAction $audioSourceButton]
+                }
+            }
+        }
+
         var audioFilenameActionButton [
             ActionButton $stateRow 16 [AudioRecorder getTrackName] \
                 $setAudioFilename
@@ -629,9 +658,13 @@ def v {} 'Bring up the text panel UI.' {
         bind $KEY_LEFT bak
         bind $KEY_RIGHT fwd
         bind $KEY_F2 saveProject
+        bind $KEY_F5 {seek 0}
 
         # Lower-case "r" to record.
         bind 114 {[get_engine] toggleRecord}
+
+        # Upper-case "R" to record over the last track.
+        bind 82 {AudioRecorder redo}
 
         setStatusText 'AWB -- <Space> toggle play, <q> to quit, <Left> back, <Right> Forward'
 
