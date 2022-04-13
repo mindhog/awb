@@ -70,6 +70,10 @@ const int
     @abstract void addTrack(Track track);
 }
 
+## Raised when we attempt to remove a processor that isn't in the chain we're
+## trying to remove it from.
+class NotExistError : Exception {}
+
 Track cloneTrack(Track track) {
     result := Track(track.name);
     for (event :in track)
@@ -566,6 +570,34 @@ alias TimeCallback = Functor1[void, TimeEvent];
     # engine which can be called by any thread.  They need to be
     # reimplemented to queue events to be processed by the engine thread.
 
+    ## Remove the given processor from the chain.
+    ##
+    ## Throws IndexError if the index is out of range.
+    void __removeEventProcessor(Array[EventProcessor] chain,
+                                EventProcessor processor
+                                ) {
+        lk := MutexLock(__lock);
+        for (procIter :on chain) {
+            if (procIter.elem() is processor) {
+                chain.delete(procIter.index);
+                return;
+            }
+        }
+
+        throw NotExistError();
+    }
+
+    ## Insert an event processor at the given index in the chain.
+    ##
+    ## Throws IndexError if the index is out of range.
+    void __insertEventProcessor(Array[EventProcessor] chain,
+                                int index,
+                                EventProcessor processor
+                                ) {
+        lk := MutexLock(__lock);
+        chain.insert(index, processor);
+    }
+
     ## Add an input event processor to the midi engine.  This will get called
     ## whenever an event is received.
     void addInputProcessor(EventProcessor processor) {
@@ -573,11 +605,41 @@ alias TimeCallback = Functor1[void, TimeEvent];
         __inputProcessors.append(processor);
     }
 
+    ## Insert an event processor at the given index in the input processor
+    ## chain.
+    ##
+    ## Throws IndexError if the index is out of range.
+    void insertInputProcessor(int index, EventProcessor processor) {
+        __insertEventProcessor(__inputProcessors, index, processor);
+    }
+
+    ## Remove the specified event processor from the input processor chain.
+    ##
+    ## Throws NotFoundError if the processor is not in the chain.
+    void removeInputProcessor(EventProcessor processor) {
+        __removeEventProcessor(__inputProcessors, processor);
+    }
+
     ## Add an output event processor to the midi engine.  This will get called
     ## whenever an event is received.
     void addOutputProcessor(EventProcessor processor) {
         lk := MutexLock(__lock);
         __outputProcessors.append(processor);
+    }
+
+    ## Insert an event processor at the given index in the output processor
+    ## chain.
+    ##
+    ## Throws IndexError if the index is out of range.
+    void insertOutputProcessor(int index, EventProcessor processor) {
+        __insertEventProcessor(__outputProcessors, index, processor);
+    }
+
+    ## Remove the specified event processor from the output processor chain.
+    ##
+    ## Throws NotFoundError if the processor is not in the chain.
+    void removeOutputProcessor(EventProcessor processor) {
+        __removeEventProcessor(__outputProcessors, processor);
     }
 
     ## Sets the current model observer, which is notified of changes to the
@@ -809,8 +871,23 @@ alias TimeCallback = Functor1[void, TimeEvent];
         __mseq.addInputProcessor(processor);
     }
 
+    void insertInputProcessor(int index, EventProcessor processor) {
+        __mseq.insertInputProcessor(index, processor);
+    }
+
+    void removeInputProcessor(EventProcessor processor) {
+        __mseq.removeInputProcessor(processor);
+    }
     void addOutputProcessor(EventProcessor processor) {
         __mseq.addOutputProcessor(processor);
+    }
+
+    void insertOutputProcessor(int index, EventProcessor processor) {
+        __mseq.insertOutputProcessor(index, processor);
+    }
+
+    void removeOutputProcessor(EventProcessor processor) {
+        __mseq.removeOutputProcessor(processor);
     }
 
     void setModelObserver(ModelObserver observer) {

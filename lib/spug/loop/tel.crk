@@ -21,8 +21,8 @@ import crack.midi.event ChannelEvent, ControlChange, EndTrack, Event,
 import crack.midi.fluidsynth FluidSettings, FluidSynth;
 import crack.time TimeDelta;
 import spug.loop.evtrec makeEventRecorderModule;
-import spug.loop.midieng EventProcessor, MidiDispatcher, MidiEngine,
-    MidiSequencer, ModelObserver;
+import spug.loop.midieng ControllerDispatcher, EventProcessor,
+    MidiDispatcher, MidiEngine, MidiSequencer, ModelObserver;
 import spug.loop.model EventContext, MidiTrack, OmniTrack, Section;
 import spug.loop.sysextra pow;
 import spug.loop.jack jackCallback, RecordBuffer, SequencerWaveModel, Wave,
@@ -516,6 +516,33 @@ class ControllerOffsetChange @impl LegacyEventProcessor {
                                 ) {
     engine.addEventProcessor(eventSelector, processor);
     return 0;
+}
+
+alias ControllerDispatcherObj = ObjOf[ControllerDispatcher];
+@function ControllerDispatcherObj makeControllerDispatcher() {
+    dispatcher := ControllerDispatcher();
+    result := ControllerDispatcherObj(dispatcher);
+
+    ## Set the controller offset, a value added to the controller number for
+    ## all events.
+    @function(ControllerDispatcher) int setControllerOffset(int offset) {
+        self.setControllerOffset(offset);
+        return 0;
+    }
+
+    ## Set the legacy event processor to be used for a specific controller id
+    ## (after adding the offset).
+    @function(ControllerDispatcher) int setEventProcessor(
+        int eventSelector,
+        LegacyEventProcessor processor
+    ) {
+        self.setEventProcessor(eventSelector, processor);
+        return 0;
+    }
+
+    result.define('setControllerOffset', setControllerOffset(dispatcher));
+    result.define('setEventProcessor', setEventProcessor(dispatcher));
+    return result;
 }
 
 @function int seek(int pos) {
@@ -1099,9 +1126,37 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
         return 0;
     }
 
+    ## Insert an event processor at the given index in the input processor
+    ## chain.
+    @function(AWBEngine) int insertInputProcessor(int index,
+                                                  EventProcessor processor) {
+        self.insertInputProcessor(index, processor);
+        return 0;
+    }
+
+    ## Remove the specified event processor from the input processor chain.
+    @function(AWBEngine) int removeInputProcessor(EventProcessor processor) {
+        self.removeInputProcessor(processor);
+        return 0;
+    }
+
     ## Add an output processor to the midi input event chain.
     @function(AWBEngine) int addOutputProcessor(EventProcessor processor) {
         self.addOutputProcessor(processor);
+        return 0;
+    }
+
+    ## Insert an event processor at the given index in the output processor
+    ## chain.
+    @function(AWBEngine) int insertOutputProcessor(int index,
+                                                   EventProcessor processor) {
+        self.insertOutputProcessor(index, processor);
+        return 0;
+    }
+
+    ## Remove the specified event processor from the output processor chain.
+    @function(AWBEngine) int removeOutputProcessor(EventProcessor processor) {
+        self.removeOutputProcessor(processor);
         return 0;
     }
 
@@ -1124,7 +1179,11 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
     result.define('setTempo', setTempo(engine));
     result.define('resetPos', resetPos(engine));
     result.define('addInputProcessor', addInputProcessor(engine));
+    result.define('insertInputProcessor', insertInputProcessor(engine));
+    result.define('removeInputProcessor', removeInputProcessor(engine));
     result.define('addOutputProcessor', addOutputProcessor(engine));
+    result.define('insertOutputProcessor', insertOutputProcessor(engine));
+    result.define('removeOutputProcessor', removeOutputProcessor(engine));
     result.define('getCurrentSection', getCurrentSection(engine));
     result.define('setMidiRecordTrackName', setMidiRecordTrackName(engine));
 
@@ -1191,6 +1250,7 @@ class InterpWrapper {
         ctx.define('ChannelPredicate', makeChannelPredicate());
         ctx.define('bindController', bindController());
         ctx.define('addEventProcessor', addEventProcessor());
+        ctx.define('ControllerDispatcher', makeControllerDispatcher());
         ctx.define('CrashEventProcessor', CrashEventProcessorCmd());
         ctx.define('seek', seek());
         ctx.define('shell', ShellCmd());

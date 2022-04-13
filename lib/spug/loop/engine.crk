@@ -385,9 +385,39 @@ class AWBEngine @impl ModelObserver {
         __midi.addInputProcessor(processor);
     }
 
+    ## Insert an event processor at the given index in the input processor
+    ## chain.
+    ##
+    ## Throws IndexError if the index is out of range.
+    void insertInputProcessor(int index, EventProcessor processor) {
+        __midi.insertInputProcessor(index, processor);
+    }
+
+    ## Remove the specified event processor from the input processor chain.
+    ##
+    ## Throws NotFoundError if the processor is not in the chain.
+    void removeInputProcessor(EventProcessor processor) {
+        __midi.removeInputProcessor(processor);
+    }
+
     ## Add a midi event processor to the output chain.
     void addOutputProcessor(EventProcessor processor) {
         __midi.addOutputProcessor(processor);
+    }
+
+    ## Insert an event processor at the given index in the output processor
+    ## chain.
+    ##
+    ## Throws IndexError if the index is out of range.
+    void insertOutputProcessor(int index, EventProcessor processor) {
+        __midi.insertOutputProcessor(index, processor);
+    }
+
+    ## Remove the specified event processor from the output processor chain.
+    ##
+    ## Throws NotFoundError if the processor is not in the chain.
+    void removeOutputProcessor(EventProcessor processor) {
+        __midi.removeOutputProcessor(processor);
     }
 
     ## Bind an event processor to a control number (channel << 8 + controller

@@ -1,0 +1,52 @@
+## Crash wrapper for the Calf 12 band Equalizer.
+
+import [collections] range
+
+## Initialize the calf equalizer and return an object that can be used to bind
+## the band levels to an array of 8 controller ids or just set the levels.
+##
+## "eq" is the plugin object returned from "insertEffect".
+def initCalfEQ12 {eq} {
+
+    # Activate the band gain ports.
+    [range 1 8] each i {
+        eq setControl [format 'F' $i ' Active'] 1
+    }
+
+    # Get the min and max values (these really need to be the same as the
+    # values we're expecting, 0.015625 and 64, for the curve calculation to
+    # work).
+    var port1 [eq getPortByName 'Level 1']
+    var min [port1 min]
+    var max [port1 max]
+
+    def makeEQ {name} {
+        def func {evt} {
+            # get value as a float from 0..1
+            var val [/ [* [Ev_getValue $evt] 1.0] 127.0]
+            # bend it to the weird controller range.
+            eq setControl $name [- [curve1 4 3 $val] 0.984375]
+        }
+    }
+
+    object {
+        var dispatcher undefined
+
+        ## Bind the EQ to the array of controller codes specified.
+        def bindToControllers {controllers} {
+            set dispatcher [ControllerDispatcher]
+            [range 1 8] each i {
+                dispatcher setEventProcessor \
+                    [controllers get [- $i 1]] \
+                    [CrashEventProcessor [makeEQ [format 'Level ' $i]]]
+            }
+            [get_engine] insertOutputProcessor 0 $dispatcher
+        }
+
+        ## Remove controller binding.
+        def unbind {} {
+            [get_engine] removeOutputProcessor $dispatcher
+            set dispatcher undefined
+        }
+    }
+}
