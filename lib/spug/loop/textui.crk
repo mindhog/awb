@@ -155,46 +155,77 @@ class BindCmd[WidgetType]  : Builtin {
     }
 }
 
-## The BarSlider is a horizontal single bar graph window that displays two
-## ranges: the value range (using the value attribute, red by default) and
-## the controller range (using the controller attribute, blue by default).
-## If the two values are equal they are displayed in the sync attribute
-## (green by default).
-class BarSlider : Window {
+## The BarSlider is a single bar graph window that displays two ranges: the
+## value range (using the value attribute, red by default) and the controller
+## range (using the controller attribute, blue by default). If the two values
+## are equal they are displayed in the sync attribute (green by default).
+##
+## Use HBarSlider for one that is horizontally oriented and VBarSlider for one
+## that is vertically oriented.
+@abstract class BarSlider : Window {
 
-    float __value, __controller;
+    float _value, _controller;
     byte backgroundAttr = 0,
         valueAttr = 0x10,
         controllerAttr = 0x40,
         syncAttr = 0x20;
 
+    # Geometry of the value and controller bars.  Calculated by
+    # __getCoords() and consumed by the paint() method.
+    int _valWidth, _valTop, _valBottom, _ctrlWidth, _ctrlTop, _ctrlBottom;
+
     oper init(Window parent) : Window(parent) {}
 
-    float oper .value=(float value) { return __value = value }
+    float oper .value=(float value) { return _value = value }
     float oper .controller=(float controller) {
-        return __controller = controller;
+        return _controller = controller;
     }
+
+    @abstract void _getCoords();
 
     void paint() {
         gc := getGraphicsContext();
         gc.fillRect(0, 0, width, height, backgroundAttr, b' ');
 
-        # Paint the bars from largest to smallest so that we
-        if (__value == __controller) {
-            gc.fillRect(0, 0, int(__value * width), height, syncAttr, b' ');
-        } else if (__value < __controller) {
-            gc.fillRect(0, 0, int(__controller * width), height,
-                        controllerAttr,
-                        b' '
-                        );
-            gc.fillRect(0, 0, int(__value * width), height, valueAttr, b' ');
+        _getCoords();
+
+        # Paint the bars from largest to smallest so that the smaller is
+        # visible.
+        if (_value == _controller) {
+            gc.fillRect(0, _valTop, _valWidth, _valBottom, syncAttr, b' ');
+        } else if (_value < _controller) {
+            gc.fillRect(0, _ctrlTop, _ctrlWidth, _ctrlBottom, controllerAttr,
+                        b' ');
+            gc.fillRect(0, _valTop, _valWidth, _valBottom, valueAttr, b' ');
         } else {
-            gc.fillRect(0, 0, int(__value * width), height, valueAttr, b' ');
-            gc.fillRect(0, 0, int(__controller * width), height,
-                        controllerAttr,
-                        b' '
-                        );
+            gc.fillRect(0, _valTop, _valWidth, _valBottom, valueAttr, b' ');
+            gc.fillRect(0, _ctrlTop, _ctrlWidth, _ctrlBottom, controllerAttr,
+                        b' ');
         }
+    }
+}
+
+## Horizontally oriented BarSlider.
+class HBarSlider : BarSlider {
+    oper init(Window parent) : BarSlider(parent) {}
+
+    void _getCoords() {
+        _valWidth = int(_value * width);
+        _ctrlWidth = int(_controller * width);
+        _valTop = _ctrlTop = 0;
+        _valBottom = _ctrlBottom = height - 1;
+    }
+}
+
+## Vertically oriented BarSlider.
+class VBarSlider : BarSlider {
+    oper init(Window parent) : BarSlider(parent) {}
+
+    void _getCoords() {
+        _valTop = height - int(_value * height);
+        _ctrlTop = height - int(_controller * height);
+        _valBottom = _ctrlBottom = height - 1;
+        _valWidth = _ctrlWidth = width;
     }
 }
 
@@ -204,7 +235,7 @@ void addToContainer(Window parent, Window child, int size) {
         container.addChild(child, size);
 }
 
-@function Obj makeBarSlider(Window parent, int size) {
+Obj _makeBarSlider(Window parent, BarSlider self, int size) {
     @function(BarSlider) float setValue(float value) {
         self.value = value;
         return value;
@@ -215,12 +246,19 @@ void addToContainer(Window parent, Window child, int size) {
         return controller;
     }
 
-    self := BarSlider(parent);
     addToContainer(parent, self, size);
     result := ObjOf[BarSlider](self);
     result.define('setValue', setValue(self));
     result.define('setController', setController(self));
     return result;
+}
+
+@function Obj makeHBarSlider(Window parent, int size) {
+    return _makeBarSlider(parent, HBarSlider(parent), size);
+}
+
+@function Obj makeVBarSlider(Window parent, int size) {
+    return _makeBarSlider(parent, VBarSlider(parent), size);
 }
 
 class StatefulText : Window {
@@ -706,7 +744,8 @@ class TextController : Object @implements Controller, AppMethods {
         __interp.define('List', makeList());
         __interp.define('TrackList', makeTrackList(this));
         __interp.define('TimeBar', makeTimeBar(this));
-        __interp.define('BarSlider', makeBarSlider());
+        __interp.define('HBarSlider', makeHBarSlider());
+        __interp.define('VBarSlider', makeVBarSlider());
         __interp.define('setStatusText', setStatusText(this));
         __interp.define('terminate', terminate(this));
         __interp.define('bind', bind(__interp));

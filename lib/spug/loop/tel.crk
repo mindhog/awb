@@ -883,6 +883,11 @@ class ExportMidiFileCmd : Builtin {
     return 0;
 }
 
+## Returns the class name of 'obj'.  Useful for debugging.
+@function String className(Object obj) {
+    return FStr() `$(obj.class.name)`;
+}
+
 alias AudioFileRecorderObj = ObjOf[AudioFileRecorder];
 
 @function
@@ -1208,6 +1213,59 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
     return pow(base, exp_coefficient * x * x);
 }
 
+alias ObjArray = Array[Object];
+
+## Given a mapping of a -> b expressed as an array of floats and a value
+## ('val') corresponding to a value in 'a', returns the interpolated value in
+## 'b'.  For example, for the mapping [1 -> 2, 2 -> 4, 3 -> 6] and a value of
+## 2.5, this would return the value 5 (based on a lookup in the table and then
+## linear interpolation between the two enclosing points 2 and 3.
+##
+## This can be used to obtain the inverse of any mapping curve (like curve1)
+## given a generated set of values for the curve.
+##
+## 'vals' should be an array of floats with the a and b values interleaved, so
+## the array in the example above would be [1, 2, 2, 4, 3, 6].  The values
+## must be in ascending order.
+@function Object interp(ObjArray vals, float val) {
+    int bsearch(ObjArray vals, float val, int min, int max) {
+        if (max - min <= 1)
+            return min;
+
+        mid := min + (max - min) / 2;
+        cur := FloatObj.cast(vals[mid * 2]);
+        if (val == cur.val)
+            return mid;
+        else if (val > cur.val)
+            return bsearch(vals, val, mid, max);
+        else
+            return bsearch(vals, val, min, mid);
+    }
+
+    Object linear(ObjArray vals, int index, float desired) {
+        a := FloatObj.cast(vals[index * 2]).val;
+        ax := FloatObj.cast(vals[index * 2 + 1]).val;
+        b := FloatObj.cast(vals[index * 2 + 2]).val;
+        bx := FloatObj.cast(vals[index * 2 + 3]).val;
+        pos := (desired - a) * (b - a);
+        return FloatObj(ax + pos * (bx - ax));
+    }
+
+    index := bsearch(vals, val, 0, vals.count() / 2 - 1);
+    cur := FloatObj.cast(vals[index * 2]);
+    if (val == cur.val)
+        return vals[index * 2 + 1];
+    if (val < cur.val) {
+        if (index == 0)
+            return vals[1];
+        return linear(vals, index - 1, val);
+    } else {
+        if (index == (vals.count() / 2) - 2)
+            return vals.last();
+        return linear(vals, index, val);
+    }
+}
+
 class InterpWrapper {
 
     EvalContext __rootCtx = createRootContext();
@@ -1265,11 +1323,13 @@ class InterpWrapper {
         ctx.define('getRelativePath', getRelativePath());
         ctx.define('setLogLevel', setLogLevel_());
         ctx.define('prerr', prerr());
+        ctx.define('className', className());
         ctx.define('CVR_MULT', SimpleValue(IntObj(CVR_MULT)));
         ctx.define('get_engine', get_engine());
         ctx.define('start_server', startServer());
         ctx.define('parabola', parabola());
         ctx.define('curve1', curve1());
+        ctx.define('interp', interp());
         ctx.define('LEFT', SimpleValue(IntObj(LEFT)));
         ctx.define('RIGHT', SimpleValue(IntObj(RIGHT)));
         ctx.define('STEREO', SimpleValue(IntObj(LEFT | RIGHT)));

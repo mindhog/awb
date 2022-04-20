@@ -1,6 +1,139 @@
 ## Crash wrapper for the Calf 12 band Equalizer.
 
-import [collections] range
+import [collections] map range
+
+var curveValues [array \
+    0.015625 0.000000 \
+    0.015879 0.007812 \
+    0.016641 0.015625 \
+    0.017912 0.023438 \
+    0.019695 0.031250 \
+    0.021991 0.039062 \
+    0.024805 0.046875 \
+    0.028141 0.054688 \
+    0.032003 0.062500 \
+    0.036399 0.070312 \
+    0.041334 0.078125 \
+    0.046816 0.085938 \
+    0.052854 0.093750 \
+    0.059457 0.101562 \
+    0.066636 0.109375 \
+    0.074401 0.117188 \
+    0.082765 0.125000 \
+    0.091742 0.132812 \
+    0.101345 0.140625 \
+    0.111590 0.148438 \
+    0.122494 0.156250 \
+    0.134074 0.164062 \
+    0.146348 0.171875 \
+    0.159338 0.179688 \
+    0.173065 0.187500 \
+    0.187551 0.195312 \
+    0.202821 0.203125 \
+    0.218901 0.210938 \
+    0.235818 0.218750 \
+    0.253601 0.226562 \
+    0.272281 0.234375 \
+    0.291891 0.242188 \
+    0.312465 0.250000 \
+    0.334039 0.257812 \
+    0.356653 0.265625 \
+    0.380348 0.273438 \
+    0.405167 0.281250 \
+    0.431155 0.289062 \
+    0.458362 0.296875 \
+    0.486839 0.304688 \
+    0.516639 0.312500 \
+    0.547821 0.320312 \
+    0.580444 0.328125 \
+    0.614574 0.335938 \
+    0.650278 0.343750 \
+    0.687628 0.351562 \
+    0.726699 0.359375 \
+    0.767573 0.367188 \
+    0.810334 0.375000 \
+    0.855072 0.382812 \
+    0.901883 0.390625 \
+    0.950868 0.398438 \
+    1.002133 0.406250 \
+    1.055791 0.414062 \
+    1.111963 0.421875 \
+    1.170775 0.429688 \
+    1.232362 0.437500 \
+    1.296867 0.445312 \
+    1.364441 0.453125 \
+    1.435245 0.460938 \
+    1.509449 0.468750 \
+    1.587233 0.476562 \
+    1.668791 0.484375 \
+    1.754325 0.492188 \
+    1.844052 0.500000 \
+    1.938202 0.507812 \
+    2.037020 0.515625 \
+    2.140765 0.523438 \
+    2.249714 0.531250 \
+    2.364161 0.539062 \
+    2.484418 0.546875 \
+    2.610818 0.554688 \
+    2.743717 0.562500 \
+    2.883492 0.570312 \
+    3.030545 0.578125 \
+    3.185305 0.585938 \
+    3.348229 0.593750 \
+    3.519805 0.601562 \
+    3.700554 0.609375 \
+    3.891031 0.617188 \
+    4.091829 0.625000 \
+    4.303580 0.632812 \
+    4.526962 0.640625 \
+    4.762697 0.648438 \
+    5.011559 0.656250 \
+    5.274373 0.664062 \
+    5.552024 0.671875 \
+    5.845459 0.679688 \
+    6.155692 0.687500 \
+    6.483806 0.695312 \
+    6.830965 0.703125 \
+    7.198415 0.710938 \
+    7.587491 0.718750 \
+    7.999628 0.726562 \
+    8.436361 0.734375 \
+    8.899342 0.742188 \
+    9.390342 0.750000 \
+    9.911263 0.757812 \
+    10.464150 0.765625 \
+    11.051202 0.773438 \
+    11.674782 0.781250 \
+    12.337431 0.789062 \
+    13.041886 0.796875 \
+    13.791092 0.804688 \
+    14.588221 0.812500 \
+    15.436687 0.820312 \
+    16.340176 0.828125 \
+    17.302656 0.835938 \
+    18.328411 0.843750 \
+    19.422058 0.851562 \
+    20.588587 0.859375 \
+    21.833380 0.867188 \
+    23.162256 0.875000 \
+    24.581499 0.882812 \
+    26.097906 0.890625 \
+    27.718824 0.898438 \
+    29.452206 0.906250 \
+    31.306656 0.914062 \
+    33.291489 0.921875 \
+    35.416798 0.929688 \
+    37.693523 0.937500 \
+    40.133514 0.945312 \
+    42.749630 0.953125 \
+    45.555817 0.960938 \
+    48.567211 0.968750 \
+    51.800251 0.976562 \
+    55.272785 0.984375 \
+    59.004215 0.992188 \
+    63.015625 1.000000
+]
+set curveValues [arrayOf [[curveValues iter] map x {+ $x}]]
 
 ## Initialize the calf equalizer and return an object that can be used to bind
 ## the band levels to an array of 8 controller ids or just set the levels.
@@ -19,6 +152,7 @@ def initCalfEQ12 {eq} {
     var port1 [eq getPortByName 'Level 1']
     var min [port1 min]
     var max [port1 max]
+    var ui undefined
 
     def makeEQ {name} {
         def func {evt} {
@@ -26,11 +160,23 @@ def initCalfEQ12 {eq} {
             var val [/ [* [Ev_getValue $evt] 1.0] 127.0]
             # bend it to the weird controller range.
             eq setControl $name [- [curve1 4 3 $val] 0.984375]
+
+            # Dispatch to any observing UIs
+            if {!= $ui undefined} {
+                var bar [ui get $name]
+                bar setController $val
+
+                # For now, since we're not ever using an intermediary that
+                # syncs the value when it meets that of the controller, just
+                # set the actual value as well.
+                bar setValue $val
+            }
         }
     }
 
     object {
         var dispatcher undefined
+        var controllers undefined
 
         ## Bind the EQ to the array of controller codes specified.
         def bindToControllers {controllers} {
@@ -43,10 +189,56 @@ def initCalfEQ12 {eq} {
             [get_engine] insertOutputProcessor 0 $dispatcher
         }
 
+        ## Set the array of controllers to be bound to in "bind".
+        def setControllers {_controllers} {
+            set controllers $_controllers
+        }
+
+        # Bind to the array of controllers provided to setControllers.
+        def bind {} {
+            if {== $controllers undefined} {
+                error 'Bind called with no controllers defined'
+            }
+            bindToControllers $controllers
+        }
+
         ## Remove controller binding.
         def unbind {} {
             [get_engine] removeOutputProcessor $dispatcher
             set dispatcher undefined
+        }
+
+        def startUI {parent onTerminate name} {
+            var col [Column $parent -1]
+            StatefulText $col 1 $name
+            var row [Row $col -1]
+
+            # Create the array of bar sliders to display on the screen and
+            # store them in the "ui" variable.
+            set ui [map]
+            [range 1 8] each i {
+                var bar [VBarSlider $row -1]
+                var name [format 'Level ' $i]
+                var val [eq getControlVal $name]
+                bar setValue [interp $curveValues $val]
+                bar setController 0
+                ui put $name $bar
+            }
+
+            var quitBtn [StatefulText $col 1 'Quit']
+            quitBtn bind $KEY_ENTER {
+                onTerminate
+                set ui undefined
+                give true
+            }
+
+            quitBtn setFocus [+ 1]
+
+            if {and {== $dispatcher undefined} {!= $controllers undefined}} {
+                bind
+            }
+
+            give $col
         }
     }
 }

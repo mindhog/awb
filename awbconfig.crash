@@ -80,25 +80,60 @@ def setTCF {newTCF} \
     set tcf $newTCF
 }
 
+## Stores information for interacting with a plugin.
+##
+## _name: String
+## _uiFactory: A function accepting
+def Plugin {_name _uiFactory} \
+    'Stores information for interacting with a plugin.
+
+    _name: String.  Name of the plugin.
+    _uiFactory:
+        function {parent:Window onTerminate:function{} name:String} : Window
+        A function that creates a new UI for the plugin.  "parent" is the
+        parent window, "onTerminate" is a function that the UI must call when
+        it is exited (with F3), and "name" is the name of the track/channel
+        that the plugin is attached to.
+    ' {
+    object {
+        def name {} {
+            give $_name
+        }
+
+        def uiFactory {} {
+            give $_uiFactory
+        }
+    }
+}
+
+def TrackInfo {_name} {
+    object {
+        var _plugins [array]
+        def name {} { give $_name }
+        def plugins {} { give $_plugins }
+    }
+}
+
+## An array of TrackInfo objects.
+var tracks [array]
+
 # Adds a new track.
 def track {file} 'Add a new track file: track <filename>' {
     $project addTrack $file [tcf getVolCC $trackNum] [tcf getPanCC $trackNum]
-    set trackNum [+ $trackNum 1]
-}
-
-def track {file} 'Add a new track file: track <filename>' {
-    $project addTrack $file [tcf getVolCC $trackNum] [tcf getPanCC $trackNum]
+    tracks append [TrackInfo $file]
     set trackNum [+ $trackNum 1]
 }
 
 def trackwm {model name loader} 'Add a WaveModel track.' {
     $project addWaveModel $model $name $loader [tcf getVolCC $trackNum] \
         [tcf getPanCC $trackNum]
+    tracks append [TrackInfo $name]
     set trackNum [+ $trackNum 1]
 }
 
 def midiTrack {file} 'Add a new midi track: midiTrack <file>' {
     prerr [format 'loading midi file ' $file '\n']
+    tracks append [TrackInfo $file]
     [getAWBEngine] loadMidiFile $file
 }
 
@@ -550,6 +585,12 @@ def setAudioSource {sourceItemName} {
     set _audioSource $sourceItemName
 }
 
+
+var _controlPanel undefined
+def getControlPanel {} {
+    give $_controlPanel
+}
+
 def v {} 'Bring up the text panel UI.' {
 
     # Override builtin play, which still just starts the event manager.
@@ -631,6 +672,21 @@ def v {} 'Bring up the text panel UI.' {
 
         var centerPane [Frame $mainColumn -1]
 
+        def makeModalUIInvoker {plugin trackName} \
+            'makeModalUIInvoker(plugin: Plugin) : Callable
+             Return a function that invokes the UI.' {
+
+            def onTerminate {} {
+                centerPane setParcel $tracklist
+                tracklist setFocus [+ 1]
+            }
+
+            def invoke {} {
+                var win [[plugin uiFactory] $centerPane $onTerminate $trackName]
+                centerPane setParcel $win
+            }
+        }
+
         var tracklist [TrackList $centerPane -1]
         def renameTrack {} {
             def callback {text} {
@@ -646,6 +702,12 @@ def v {} 'Bring up the text panel UI.' {
             var menu [makeMenu $centerPane $tracklist $tracklist]
             menu add 'Rename track' $renameTrack
             menu add 'Do something else' [def f {} { prerr 'something else' }]
+            var trackInfo [tracks get [tracklist getSelection]]
+            [[trackInfo plugins] iter] each plugin {
+                menu add [plugin name] [
+                    makeModalUIInvoker $plugin [trackInfo name]
+                ]
+            }
             give true
         }
         tracklist bind $KEY_DEL {
