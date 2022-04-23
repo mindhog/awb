@@ -421,9 +421,7 @@ alias ObjOfFrame = ObjOf[Frame];
 
 ## A message sent to the text controller with "send()".  These can be used to
 ## safely make changes to textui objects from other threads.
-@interface Message {
-    @abstract void run();
-}
+alias Message = Functor0[void];
 
 alias MessageQueue = PollQueue[Message];
 
@@ -441,7 +439,7 @@ class TimeBar : Window {
             TimeEvent event;
         }
 
-        void run() { timeBar.onTimeEvent(event) }
+        void oper call() { timeBar.onTimeEvent(event) }
     }
 
     class MyTimeCallback @impl TimeCallback {
@@ -566,7 +564,7 @@ class TextController : Object @implements Controller, AppMethods {
     MessageQueue __controlQueue;
 
     @static void __processMessage(Message message) {
-        message.run();
+        message();
     }
 
     oper init() {
@@ -716,6 +714,13 @@ class TextController : Object @implements Controller, AppMethods {
             return 0;
         }
 
+        ## Add a callable to be executed in the UI thread.  You can use this
+        ## to run a crash callback, e.g. "runInMainThread [callback {...}]".
+        @function(TextController) int runInMainThread(Message message) {
+            self.__controlQueue.add(message);
+            return 0;
+        }
+
         @function(InterpWrapper) int bind(int key, String command) {
             appBindings[key] = CallbackWrapper(
                 CrashCallback(self.getRootContext(), parseString(command))
@@ -748,6 +753,7 @@ class TextController : Object @implements Controller, AppMethods {
         __interp.define('VBarSlider', makeVBarSlider());
         __interp.define('setStatusText', setStatusText(this));
         __interp.define('terminate', terminate(this));
+        __interp.define('runInMainThread', runInMainThread(this));
         __interp.define('bind', bind(__interp));
         __interp.define('char', char());
         __interp.define('KEY_UP', ival(KEY_UP));

@@ -164,12 +164,14 @@ def initCalfEQ12 {eq} {
             # Dispatch to any observing UIs
             if {!= $ui undefined} {
                 var bar [ui get $name]
-                bar setController $val
+                runInMainThread [callback {
+                    bar setController $val
 
-                # For now, since we're not ever using an intermediary that
-                # syncs the value when it meets that of the controller, just
-                # set the actual value as well.
-                bar setValue $val
+                    # For now, since we're not ever using an intermediary that
+                    # syncs the value when it meets that of the controller, just
+                    # set the actual value as well.
+                    bar setValue $val
+                }]
             }
         }
     }
