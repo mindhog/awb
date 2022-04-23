@@ -283,6 +283,10 @@ var AudioRecorder [object {
         if {give $enabled} {
             recorder setFilename [format $trackName '.wav']
         }
+
+        if {give $control} {
+            control setText $newTrackName
+        }
     }
 
     def getTrackName {} {
