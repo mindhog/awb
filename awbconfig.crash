@@ -1,6 +1,6 @@
 # Standard configuration stuff.
 
-import [collections] map
+import [collections] map range
 
 # Some bindings for the old UI (pretty much unused).
 
@@ -560,7 +560,8 @@ def showAudioSourceMenu {parent alternate textWidget} {
     }
 }
 
-var projectFilename 'project.crash'
+var projectBasename 'project-auto'
+var projectFilename [format $projectBasename '.crash']
 var midiOutChannel [+ 0]
 
 ## Save the current project.
@@ -577,6 +578,13 @@ def saveProject {} {
         } else {
             out write [format 'track ' [track getName] '\n']
         }
+    }
+    out write [format 'evalfile ' $projectBasename '-settings.crash\n']
+
+    set out [open [format $projectBasename '-settings.crash'] w]
+    [range 0 [- [[getTracks] count] 1]] each i {
+        out write [format 'vol ' $i ' ' [getVol $i] '\n']
+        out write [format 'pan ' $i ' ' [getPan $i] '\n']
     }
 }
 
