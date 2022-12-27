@@ -1008,7 +1008,23 @@ alias ChannelMapperObj = ObjOf[ChannelMapper];
 ## Returns a new channel mapper object, which changes the channel of all
 ## ChannelEvent's to the value specified in the argument.
 @function ChannelMapperObj makeChannelMapper(int newChannel) {
-    return ChannelMapperObj(ChannelMapper(newChannel));
+
+    ## Set the new channel that all events get mapped to.
+    @function(ChannelMapper) int setNewChannel(int channel) {
+        self.newChannel = channel;
+        return channel;
+    }
+
+    ## Returns the new channel that all events get ampped to.
+    @function(ChannelMapper) int getNewChannel() {
+        return self.newChannel;
+    }
+
+    mapper := ChannelMapper(newChannel);
+    result := ChannelMapperObj(mapper);
+    result.define('setNewChannel', setNewChannel(mapper));
+    result.define('getNewChannel', getNewChannel(mapper));
+    return result;
 }
 
 ## An input processor that delegates to another input processor for a channel

@@ -16,6 +16,18 @@ var trackNum 0
 # The current project.
 var project 0
 
+var _internalChannelMapper [ChannelMapper 0]
+
+# The input channel mapper.  Changes events with midi channel 1 (channel 0 at
+# the wire level) to whatever channel is specified.
+var inputChannelMapper [ChannelPredicate 0 $_internalChannelMapper]
+[get_engine] addInputProcessor $inputChannelMapper
+
+def setInputChannel {channel} \
+    'Set the channel that midi events are mapped to.' {
+    _internalChannelMapper setNewChannel $channel
+}
+
 def makeProject {} {
     var result [[evtrec] Project $scriptDir]
 
@@ -229,7 +241,7 @@ var AudioRecorder [object {
             var tn $trackName
             # We have to recalculate this
             var fn [format $trackName '.wav']
-            prerr [format 'start pos is ' [recorder startPos]]
+            prerr [format 'start pos is ' [recorder startPos] '\n']
             var pos [recorder startPos]
             if {== $pos [+ 0]} {
                 track $fn
@@ -641,7 +653,7 @@ def v {} 'Bring up the text panel UI.' {
                     return
                 } else {
                     midiOutChannelActionButton setText $text
-                    [getAWBEngine] setInputChannel $newChannel
+                    setInputChannel $newChannel
                 }
             }
             EntryBar $bottomBar 1 'Midi out channel:' $callback \
