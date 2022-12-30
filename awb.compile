@@ -1,6 +1,6 @@
 #!/bin/sh
 crackdir=/home/mmuller/w/crack
-mydir=$(dirname $0)
+mydir=$(realpath $(dirname $0))
 $crackdir/crack -B llvm-native -b out=awb.bin \
-    -l $mydir/lib:$crackdir/lib:$mydir/..:$mydir/../crash \
+    -l $mydir/lib:$crackdir/lib:$mydir/.. \
     $(dirname $0)/awb.crk "$@"

@@ -145,8 +145,27 @@ def trackwm {model name loader} 'Add a WaveModel track.' {
 
 def midiTrack {file} 'Add a new midi track: midiTrack <file>' {
     prerr [format 'loading midi file ' $file '\n']
-    tracks append [TrackInfo $file]
+    var ti [TrackInfo $file]
+    tracks append $ti
     [getAWBEngine] loadMidiFile $file
+
+    # Get the last track, which will be the last midi track loaded from the
+    # file.  Since a midi file can contain multiple tracks, this won't capture
+    # the other tracks in the file.  However, these also won't have track info
+    # entries, so the whole thing is already kind of broken.
+    var track [[getTracks] last]
+
+    def editInTracker {parent onTerminate trackName} {
+        var result [Tracker $parent $track]
+        result bind $KEY_PGUP { result pageUp }
+        result bind $KEY_PGDN { result pageDown }
+        prerr [format 'binding key ' $KEY_F3 '\n']
+        result bind $KEY_F3 { onTerminate }
+        result setFocus 1
+        give $result
+    }
+    [ti plugins] append [Plugin 'Edit in Tracker' $editInTracker]
+
 }
 
 ## Adds a new "bus" (pass-through).  Argument is an array of one or two input
@@ -171,7 +190,7 @@ def vol {track val} {
 }
 
 def getVol {track} {
-    $project getVol $track
+    project getVol $track
 }
 
 def gain {track val} {
@@ -579,24 +598,30 @@ var midiOutChannel [+ 0]
 ## Save the current project.
 def saveProject {} {
     # Export all of the midi tracks to midi files.
-    var i [+ 0]
+    var i 0
     var out [open $projectFilename w]
     out write [importer 'makeProject track vol pan gain midiTrack']
     out write 'var project [makeProject]\n'
     [getTracks] each track {
         if {track isMidi} {
-            exportMidiFile [format [track getName] '.mid'] 0
+            exportMidiFile [format [track getName] '.mid'] $i
             out write [format 'midiTrack ' [track getName] '.mid\n']
         } else {
             out write [format 'track ' [track getName] '\n']
         }
+        set i [+ $i 1]
     }
     out write [format 'evalfile ' $projectBasename '-settings.crash\n']
 
     set out [open [format $projectBasename '-settings.crash'] w]
-    [range 0 [- [[getTracks] count] 1]] each i {
-        out write [format 'vol ' $i ' ' [getVol $i] '\n']
-        out write [format 'pan ' $i ' ' [getPan $i] '\n']
+    set i [+ 0]
+    [getTracks] each track {
+        if {track isMidi} {
+        } else {
+            out write [format 'vol ' $i ' ' [getVol $i] '\n']
+            out write [format 'pan ' $i ' ' [getPan $i] '\n']
+            set i [+ $i 1]
+        }
     }
 }
 
@@ -608,7 +633,6 @@ var _audioSource ''
 def setAudioSource {sourceItemName} {
     set _audioSource $sourceItemName
 }
-
 
 var _controlPanel undefined
 def getControlPanel {} {

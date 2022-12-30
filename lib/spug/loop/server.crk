@@ -30,8 +30,8 @@ import crack.net InetAddress;
 import crack.net.comm2 Comm, Connection, ConnectionFactory, NewConnection,
     UserHandler;
 import crack.protobuf Field, Message, ProtoWriter;
-import crash Builtin, EvalContext, ParmInfo;
-import types IntObj;
+import crash.crash Builtin, EvalContext, ParmInfo;
+import crash.types IntObj;
 
 import .engine AWBEngine;
 import .protocol BaseRPCContext, HandlerCallbacks, MethodMap,
@@ -39,7 +39,7 @@ import .protocol BaseRPCContext, HandlerCallbacks, MethodMap,
 
 @import crack.ann cvars, impl;
 @import crack.protobuf.ann protobuf;
-@import ann function;
+@import crash.ann function;
 @import .rpcann rpc;
 
 const int

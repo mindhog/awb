@@ -26,12 +26,13 @@ import crack.midi.event merge, ChannelEvent, Event, MidiReader, MidiWriter,
 import crack.process Process, ProcessHandlerImpl;
 import crack.strutil StringArray;
 import crack.sys env;
-import crash SimpleValue;
+import crash.crash SimpleValue;
 #import crack.ccl CCLInterpreter;
 
 import spug.loop.engine engine, AWBEngine;
 import spug.loop.tel AppMethods, InterpWrapper;
 import spug.loop.textui captureCerr, TextController;
+import spug.loop.tracker makeTracker;
 import spug.loop.model programNames, ChannelMap, Project,
     Section, Controller, MidiTrack, OmniTrack, WaveTrack, IDLE,
     LATCHED_RECORD, PLAY, RECORD;
@@ -1170,6 +1171,7 @@ try {
         controller = textui = TextController();
         interp = InterpWrapper(textui);
         textui.setInterp(interp);
+        interp.define('Tracker', makeTracker());
         interp.define('UI_MODE', SimpleValue('text', 'User interface mode.'));
     }
 

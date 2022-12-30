@@ -20,6 +20,13 @@ import crack.midi.event ChannelEvent, ControlChange, EndTrack, Event,
     NoteEvent, NoteOn, NoteOff, Track;
 import crack.midi.fluidsynth FluidSettings, FluidSynth;
 import crack.time TimeDelta;
+import crash.collections collections;
+import crash.crash createRootContext, eval, parseBlockArg, ActiveFunc, Block, Builtin,
+    EvalContext, Obj, ObjOf, ParmInfo, SimpleValue, Value;
+import crash.repl repl;
+import crash.stdlib stdlib;
+import crash.types BoolObj, FloatObj, IntObj;
+import crash.collections wrapIterator, Iter;
 import spug.loop.evtrec makeEventRecorderModule;
 import spug.loop.midieng ControllerDispatcher, EventProcessor,
     MidiDispatcher, MidiEngine, MidiSequencer, ModelObserver;
@@ -27,14 +34,6 @@ import spug.loop.model EventContext, MidiTrack, OmniTrack, Section;
 import spug.loop.sysextra pow;
 import spug.loop.jack jackCallback, RecordBuffer, SequencerWaveModel, Wave,
     WaveAdapter, WaveManager, WaveModel, WindowBufferAdapter;
-
-import collections collections;
-import crash createRootContext, eval, parseBlockArg, ActiveFunc, Block, Builtin,
-    EvalContext, Obj, ObjOf, ParmInfo, SimpleValue, Value;
-import repl repl;
-import stdlib stdlib;
-import types BoolObj, FloatObj, IntObj;
-import collections wrapIterator, Iter;
 
 import .engine engine, makeMidiEngine, AudioFileRecorder, AWBEngine,
     MidiTrackRecorder, Recorder, LEFT, RIGHT;
@@ -44,7 +43,7 @@ import .midifile MidiFile;
 import .server startServer;
 
 @import crack.ann assert, cvars, impl, interface;
-@import ann function;
+@import crash.ann function;
 
 ## Toggles "play" in the event manager.
 @function int play() {
@@ -284,6 +283,8 @@ TrackObj makeTrackObj(Track track) {
 ## Returns an iterator over the tracks in the current section (an iterator
 ## over ObjOf[Track]).
 ##
+## In addition to the normal iterator methods, the result includes a "last"
+## method which returns the last track (or null for an empty track list).
 @function Obj getTracks() {
     alias TrackArrayIter = Array[Track].ArrayIter;
     class TrackIter : Iter {
@@ -295,7 +296,21 @@ TrackObj makeTrackObj(Track track) {
         bool isTrue() { return __rep }
     }
 
-    return wrapIterator(TrackIter(engine.getAllTracks().iter()));
+    ## Returns the last track of the iterator (effectively invalidating the
+    ## iterator in the process).
+    @function(TrackIter) Object last() {
+        Object result;
+        while (self) {
+            result = self.elem();
+            self.next();
+        }
+        return result;
+    }
+
+    iter := TrackIter(engine.getAllTracks().iter());
+    result := wrapIterator(iter);
+    result.define('last', last(iter));
+    return result;
 }
 
 # Port modes.

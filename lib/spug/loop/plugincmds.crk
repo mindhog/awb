@@ -1,11 +1,11 @@
 ## Crash commands for controlling plugins.
 
 import crack.cont.array Array;
-import crash Builtin, EvalContext, Obj, ObjOf, ParmInfo;
-import types FloatObj, IntObj;
+import crash.crash Builtin, EvalContext, Obj, ObjOf, ParmInfo;
+import crash.types FloatObj, IntObj;
 import .plugins PluginInstance, Port;
 
-@import ann function;
+@import crash.ann function;
 
 @function(Port)
 float Port_min() {

@@ -7,17 +7,17 @@ import crack.functor Functor2;
 import crack.io cerr, Formatter, FStr, StandardFormatter;
 import crack.lang Exception, StaticString;
 import crack.midi.event ChannelEvent, ControlChange, Event;
-import crash parseBlockArg, Block, Builtin, EvalContext, Obj, ParmInfo;
+import crash.crash parseBlockArg, Block, Builtin, EvalContext, Obj, ParmInfo;
+import crash.types BoolObj, FloatObj, IntObj;
 import spug.loop.model EventContext;
 import spug.loop.jack WaveManager, WaveModel, PCMTrackAdapter;
-import types BoolObj, FloatObj, IntObj;
 import .engine AWBEngine;
 import .plugins PluginInstance, PluginLibrary;
 import .plugincmds makeEffectObj;
 import .processors Component;
 
-@import ann function;
 @import crack.ann cvars, impl;
+@import crash.ann function;
 
 alias EventProcessor = Functor2[void, Event, EventContext];
 
