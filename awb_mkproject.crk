@@ -1,0 +1,24 @@
+#!/usr/local/bin/crack
+
+import crack.cont.array Array;
+import crack.fs cwd, makePath, Path;
+import crack.io StandardFormatter;
+import crack.sys argv;
+
+wavfiles := Array[Path]();
+for (file :in cwd.children()) {
+    if (file.getName().endsWith('.wav'))
+        wavfiles.append(file);
+}
+
+dst := StandardFormatter(makePath(argv[1]).writer());
+dst I`\
+    import [load_module /home/mmuller/w/awb/awbconfig.crash] makeProject track \
+        vol pan gain
+    var project [makeProject]
+
+`;
+
+for (wav :in wavfiles)
+    dst `track $(wav.getName())\n`;
+
