@@ -153,6 +153,18 @@ class MidiTrack @impl OmniTrack {
     @final MidiTrack crunch(uint ticks) {
         return MidiTrack(crunch(__track, ticks));
     }
+
+    ## Static version of clone() that works on plain track objects.
+    @static Track clone(Track track) {
+        events := Array[Event]();
+        for (event :in track)
+            events.append(event.clone());
+        return Track(track.name, events);
+    }
+
+    @final MidiTrack clone() {
+        return MidiTrack(clone(__track));
+    }
 }
 
 ## This is a "section" of the piece.  A section consists of a group of tracks

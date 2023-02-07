@@ -45,6 +45,8 @@ import .server startServer;
 @import crack.ann assert, cvars, impl, interface;
 @import crash.ann function;
 
+@export_symbols TrackObj;
+
 ## Toggles "play" in the event manager.
 @function int play() {
     engine.togglePlay();
@@ -273,10 +275,15 @@ TrackObj makeTrackObj(Track track) {
         return makeTrackObj(MidiTrack.crunch(self, ticks));
     }
 
+    @function(Track) TrackObj clone() {
+        return makeTrackObj(MidiTrack.clone(self));
+    }
+
     result.define('getName', getName(track));
     result.define('isMidi', isMidi(track));
     result.define('dump', dump(track));
     result.define('crunch', crunch(track));
+    result.define('clone', clone(track));
     return result;
 }
 
@@ -656,23 +663,12 @@ class ShellCmd : Builtin {
 
 alias SectionObj = ObjOf[Section];
 
+SectionObj makeSectionObj(Section section);
+
 ## Returns the currently active "Section" object.
 @function SectionObj getCurrentSection() {
-    ## Returns the specified track from the current section.
-    @function(Section) Obj getTrack(int index) {
-        return makeTrackObj(self.tracks[index]);
-    }
-
-    ## Returns the number of clock ticks in a measure.
-    @function(Section) int getMeasureSize() {
-        return self.measure;
-    }
-
     section := engine.getCurrentSection();
-    result := SectionObj(section);
-    result.define('getTrack', getTrack(section));
-    result.define('getMeasureSize', getMeasureSize(section));
-    return result;
+    return makeSectionObj(section);
 }
 
 Obj _engineObj;
@@ -860,8 +856,14 @@ SectionObj makeSectionObj(Section section) {
         return makeOmniTrackObj(self.getTrack(uint(index)));
     }
 
+    ## Returns the number of clock ticks in a measure.
+    @function(Section) int getMeasureSize() {
+        return self.measure;
+    }
+
     result := SectionObj(section);
     result.define('getTrack', getTrack(section));
+    result.define('getMeasureSize', getMeasureSize(section));
     return result;
 }
 
@@ -1054,8 +1056,24 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
     }
 
     ## Replace the specified track in the current section with the new track.
-    @function(AWBEngine) int replaceTrack(int index, OmniTrack track) {
-        self.replaceTrack(index, track);
+    ##
+    ## This method can accept any of Track, OmniTrack or their corresponding
+    ## crash wrappers (TrackObj, OmniTrackObj).
+    @function(AWBEngine) int replaceTrack(int index, Object track) {
+        OmniTrack omniTrack;
+        if (t := TrackObj.cast(track, null))
+            omniTrack = MidiTrack(Track.cast(t.convertTo(Track)));
+        else if (t := OmniTrackObj.cast(track, null))
+            omniTrack = OmniTrack.cast(t.convertTo(OmniTrack));
+        else if (t := OmniTrack.cast(track, null))
+            omniTrack = t;
+        else if (t := Track.cast(track, null))
+            omniTrack = MidiTrack(t);
+        else
+            throw Exception(
+                FStr() `Can't convert $track to OmniTrack or Track`
+            );
+        self.replaceTrack(index, omniTrack);
         return 0;
     }
 

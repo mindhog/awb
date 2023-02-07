@@ -11,6 +11,7 @@ import crash.crash Builtin, EvalContext, ObjOf, ParmInfo;
 import crash.types IntObj;
 import deadly.util convertKey;
 import .textui BindCmd;
+import .tel makeTrackObj, TrackObj;
 
 @import crack.ann cvars, define;
 @import crash.ann function;
@@ -25,7 +26,7 @@ class Tracker : Window {
         velAttr = 3,
         selectedRowAttr = 0x40;
 
-    Track __track;
+    Track track;
 
     # Pulses per beat.
     int __ppb = 1440;
@@ -48,7 +49,7 @@ class Tracker : Window {
 
     HashMap[int, Functor2[bool, Tracker, Event]] __callbacks = {};
 
-    oper init(Window parent, Track track) : Window(parent), __track = track {}
+    oper init(Window parent, Track track) : Window(parent), track = track {}
 
     void bind(int key, Functor2[bool, Tracker, Event] callback) {
         __callbacks[key] = callback;
@@ -64,7 +65,7 @@ class Tracker : Window {
     }
 
     uint __getTrackEnd() {
-        return __track ? __track[-1].time : 0;
+        return track ? track[-1].time : 0;
     }
 
     # Returns pulses per step.
@@ -130,7 +131,7 @@ class Tracker : Window {
             steps := __getSteps();
             pps := @__getPPS();
             for (int i = __top; i < __top + height && i < steps; ++i) {
-                iter := __track.iter();
+                iter := track.iter();
                 pos := i * pps;
                 endPos := pos + pps;
                 col := 0;
@@ -152,6 +153,7 @@ class Tracker : Window {
 }
 
 alias TrackerObj = ObjOf[Tracker];
+alias TrackObj = ObjOf[Track];
 
 @function TrackerObj makeTracker(Window parent, Track track) {
     tracker := Tracker(parent, track);
@@ -181,6 +183,15 @@ alias TrackerObj = ObjOf[Tracker];
         return 1;
     }
 
+    @function(Tracker) TrackObj getTrack() {
+        return makeTrackObj(self.track);
+    }
+
+    @function(Tracker) int setTrack(Track track) {
+        self.track = track;
+        return 0;
+    }
+
     result := TrackerObj(tracker);
     result.define('bind', BindCmd[Tracker](tracker, result));
     result.define('setFocus', setFocus(tracker));
@@ -188,5 +199,7 @@ alias TrackerObj = ObjOf[Tracker];
     result.define('pageDown', pageDown(tracker));
     result.define('up', up(tracker));
     result.define('down', down(tracker));
+    result.define('getTrack', getTrack(tracker));
+    result.define('setTrack', setTrack(tracker));
     return result;
 }
