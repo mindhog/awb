@@ -1179,6 +1179,19 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
         return 0;
     }
 
+    ## Create a new, empty section.
+    ##
+    ## Returns the new section index.
+    @function(AWBEngine) int createNewSection() {
+        return self.createSection(null);
+    }
+
+    ## Set the current section to the section indexed by 'index'.
+    @function(AWBEngine) int setSection(int index) {
+        self.setSection(index);
+        return 0;
+    }
+
     result.define('play', play(engine));
     result.define('pause', pause(engine));
     result.define('addRecorder', addRecorder(engine));
@@ -1208,6 +1221,8 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
     result.define('getCurrentSection', getCurrentSection(engine));
     result.define('copySection', copySection(engine));
     result.define('setMidiRecordTrackName', setMidiRecordTrackName(engine));
+    result.define('createNewSection', createNewSection(engine));
+    result.define('setSection', setSection(engine));
 
     return result;
 }

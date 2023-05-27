@@ -24,7 +24,7 @@ import .model AudioTrack, EventContext, OmniTrack, ProjectRef, Section,
     WaveTrack;
 
 @import crack.ann assert, cvars, impl;
-@import .ann immut;
+@import .ann immut, nullable;
 
 class AWBEngine;
 
@@ -483,8 +483,15 @@ class AWBEngine @impl ModelObserver {
     }
 
     ## Create a new section, copying the specified tracks into it.
-    void createSection(Array[Track] tracks) {
-        __project.createSection(tracks);
+    ##
+    ## Returns the new section index.
+    int createSection(@nullable Array[Track] tracks) {
+        return __project.createSection(tracks);
+    }
+
+    ## Set the current section to that specified.
+    void setSection(int index) {
+        __project.setSection(index);
     }
 
     ## Set the next section to be played based on the index.
