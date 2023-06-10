@@ -560,10 +560,16 @@ class WaveAdapter : PCMTrackAdapter {
         channels := model.channels;
         __buf.grow(frameCount * channels);
         model.read(pos, __buf, frameCount);
+        framesRead := uint32(__buf.size * channels);
         for (int ch = 0; ch < channels; ++ch) {
             outBuf := bufs[ch];
-            for (uint i; i < frameCount; ++i) {
+            for (uint i; i < framesRead; ++i) {
                 outBuf[i] = __buf[i * channels + ch] / 32768.0;
+            }
+
+            # Zero out the rest of the buffer.
+            for (uint i = framesRead; i < frameCount; ++i) {
+                outBuf[i] = 0;
             }
         }
     }
