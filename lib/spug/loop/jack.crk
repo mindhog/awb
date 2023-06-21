@@ -717,6 +717,7 @@ class SequencerWaveModel : WaveModel {
             if (pbuf.overlaps(pos, pos + frames))
                 __mixIn(pos, frames, pbuf, out);
         }
+        out.size = frames * 2;
     }
 }
 
@@ -1233,13 +1234,17 @@ class WaveManager : JackWrapper {
         return wm;
     }
 
-    WaveAdapter addMemFile(String fileName) {
-        src := makePath(fileName).reader();
-        wave := Wave.read(src);
+    WaveAdapter addWave(Wave wave) {
         model := SimpleWaveModel(wave);
         addProcessor(result := WaveAdapter(model));
         adapters.append(result);
         return result;
+    }
+
+    WaveAdapter addMemFile(String fileName) {
+        src := makePath(fileName).reader();
+        wave := Wave.read(src);
+        return addWave(wave);
     }
 
     ## Add a raw WaveModel.  This is most useful for adding a

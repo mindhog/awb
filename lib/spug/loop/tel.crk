@@ -140,6 +140,89 @@ alias OrchestraObj = ObjOf[Orchestra];
     return Wave.read(makePath(filename).reader());
 }
 
+## Lengthen a wave by repeating the last nframes frames reps times.  rampLen
+## is the length of the cross-fade.
+##
+## Lengthening is done by cross-fading the last nframes over the last rampLen
+## of the wave, then extending with the remainder of the span, cross-faded to
+## smoothly merge into its own ending until the wave is extended by reps
+## instances of the nframes long repeat buffer (the wave is thus ultimately
+## extended by reps * nframes - reps * rampLen frames).
+@function int lengthenWave(Wave wave, int nframes, int reps, int rampLen) {
+    reps := 5;
+    # Sample the last second.
+    nframes := 44100 * 2;
+    buf := ManagedWaveBuffer(nframes * wave.channels);
+    for (int i = wave.size - nframes * wave.channels; i < wave.size; ++i)
+        buf.append(wave[i]);
+
+    # Cross-fade ramp up/down time in samples.
+    rampLen := 16000;
+
+    # Mix in at the end of the wave.
+    for (int i; i < rampLen; ++i) {
+        for (int ch; ch < wave.channels; ++ch) {
+            pos := wave.size - (rampLen - i) * wave.channels + ch;
+            wave[pos] =
+                int16(wave[pos] * float(rampLen - i) / float(rampLen)) +
+                int16(buf[i * wave.channels + ch] * float(i) / float(rampLen));
+        }
+    }
+
+    wave.grow(wave.size + reps * nframes * wave.channels);
+
+    # Add multiple repetitions of the buffer.
+    for (int i; i < reps; ++i) {
+
+        # do the middle of the buffer (no mix-in)
+        pos := rampLen * wave.channels;
+        for (; pos < buf.size - rampLen * wave.channels; ++pos)
+            wave.append(buf[pos]);
+
+        # mix the end of the buffer with its beginning.
+        for (int j; j < rampLen; ++j) {
+            for (int ch; ch < wave.channels; ++ch) {
+                wave.append(
+                    int16(
+                        buf[buf.size - (rampLen - j) * wave.channels + ch] *
+                            float(rampLen - j) / float(rampLen) +
+                        buf[j * wave.channels + ch] * float(j) / float(rampLen)
+                    )
+                );
+            }
+        }
+    }
+
+    return 0;
+}
+
+## Write the wave to the specified file.
+@function int writeWave(String fileName, Wave wave) {
+    def := WaveDef(wave.channels, wave.rate, 16);
+    out := makePath(fileName).writer();
+    def.writeHeader(out);
+
+    class Buf : WaveBuffer {
+        oper init() : WaveBuffer(0, null) {}
+
+        Buf from(uintz size, array[int16] buffer) {
+            this.size = cap = size;
+            this.buffer = buffer;
+            return this;
+        }
+    }
+    buf := Buf();
+
+    pos := 0;
+    for (; pos < wave.size / 4096 * 4096; pos += 4096)
+        def.writeData(out, buf.from(4096, wave.buffer + pos));
+
+    if (pos != wave.size)
+        def.writeData(out, buf.from(wave.size - pos, wave.buffer + pos));
+    def.finish(out);
+    return 0;
+}
+
 alias SequencerWaveModelObj = ObjOf[SequencerWaveModel];
 
 ## Create a SequencerWaveModel, a sequence of Wave objects (see readWave)
@@ -1314,6 +1397,8 @@ class InterpWrapper {
         ctx.define('set_tempo', set_tempo());
         ctx.define('load', load());
         ctx.define('readWave', readWave());
+        ctx.define('lengthenWave', lengthenWave());
+        ctx.define('writeWave', writeWave());
         ctx.define('makeSequencerWaveModel', makeSequencerWaveModel());
         ctx.define('addWaveModel', addWaveModel());
         ctx.define('addMemFile', addMemFile());
