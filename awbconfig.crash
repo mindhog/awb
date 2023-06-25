@@ -1,4 +1,6 @@
 # Standard configuration stuff.
+import [collections] array map
+import [stdlib] exists open
 
 import [collections] map range
 
@@ -684,6 +686,20 @@ def v {} 'Bring up the text panel UI.' {
                 $midiOutChannelActionButton
         }
 
+        def setMidiOutChannel {} {
+            def callback {text} {
+                var newChannel [format [+ $text]]
+                if {== $newChannel '0.000000'} {
+                    # Need to report an error here.
+                    return
+                } else {
+                    midiOutChannelActionButton setText $text
+                    [getAWBEngine] setInputChannel $newChannel
+                }
+            }
+            EntryBar $bottomBar 1 'Midi out channel:' $callback $tracklist
+        }
+
         # Create a row of buttons to control midi/audio recording.
         var stateRow [Row $mainColumn 1]
         ToggleButton $stateRow 5 'Midi' $MidiRecorder
@@ -782,6 +798,12 @@ def v {} 'Bring up the text panel UI.' {
         var timeBar [TimeBar $mainColumn 1 [getAWBEngine]]
         bottomBar setParcel $timeBar
     }
+}
+
+def mark {} {
+    var pos [tell]
+    print 'marking ' $pos '\n'
+    $project writeLog [format 'mark ' $pos '\n']
 }
 
 # Bindings for Korg Nanokontrol (channel,controller):

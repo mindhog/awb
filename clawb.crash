@@ -1,5 +1,8 @@
 # Script containing useful stuff for running in command line mode.
 
+import [stdlib] open doc help lookUp exists
+import [collections] array arrayOf
+
 def run_ui {} 'Run my default user interface' {
     runUI {
         TrackList $mainColumn 10

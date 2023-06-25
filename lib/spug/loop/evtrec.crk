@@ -193,33 +193,36 @@ class SmartController : ControllerProcessor {
 
     void oper call(Event event, EventContext ctx) {
         cur := ControlChange.cast(event).value;
+        # XXX bypass this for now.
+        __rep(event, ctx);
+        return;
 
-        # Deal with the case where we haven't gotten a controller value yet.
-        # In this case, if the current value is close to the parameter value,
-        # synchronize them, otherwise just set the last controller value and
-        # leave.
-        if (__lastController == -1) {
-            int abs(int val) { return val >= 0 ? val : -val }
-            if (abs(cur - __param) > 3) {
-                __lastController = cur;
-                __notifySubscribers();
-                return;
-            } else {
-                __lastController = __param;
-            }
-        }
-
-        if (__lastController == __param ||
-            __lastController < __param && cur >= __param ||
-            __lastController > __param && cur <= __param
-            ) {
-
-            __param = cur;
-            __rep(event, ctx);
-            __paramVal = __rep.convertControllerValue(cur);
-        }
-        __notifySubscribers();
-        __lastController = cur;
+#        # Deal with the case where we haven't gotten a controller value yet.
+#        # In this case, if the current value is close to the parameter value,
+#        # synchronize them, otherwise just set the last controller value and
+#        # leave.
+#        if (__lastController == -1) {
+#            int abs(int val) { return val >= 0 ? val : -val }
+#            if (abs(cur - __param) > 3) {
+#                __lastController = cur;
+#                __notifySubscribers();
+#                return;
+#            } else {
+#                __lastController = __param;
+#            }
+#        }
+#
+#        if (__lastController == __param ||
+#            __lastController < __param && cur >= __param ||
+#            __lastController > __param && cur <= __param
+#            ) {
+#
+#            __param = cur;
+#            __rep(event, ctx);
+#            __paramVal = __rep.convertControllerValue(cur);
+#        }
+#        __notifySubscribers();
+#        __lastController = cur;
     }
 }
 
