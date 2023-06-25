@@ -149,15 +149,10 @@ alias OrchestraObj = ObjOf[Orchestra];
 ## instances of the nframes long repeat buffer (the wave is thus ultimately
 ## extended by reps * nframes - reps * rampLen frames).
 @function int lengthenWave(Wave wave, int nframes, int reps, int rampLen) {
-    reps := 5;
-    # Sample the last second.
-    nframes := 44100 * 2;
+    # Sample the last nframes.
     buf := ManagedWaveBuffer(nframes * wave.channels);
     for (int i = wave.size - nframes * wave.channels; i < wave.size; ++i)
         buf.append(wave[i]);
-
-    # Cross-fade ramp up/down time in samples.
-    rampLen := 16000;
 
     # Mix in at the end of the wave.
     for (int i; i < rampLen; ++i) {
