@@ -45,6 +45,8 @@ import .server startServer;
 @import crack.ann assert, cvars, impl, interface;
 @import crash.ann function;
 
+@export_symbols TrackObj;
+
 ## Toggles "play" in the event manager.
 @function int play() {
     engine.togglePlay();
@@ -136,6 +138,89 @@ alias OrchestraObj = ObjOf[Orchestra];
 ## Read an entire wave file in as a Wave buffer.
 @function Wave readWave(String filename) {
     return Wave.read(makePath(filename).reader());
+}
+
+## Lengthen a wave by repeating the last nframes frames reps times.  rampLen
+## is the length of the cross-fade.
+##
+## Lengthening is done by cross-fading the last nframes over the last rampLen
+## of the wave, then extending with the remainder of the span, cross-faded to
+## smoothly merge into its own ending until the wave is extended by reps
+## instances of the nframes long repeat buffer (the wave is thus ultimately
+## extended by reps * nframes - reps * rampLen frames).
+@function int lengthenWave(Wave wave, int nframes, int reps, int rampLen) {
+    reps := 5;
+    # Sample the last second.
+    nframes := 44100 * 2;
+    buf := ManagedWaveBuffer(nframes * wave.channels);
+    for (int i = wave.size - nframes * wave.channels; i < wave.size; ++i)
+        buf.append(wave[i]);
+
+    # Cross-fade ramp up/down time in samples.
+    rampLen := 16000;
+
+    # Mix in at the end of the wave.
+    for (int i; i < rampLen; ++i) {
+        for (int ch; ch < wave.channels; ++ch) {
+            pos := wave.size - (rampLen - i) * wave.channels + ch;
+            wave[pos] =
+                int16(wave[pos] * float(rampLen - i) / float(rampLen)) +
+                int16(buf[i * wave.channels + ch] * float(i) / float(rampLen));
+        }
+    }
+
+    wave.grow(wave.size + reps * nframes * wave.channels);
+
+    # Add multiple repetitions of the buffer.
+    for (int i; i < reps; ++i) {
+
+        # do the middle of the buffer (no mix-in)
+        pos := rampLen * wave.channels;
+        for (; pos < buf.size - rampLen * wave.channels; ++pos)
+            wave.append(buf[pos]);
+
+        # mix the end of the buffer with its beginning.
+        for (int j; j < rampLen; ++j) {
+            for (int ch; ch < wave.channels; ++ch) {
+                wave.append(
+                    int16(
+                        buf[buf.size - (rampLen - j) * wave.channels + ch] *
+                            float(rampLen - j) / float(rampLen) +
+                        buf[j * wave.channels + ch] * float(j) / float(rampLen)
+                    )
+                );
+            }
+        }
+    }
+
+    return 0;
+}
+
+## Write the wave to the specified file.
+@function int writeWave(String fileName, Wave wave) {
+    def := WaveDef(wave.channels, wave.rate, 16);
+    out := makePath(fileName).writer();
+    def.writeHeader(out);
+
+    class Buf : WaveBuffer {
+        oper init() : WaveBuffer(0, null) {}
+
+        Buf from(uintz size, array[int16] buffer) {
+            this.size = cap = size;
+            this.buffer = buffer;
+            return this;
+        }
+    }
+    buf := Buf();
+
+    pos := 0;
+    for (; pos < wave.size / 4096 * 4096; pos += 4096)
+        def.writeData(out, buf.from(4096, wave.buffer + pos));
+
+    if (pos != wave.size)
+        def.writeData(out, buf.from(wave.size - pos, wave.buffer + pos));
+    def.finish(out);
+    return 0;
 }
 
 alias SequencerWaveModelObj = ObjOf[SequencerWaveModel];
@@ -273,10 +358,15 @@ TrackObj makeTrackObj(Track track) {
         return makeTrackObj(MidiTrack.crunch(self, ticks));
     }
 
+    @function(Track) TrackObj clone() {
+        return makeTrackObj(MidiTrack.clone(self));
+    }
+
     result.define('getName', getName(track));
     result.define('isMidi', isMidi(track));
     result.define('dump', dump(track));
     result.define('crunch', crunch(track));
+    result.define('clone', clone(track));
     return result;
 }
 
@@ -656,26 +746,15 @@ class ShellCmd : Builtin {
 
 alias SectionObj = ObjOf[Section];
 
+SectionObj makeSectionObj(Section section);
+
 ## Returns the currently active "Section" object.
 @function SectionObj getCurrentSection() {
-    ## Returns the specified track from the current section.
-    @function(Section) Obj getTrack(int index) {
-        return makeTrackObj(self.tracks[index]);
-    }
-
-    ## Returns the number of clock ticks in a measure.
-    @function(Section) int getMeasureSize() {
-        return self.measure;
-    }
-
     section := engine.getCurrentSection();
-    result := SectionObj(section);
-    result.define('getTrack', getTrack(section));
-    result.define('getMeasureSize', getMeasureSize(section));
-    return result;
+    return makeSectionObj(section);
 }
 
-Obj _midiEngineObj;
+Obj _engineObj;
 
 class InstrumentDispatcher @impl Functor2[bool, MidiSequencer, Event] {
     @cvars {
@@ -686,108 +765,6 @@ class InstrumentDispatcher @impl Functor2[bool, MidiSequencer, Event] {
         instrument.onEvent(event);
         return true;
     }
-}
-
-## Get the midi engine, creating it if necessary.
-##
-## This is actually the AWBEngine, now, but it proxies to the midi engine when
-## appropriate.
-@function Obj getAWBEngine() {
-    if (_midiEngineObj)
-        return _midiEngineObj;
-
-    _midiEngineObj = o := ObjOf[AWBEngine](engine);
-
-    ## Create an output port that all events are sent to.
-    @function(AWBEngine) int routeToOutputPort() {
-        self.getMidiEngine().addOutputProcessor(MidiDispatcher());
-        return 0;
-    }
-
-    ## Route all events to the given instrument object.
-    @function(AWBEngine)
-    InstrumentDispatcher routeToInstrument(Instrument instrument) {
-        self.getMidiEngine().addOutputProcessor(
-            result := InstrumentDispatcher(instrument)
-        );
-        return result;
-    }
-
-    ## Set the "input channel" parameter of the midi engine.  This value
-    ## overrides the channel number for all input events.  A value of -1
-    ## disables this feature and the original channel is used.
-    @function(AWBEngine)
-    int setInputChannel(int channel) {
-        return self.getMidiEngine().inputChannel = channel;
-    }
-
-    ## Set pulses per beat (default value is 1440 [5 * 9 * 32]).  Note that
-    ## this needs to be set prior to recording any tracks.
-    ## This also sets the PPB in the event manager (which will likely go away
-    ## soon).
-    @function(AWBEngine)
-    int setPPB(int val) {
-        self.setPPB(val);
-        return 0;
-    }
-
-    ## Set the tempo (in beats per minute).
-    @function(AWBEngine)
-    int set_tempo(float bpm) {
-        self.setTempo(bpm);
-        return 0;
-    }
-
-    ## Toggle record mode.
-    @function(AWBEngine)
-    int toggleRecord() {
-        self.toggleRecord();
-        return 0;
-    }
-
-    ## Toggle play/idle.
-    @function(AWBEngine)
-    int togglePlay() {
-        self.togglePlay();
-        return 0;
-    }
-
-    ## Seek the specified position (in midi ticks).
-    ##
-    ## If the position is greater than the current end, it is wrapped around
-    ## to be within range.
-    @function(AWBEngine)
-    int setPos(int pos) {
-        self.setPos(pos);
-        return 0;
-    }
-
-    ## Copy the current section in the event manager to the midi engine.
-    @function(AWBEngine)
-    int copySection() {
-        self.copySection();
-        return 0;
-    }
-
-    ## Load the midi file and add all tracks to the engine.
-    @function(AWBEngine)
-    int loadMidiFile(String filename) {
-        self.addMidiFile(filename);
-        return 0;
-    }
-
-    o.define('routeToOutputPort', routeToOutputPort(engine));
-    o.define('routeToInstrument', routeToInstrument(engine));
-    o.define('setInputChannel', setInputChannel(engine));
-    o.define('setPPB', setPPB(engine));
-    o.define('set_tempo', set_tempo(engine));
-    o.define('toggleRecord', toggleRecord(engine));
-    o.define('togglePlay', togglePlay(engine));
-    o.define('setPos', setPos(engine));
-    o.define('copySection', copySection(engine));
-    o.define('loadMidiFile', loadMidiFile(engine));
-
-    return _midiEngineObj;
 }
 
 class ExportMidiFileCmd : Builtin {
@@ -962,8 +939,14 @@ SectionObj makeSectionObj(Section section) {
         return makeOmniTrackObj(self.getTrack(uint(index)));
     }
 
+    ## Returns the number of clock ticks in a measure.
+    @function(Section) int getMeasureSize() {
+        return self.measure;
+    }
+
     result := SectionObj(section);
     result.define('getTrack', getTrack(section));
+    result.define('getMeasureSize', getMeasureSize(section));
     return result;
 }
 
@@ -1077,7 +1060,10 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
 
 ## Get the new engine facade.
 @function Obj get_engine() {
-    result := ObjOf[AWBEngine](engine);
+    if (_engineObj)
+        return _engineObj;
+
+    _engineObj = result := ObjOf[AWBEngine](engine);
 
     @function(AWBEngine) int play() {
         self.play();
@@ -1120,9 +1106,25 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
         return 0;
     }
 
+    ## Set pulses per beat (default value is 1440 [5 * 9 * 32]).  Note that
+    ## this needs to be set prior to recording any tracks.
+    ## This also sets the PPB in the event manager (which will likely go away
+    ## soon).
+    @function(AWBEngine)
+    int setPPB(int val) {
+        self.setPPB(val);
+        return 0;
+    }
+
     ## Returns the current section.
     @function(AWBEngine) SectionObj getCurrentSection() {
         return makeSectionObj(self.getCurrentSection());
+    }
+
+    ## Copy the current section in the event manager to the midi engine.
+    @function(AWBEngine) int copySection() {
+        self.copySection();
+        return 0;
     }
 
     @function(AWBEngine) int addTrack(Track track) {
@@ -1137,8 +1139,31 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
     }
 
     ## Replace the specified track in the current section with the new track.
-    @function(AWBEngine) int replaceTrack(int index, OmniTrack track) {
-        self.replaceTrack(index, track);
+    ##
+    ## This method can accept any of Track, OmniTrack or their corresponding
+    ## crash wrappers (TrackObj, OmniTrackObj).
+    @function(AWBEngine) int replaceTrack(int index, Object track) {
+        OmniTrack omniTrack;
+        if (t := TrackObj.cast(track, null))
+            omniTrack = MidiTrack(Track.cast(t.convertTo(Track)));
+        else if (t := OmniTrackObj.cast(track, null))
+            omniTrack = OmniTrack.cast(t.convertTo(OmniTrack));
+        else if (t := OmniTrack.cast(track, null))
+            omniTrack = t;
+        else if (t := Track.cast(track, null))
+            omniTrack = MidiTrack(t);
+        else
+            throw Exception(
+                FStr() `Can't convert $track to OmniTrack or Track`
+            );
+        self.replaceTrack(index, omniTrack);
+        return 0;
+    }
+
+    ## Load the midi file and add all tracks to the engine.
+    @function(AWBEngine)
+    int loadMidiFile(String filename) {
+        self.addMidiFile(filename);
         return 0;
     }
 
@@ -1153,6 +1178,15 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
     ## Reset the play position to the start of the current section.
     @function(AWBEngine) int resetPos() {
         self.resetPos();
+        return 0;
+    }
+
+    ## Seek the specified position (in midi ticks).
+    ##
+    ## If the position is greater than the current end, it is wrapped around
+    ## to be within range.
+    @function(AWBEngine) int setPos(int pos) {
+        self.setPos(pos);
         return 0;
     }
 
@@ -1176,6 +1210,17 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
         return 0;
     }
 
+    ## Set the "input channel" parameter of the midi engine.  This value
+    ## overrides the channel number for all input events.  A value of -1
+    ## disables this feature and the original channel is used.
+    ##
+    ## In general, you're usually better off adding a ChannelMapper to either
+    ## the input or output chain.
+    @function(AWBEngine)
+    int setInputChannel(int channel) {
+        return self.getMidiEngine().inputChannel = channel;
+    }
+
     ## Add an output processor to the midi input event chain.
     @function(AWBEngine) int addOutputProcessor(EventProcessor processor) {
         self.addOutputProcessor(processor);
@@ -1196,8 +1241,37 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
         return 0;
     }
 
+    ## Adds a midi output processor that sends all events to the midi output
+    ## port.
+    @function(AWBEngine) int routeToOutputPort() {
+        self.addOutputProcessor(MidiDispatcher());
+        return 0;
+    }
+
+    ## Route all events to the given instrument object.  Adds an output
+    ## processor that sends events to an InstrumentDispatcher created for the
+    ## Instrument, returning the new InstrumentDispatcher.
+    @function(AWBEngine)
+    InstrumentDispatcher routeToInstrument(Instrument instrument) {
+        self.addOutputProcessor(result := InstrumentDispatcher(instrument));
+        return result;
+    }
+
     @function(AWBEngine) int setMidiRecordTrackName(String name) {
         self.setMidiRecordTrackName(name);
+        return 0;
+    }
+
+    ## Create a new, empty section.
+    ##
+    ## Returns the new section index.
+    @function(AWBEngine) int createNewSection() {
+        return self.createSection(null);
+    }
+
+    ## Set the current section to the section indexed by 'index'.
+    @function(AWBEngine) int setSection(int index) {
+        self.setSection(index);
         return 0;
     }
 
@@ -1209,19 +1283,29 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
     result.define('record', record(engine));
     result.define('toggleRecord', toggleRecord(engine));
     result.define('togglePlay', togglePlay(engine));
+    result.define('setPPB', setPPB(engine));
     result.define('addTrack', addTrack(engine));
     result.define('deleteTrack', deleteTrack(engine));
     result.define('replaceTrack', replaceTrack(engine));
-    result.define('setTempo', setTempo(engine));
+    result.define('loadMidiFile', loadMidiFile(engine));
+    result.define('setTempo', setTempoFunc := setTempo(engine));
+    result.define('set_tempo', setTempoFunc);
     result.define('resetPos', resetPos(engine));
+    result.define('setPos', setPos(engine));
     result.define('addInputProcessor', addInputProcessor(engine));
     result.define('insertInputProcessor', insertInputProcessor(engine));
     result.define('removeInputProcessor', removeInputProcessor(engine));
+    result.define('setInputChannel', setInputChannel(engine));
     result.define('addOutputProcessor', addOutputProcessor(engine));
     result.define('insertOutputProcessor', insertOutputProcessor(engine));
     result.define('removeOutputProcessor', removeOutputProcessor(engine));
+    result.define('routeToOutputPort', routeToOutputPort(engine));
+    result.define('routeToInstrument', routeToInstrument(engine));
     result.define('getCurrentSection', getCurrentSection(engine));
+    result.define('copySection', copySection(engine));
     result.define('setMidiRecordTrackName', setMidiRecordTrackName(engine));
+    result.define('createNewSection', createNewSection(engine));
+    result.define('setSection', setSection(engine));
 
     return result;
 }
@@ -1308,11 +1392,13 @@ class InterpWrapper {
 
         ctx.define('play', play());
         ctx.define('exportMidiFile', ExportMidiFileCmd());
-        ctx.define('getAWBEngine', getAWBEngine());
+        ctx.define('getAWBEngine', get_engine());
         ctx.define('get_tempo', get_tempo());
         ctx.define('set_tempo', set_tempo());
         ctx.define('load', load());
         ctx.define('readWave', readWave());
+        ctx.define('lengthenWave', lengthenWave());
+        ctx.define('writeWave', writeWave());
         ctx.define('makeSequencerWaveModel', makeSequencerWaveModel());
         ctx.define('addWaveModel', addWaveModel());
         ctx.define('addMemFile', addMemFile());

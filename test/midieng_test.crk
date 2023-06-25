@@ -10,6 +10,7 @@ import crack.midi.event ControlChange, Event, NoteOn;
 import crack.net Poller, PollEventCallback;
 import crack.time TimeDelta;
 import spug.loop.jack JackPos, JackWrapper, JACK_TRANSPORT_ROLLING;
+import spug.loop.model ProjectRef;
 import spug.loop.midieng Jack, MidiDispatcher, MidiSequencer;
 import unittest register, runAllTests, Test;
 
@@ -210,8 +211,8 @@ class PollerFake : Poller {
     }
 
     void add(FileHandle p, PollEventCallback callback) {
-        @assert(!__callback);
-        __callback = callback;
+        if (!__callback)
+            __callback = callback;
     }
 }
 
@@ -227,7 +228,7 @@ NoteOn no(int time, int note) { return NoteOn(time, 0, byte(note), 127) }
 
     void setUp() {
         seq = SequencerFake(jack);
-        eng = MidiSequencer(jack, seq);
+        eng = MidiSequencer(jack, seq, ProjectRef());
         poller = PollerFake(jack, seq);
         eng.registerHandlers(poller);
         eng.outPort = outPort = PortFake(jack);

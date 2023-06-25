@@ -602,7 +602,11 @@ class TextController : Object @implements Controller, AppMethods {
     }
 
     void sectionChanged() {
-        cout `section changed\n`;
+        # If we have multiple track list windows, I'm not sure it makes sense
+        # to change all of them.  But on the other hand, they do all reload
+        # from the current section.
+        for (tl :in __trackLists)
+            tl.reloadTracks();
     }
 
     void setBinding(int key, Functor0[void] callback) {

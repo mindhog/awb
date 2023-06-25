@@ -153,6 +153,18 @@ class MidiTrack @impl OmniTrack {
     @final MidiTrack crunch(uint ticks) {
         return MidiTrack(crunch(__track, ticks));
     }
+
+    ## Static version of clone() that works on plain track objects.
+    @static Track clone(Track track) {
+        events := Array[Event]();
+        for (event :in track)
+            events.append(event.clone());
+        return Track(track.name, events);
+    }
+
+    @final MidiTrack clone() {
+        return MidiTrack(clone(__track));
+    }
 }
 
 ## This is a "section" of the piece.  A section consists of a group of tracks
@@ -609,7 +621,9 @@ class ProjectRef {
     ## Create a new section.  If we're in "play" mode, make the new section
     ## the next section to play.
     ## seedTracks: tracks to seed the new section with.
-    void createSection(@nullable Array[Track] seedTracks) {
+    ##
+    ## Returns the new section index.
+    int createSection(@nullable Array[Track] seedTracks) {
         lk := MutexLock(__mutex);
 
         # if there are seed tracks, use the current section's measure and
@@ -632,9 +646,22 @@ class ProjectRef {
         newProject.addSection(newSection);
         __project = newProject;
 
+        index := __project.getSectionCount() - 1;
         lk = null;
         if (__controller)
             __controller.sectionCreated();
+
+        return index;
+    }
+
+    ## Set the current section to that specified.
+    void setSection(int index) {
+        lk := MutexLock(__mutex);
+        __section = __project.sections[index];
+
+        lk = null;
+        if (__controller)
+            __controller.sectionChanged();
     }
 
     ## Return the current section.

@@ -1,0 +1,205 @@
+## UI Module for class midi tracker interface.
+
+import crack.ascii radix;
+import crack.cont.array Array;
+import crack.cont.hashmap HashMap;
+import crack.exp.termui Event, GraphicsContext, KeyEvent, Window;
+import crack.functor Functor2;
+import crack.io cerr;
+import crack.midi.event NoteEvent, MidiEvent = Event, Track;
+import crash.crash Builtin, EvalContext, ObjOf, ParmInfo;
+import crash.types IntObj;
+import deadly.util convertKey;
+import .textui BindCmd;
+import .tel makeTrackObj, TrackObj;
+
+@import crack.ann cvars, define;
+@import crash.ann function;
+
+## Tracker-style midi editor.
+class Tracker : Window {
+
+    byte
+        backgroundAttr = 0,
+        channelAttr = 2,
+        noteAttr = 6,
+        velAttr = 3,
+        selectedRowAttr = 0x40;
+
+    Track track;
+
+    # Pulses per beat.
+    int __ppb = 1440;
+
+    # Steps per beat.  In regular mode, this is the number of rows that we
+    # will render for each beat.
+    int __spb = 4;
+
+    # If true, events are rendered more compactly with the next row containing
+    # events from the next point in time (the default is tradtional tracker
+    # style, each row corresponds to an interval in the sequence so rows
+    # without events would be empty.
+    bool __irregular;
+
+    # top row on display.
+    int __top;
+
+    # Selected row.
+    int __curRow;
+
+    HashMap[int, Functor2[bool, Tracker, Event]] __callbacks = {};
+
+    oper init(Window parent, Track track) : Window(parent), track = track {}
+
+    void bind(int key, Functor2[bool, Tracker, Event] callback) {
+        __callbacks[key] = callback;
+    }
+
+    bool onEvent(Event event) {
+        if (ke := KeyEvent.cast(event, null)) {
+            cb := __callbacks.get(convertKey(ke));
+            if (cb)
+                return cb(this, event);
+        }
+        return false;
+    }
+
+    uint __getTrackEnd() {
+        return track ? track[-1].time : 0;
+    }
+
+    # Returns pulses per step.
+    @define __getPPS() { __ppb / __spb }
+
+    ## Returns the total number of steps represented by the track.
+    uint __getSteps() {
+        frames := __getTrackEnd();
+        pps := @__getPPS();
+        steps := frames / pps;
+        if (frames % pps)
+            steps += 1;
+        return steps;
+    }
+
+    void __renderEvent(GraphicsContext gc, int row, int col, MidiEvent event) {
+        if (n := NoteEvent.cast(event, null)) {
+            gc.write(col, row, channelAttr,
+                     radix(n.channel, 16)
+                     );
+            gc.write(col + 1, row, noteAttr, radix(n.note, 16));
+            gc.write(col + 3, row, velAttr, radix(n.velocity, 16));
+        }
+    }
+
+    void pageDown() {
+        if (__top + height < __getSteps())
+            __top += height;
+    }
+
+    void pageUp() {
+        if (__top >= height)
+            __top -= height;
+        else
+            __top = 0;
+    }
+
+    void down() {
+        if (__curRow < __getSteps() - 1) {
+            ++__curRow;
+
+            if (__curRow >= __top + height)
+                __top = __curRow - height + 1;
+        }
+    }
+
+    void up() {
+        if (__curRow > 0) {
+            --__curRow;
+
+            if (__curRow < __top)
+                __top = __curRow;
+        }
+    }
+
+    void paint() {
+        gc := getGraphicsContext();
+        gc.fillRect(0, 0, width, height, backgroundAttr, b' ');
+
+        if (__irregular) {
+            gc.write(0, 0, 7, 'Irregular mode not implemented yet.');
+        } else {
+            steps := __getSteps();
+            pps := @__getPPS();
+            for (int i = __top; i < __top + height && i < steps; ++i) {
+                iter := track.iter();
+                pos := i * pps;
+                endPos := pos + pps;
+                col := 0;
+
+                for (iter.setPos(pos); iter && iter.getPos() < endPos;
+                     iter.next()) {
+                    __renderEvent(gc, i - __top, col, iter.elem());
+                    col += 5;
+                }
+
+                # Clear out the rest of the selected line.
+                if (i == __curRow && col < width)
+                    gc.write(col, i - __top, selectedRowAttr,
+                             ' ' * (width - col)
+                             );
+            }
+        }
+    }
+}
+
+alias TrackerObj = ObjOf[Tracker];
+alias TrackObj = ObjOf[Track];
+
+@function TrackerObj makeTracker(Window parent, Track track) {
+    tracker := Tracker(parent, track);
+
+    @function(Tracker) int pageUp() {
+        self.pageUp();
+        return 1;
+    }
+
+    @function(Tracker) int pageDown() {
+        self.pageDown();
+        return 1;
+    }
+
+    @function(Tracker) int up() {
+        self.up();
+        return 1;
+    }
+
+    @function(Tracker) int down() {
+        self.down();
+        return 1;
+    }
+
+    @function(Tracker) int setFocus(int focus) {
+        self.setFocus(focus);
+        return 1;
+    }
+
+    @function(Tracker) TrackObj getTrack() {
+        return makeTrackObj(self.track);
+    }
+
+    @function(Tracker) int setTrack(Track track) {
+        self.track = track;
+        return 0;
+    }
+
+    result := TrackerObj(tracker);
+    result.define('bind', BindCmd[Tracker](tracker, result));
+    result.define('setFocus', setFocus(tracker));
+    result.define('pageUp', pageUp(tracker));
+    result.define('pageDown', pageDown(tracker));
+    result.define('up', up(tracker));
+    result.define('down', down(tracker));
+    result.define('getTrack', getTrack(tracker));
+    result.define('setTrack', setTrack(tracker));
+    return result;
+}

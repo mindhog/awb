@@ -8,15 +8,15 @@ import crack.io cerr, cout, SeekableReader, SeekableWriter, StandardFormatter,
     SEEK_END, SEEK_SET;
 import crack.lang Exception;
 import crack.sys argv;
-import crash createRootContext, eval, Builtin, EvalContext, Obj, ParmInfo;
+import crash.crash createRootContext, eval, Builtin, EvalContext, Obj, ParmInfo;
 import spug.loop.jack BYTES_PER_SAMPLE;
 import spug.loop.plugins PluginInstance, PluginLibrary;
 import spug.loop.plugincmds makeEffectObj;
 import spug.loop.processors makeBufferVector, BufferVector, Component;
 import spug.loop.render defineRendererFuncs;
-import types FloatObj, IntObj;
+import crash.types FloatObj, IntObj;
 
-@import ann function;
+@import crash.ann function;
 @import crack.ann assert;
 
 class TrackInfo {
@@ -47,7 +47,6 @@ class TrackInfo {
     oper init(String filename) {
         wave = readWave(src = makePath(filename).reader());
         __dataStart = src.tell();
-        cerr `channels: $(wave.channels)\n`;
 
         # Verify that the frame count appears accurate.
         src.seek(0, SEEK_END);

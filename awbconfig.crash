@@ -149,20 +149,35 @@ def midiTrack {file} 'Add a new midi track: midiTrack <file>' {
     prerr [format 'loading midi file ' $file '\n']
     var ti [TrackInfo $file]
     tracks append $ti
-    [getAWBEngine] loadMidiFile $file
+    var eng [getAWBEngine]
+    eng loadMidiFile $file
 
     # Get the last track, which will be the last midi track loaded from the
     # file.  Since a midi file can contain multiple tracks, this won't capture
     # the other tracks in the file.  However, these also won't have track info
     # entries, so the whole thing is already kind of broken.
     var track [[getTracks] last]
+    var trackIndex [- [[getTracks] count] 1]
 
     def editInTracker {parent onTerminate trackName} {
-        var result [Tracker $parent $track]
+        var result [Tracker $parent [track clone]]
         result bind $KEY_PGUP { result pageUp }
         result bind $KEY_PGDN { result pageDown }
-        prerr [format 'binding key ' $KEY_F3 '\n']
+        result bind $KEY_DOWN { result down }
+        result bind $KEY_UP { result up }
         result bind $KEY_F3 { onTerminate }
+
+        # '[' Crunches the current track.
+        result bind 91 {
+            var newTrack [
+                [result getTrack] crunch [
+                    [eng getCurrentSection] getMeasureSize
+                ]
+            ]
+            result setTrack $newTrack
+            eng replaceTrack $trackIndex [newTrack clone]
+        }
+
         result setFocus 1
         give $result
     }
