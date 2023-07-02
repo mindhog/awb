@@ -16,7 +16,7 @@ app bind 61 [callback { fwd }]
 var trackNum 0
 
 # The current project.
-var project 0
+var project 'project-not-defined'
 
 var _internalChannelMapper [ChannelMapper 0]
 
@@ -261,6 +261,7 @@ def findUniqueAudioTrack {} {
 var AudioRecorder [object {
     var trackName [findUniqueAudioTrack]
     var enabled [+ 0]
+    var monitorEnabled true
     var eng [get_engine]
     var channels $STEREO
     var control ''
@@ -273,6 +274,7 @@ var AudioRecorder [object {
         # Preserve the current filename for the callback.
         set recorder [makeAudioFileRecorder [format $trackName '.wav'] \
                                             $channels]
+        recorder enableMonitor $monitorEnabled
         recorder setCloseCallback [callback {
             var tn $trackName
             # We have to recalculate this
@@ -325,6 +327,30 @@ var AudioRecorder [object {
     }
 
     def isEnabled {} { give $enabled }
+
+    ## Returns a model object (suitable for use with a ToggleButton) for
+    ## enabling/disabling monitoring during record.
+    def getMonitorModel {} {
+        object {
+            def activate {} {
+                set monitorEnabled true
+                if {give $recorder} {
+                    recorder enableMonitor true
+                }
+            }
+
+            def deactivate {} {
+                set monitorEnabled false
+                if {give $recorder} {
+                    recorder enableMonitor false
+                }
+            }
+
+            def isEnabled {} {
+                == $monitorEnabled true
+            }
+        }
+    }
 
     def setTrackName {newTrackName} {
         set trackName $newTrackName
@@ -399,6 +425,7 @@ def ToggleButton {parent size text model} \
         if {model isEnabled} {
             win setNormalAttr 65
             win setUnfocusedAttr 1
+            set active [+ 1]
         } else {
             win setNormalAttr 66
             win setUnfocusedAttr 2
@@ -748,6 +775,10 @@ def v {} 'Bring up the text panel UI.' {
                 $setAudioFilename
         ]
         AudioRecorder setControl $audioFilenameActionButton
+
+        var monitorEnabledButton [
+            ToggleButton $stateRow 4 'Mon' [AudioRecorder getMonitorModel]
+        ]
 
         var centerPane [Frame $mainColumn -1]
 
