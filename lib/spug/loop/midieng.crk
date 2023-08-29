@@ -2,7 +2,7 @@ import crack.cont.array Array;
 import crack.cont.hashmap HashMap;
 import crack.ext._jack JackClient;
 import crack.functor Functor1, Functor2;
-import crack.io cerr, FileHandle;
+import crack.io cerr, FileHandle, Formatter;
 import crack.lang Exception, InvalidStateError;
 import crack.logger debug, error, info;
 import crack.math floor;
@@ -989,6 +989,10 @@ class MidiDispatcher @impl EventProcessor {
     bool oper call(MidiSequencer engine, Event event) {
         engine.outPort.send(event);
         return true;
+    }
+
+    void formatTo(Formatter out) {
+        out `MidiDispatcher`;
     }
 }
 
