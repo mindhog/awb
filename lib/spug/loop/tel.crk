@@ -63,7 +63,9 @@ import .server startServer;
     return 0;
 }
 
-FluidSynth synth = {FluidSettings()};
+settings := FluidSettings();
+settings.set('audio.driver', 'jack');
+FluidSynth synth = {settings};
 synth.loadFont('/usr/share/sounds/sf2/FluidR3_GM.sf2', true);
 
 Orchestra orch = [
@@ -1238,9 +1240,9 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
 
     ## Adds a midi output processor that sends all events to the midi output
     ## port.
-    @function(AWBEngine) int routeToOutputPort() {
-        self.addOutputProcessor(MidiDispatcher());
-        return 0;
+    @function(AWBEngine) MidiDispatcher routeToOutputPort() {
+        self.addOutputProcessor(md := MidiDispatcher());
+        return md;
     }
 
     ## Route all events to the given instrument object.  Adds an output
