@@ -42,7 +42,7 @@ import .instrument FluidSynthInstrument, Instrument, MidiInstrument,
 import .midifile MidiFile;
 import .server startServer;
 
-@import crack.ann assert, cvars, impl, interface;
+@import crack.ann assert, cvars, impl, interface, struct;
 @import crash.ann function;
 
 @export_symbols TrackObj;
@@ -329,6 +329,14 @@ alias SequencerWaveModelObj = ObjOf[SequencerWaveModel];
 
 alias TrackObj = ObjOf[Track];
 
+# A Mutable midi track.
+@struct MutMidiTrack {
+    Track track;
+}
+
+alias MutMidiTrackObj = ObjOf[MutMidiTrack];
+MutMidiTrackObj _makeMutMidiTrack(Track track);
+
 TrackObj makeTrackObj(Track track) {
     result := TrackObj(track);
 
@@ -359,12 +367,76 @@ TrackObj makeTrackObj(Track track) {
         return makeTrackObj(MidiTrack.clone(self));
     }
 
+    ## Return a mutable copy of the track.
+    @function(Track) MutMidiTrackObj mutable() {
+        return _makeMutMidiTrack(MidiTrack.clone(self));
+    }
+
+    # Note that because these methods are reused by MutMidiTrack, we must not
+    # add any methods that expose the underlying track.  If there's a need for
+    # that, refactor these safe methods out into a shared function.
     result.define('getName', getName(track));
     result.define('isMidi', isMidi(track));
     result.define('dump', dump(track));
     result.define('crunch', crunch(track));
     result.define('clone', clone(track));
+    result.define('mutable', mutable(track));
     return result;
+}
+
+## The track object will be consumed, so it should be owned by the caller.
+MutMidiTrackObj _makeMutMidiTrack(Track track) {
+    # Start with an immutable track object.
+    trackObj := makeTrackObj(track);
+
+    # Copy all of the methods of the track object.
+    mutTrack := MutMidiTrack(track);
+    result := MutMidiTrackObj(mutTrack);
+    for (def :in trackObj.vars)
+        result.define(def.key, def.val);
+
+    ## Add a single event to the track, returns the event.
+    @function(MutMidiTrack) Event add(Event event) {
+        self.track.add(event);
+        return event;
+    }
+
+    ## Merge "other" into the track at the specified position (in ticks).
+    ## Note that this will exclude any EndTrack if the track already ends
+    ## with one.
+    @function(MutMidiTrack) int merge(int pos, Track other) {
+        endEvent := self.track.count() && self.track[-1].isa(EndTrack) ?
+                    self.track[-1] : null;
+        int endEventIndex = endEvent ? self.track.count() - 1 : 0;
+
+        # Change the time of the last event of the new track if necessary.
+        if (endEvent) {
+            endEventIndex = self.track.count() - 1;
+            if (other.count() &&
+                (lastNewEventTime := other[-1].time + pos) > endEvent.time)
+                endEvent.time = lastNewEventTime;
+        }
+
+        for (event :in other) {
+            event = event.clone();
+            event.time += pos;
+            isEndTrack := event.isa(EndTrack);
+            if (!endEvent || !isEndTrack) {
+                self.track.add(event);
+            }
+        }
+        return 0;
+    }
+
+    result.define('add', add(mutTrack));
+    result.define('merge', merge(mutTrack));
+    return result;
+}
+
+## Create am empty mutable midi track with the given name.
+@function MutMidiTrackObj makeMutMidiTrack(String name) {
+    track := Track(name);
+    return _makeMutMidiTrack(track);
 }
 
 ## Returns an iterator over the tracks in the current section (an iterator
@@ -1399,6 +1471,7 @@ class InterpWrapper {
         ctx.define('makeSequencerWaveModel', makeSequencerWaveModel());
         ctx.define('addWaveModel', addWaveModel());
         ctx.define('addMemFile', addMemFile());
+        ctx.define('MutMidiTrack', makeMutMidiTrack());
         ctx.define('getTracks', getTracks());
         ctx.define('loadProject', loadProject());
         ctx.define('saveProject', saveProject());
