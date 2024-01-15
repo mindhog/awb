@@ -9,6 +9,8 @@ import crack.io cerr, cout, SeekableReader, SeekableWriter, StandardFormatter,
 import crack.lang Exception;
 import crack.sys argv;
 import crash.crash createRootContext, eval, Builtin, EvalContext, Obj, ParmInfo;
+import crash.stdlib stdlib;
+import crash.collections collections;
 import spug.loop.jack BYTES_PER_SAMPLE;
 import spug.loop.plugins PluginInstance, PluginLibrary;
 import spug.loop.plugincmds makeEffectObj;
@@ -490,6 +492,8 @@ class Scan {
 }
 
 ctx := createRootContext();
+ctx.define('collections', collections());
+ctx.define("stdlib", stdlib());
 
 if (argv[1] == 'legacy_mix') {
 
