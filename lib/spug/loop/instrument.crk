@@ -17,6 +17,7 @@ import crack.midi.fluidsynth FluidSynth;
     @abstract void noteOff(byte note);
     @abstract void programChange(byte program);
     @abstract void pitchBend(int value);
+    @abstract void controlChange(byte controller, byte value);
 
     ## Returns the child instrument for a specific channel.
     Instrument getChild(byte channel) {
@@ -35,6 +36,8 @@ import crack.midi.fluidsynth FluidSynth;
             programChange(pc.program);
         } else if (pb := PitchWheel.cast(event, null)) {
             pitchBend(pb.value);
+        } else if (cc := ControlChange.cast(event, null)) {
+            controlChange(cc.controller, cc.value);
         }
     }
 }
@@ -56,6 +59,10 @@ class Orchestra : Object @implements Instrument {
     void noteOff(byte note) { __instruments[0].i.noteOff(note); }
 
     void pitchBend(int value) { __instruments[0].i.pitchBend(value); }
+
+    void controlChange(byte controller, byte value) {
+        __instruments[0].i.controlChange(controller, value);
+    }
 
     void programChange(byte program) {
         __instruments[0].i.programChange(program);
@@ -98,6 +105,10 @@ class MidiInstrument : Object @implements Instrument {
         port.send(PitchWheel(0, channel, value));
     }
 
+    void controlChange(byte controller, byte value) {
+        port.send(ControlChange(0, channel, controller, value));
+    }
+
     void stop() {
         # 123 - all notes off.
         port.send(ControlChange(0, channel, 123, 0));
@@ -128,6 +139,13 @@ class FluidSynthInstrument : Object @implements Instrument {
 
     void pitchBend(int value) {
         synth.pitchBend(channel, value);
+    }
+
+    void controlChange(byte controller, byte value) {
+        # TODO: we don't currently implement controllers in fluidsynth, but we
+        # should.
+        if (controller == 123 && value == 0)
+            stop();
     }
 
     void stop() {

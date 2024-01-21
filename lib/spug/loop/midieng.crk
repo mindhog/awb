@@ -142,6 +142,10 @@ alias TimeCallback = Functor1[void, TimeEvent];
          __outputProcessors = {};
     ModelObserver __modelObserver;
 
+    ## Keeps track of all of the channels that we've sent output to so that
+    ## they can be silenced when we go idle.
+    Array[bool] __channelsUsed = {256, false};
+
     ## The track we're currently recording.  If this is non-null and the
     ## transport is rolling, we're recording.  Otherwise we're not.
     Track __recordTrack;
@@ -299,6 +303,8 @@ alias TimeCallback = Functor1[void, TimeEvent];
     }
 
     void __dispatchOutputEvent(Event event) {
+        if (event := ChannelEvent.cast(event, null))
+            __channelsUsed[event.channel] = true;
         __dispatchEvent(__outputProcessors, event);
     }
 
@@ -706,6 +712,14 @@ alias TimeCallback = Functor1[void, TimeEvent];
             __jack.start();
         } else {
             __jack.stop();
+
+            # Silence all channels.
+            for (chi :on __channelsUsed) {
+                if (chi.elem())
+                    __dispatchOutputEvent(
+                        ControlChange(0, byte(chi.index), 123, 0)
+                    );
+            }
 
             __posIsValid = false;
             __updateJackState();
