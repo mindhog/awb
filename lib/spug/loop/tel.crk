@@ -372,6 +372,11 @@ TrackObj makeTrackObj(Track track) {
         return _makeMutMidiTrack(MidiTrack.clone(self));
     }
 
+    ## Returns the span of the underlying track in ticks.
+    @function(Track) int span() {
+        return self ? self[-1].time : 0;
+    }
+
     # Note that because these methods are reused by MutMidiTrack, we must not
     # add any methods that expose the underlying track.  If there's a need for
     # that, refactor these safe methods out into a shared function.
@@ -380,6 +385,7 @@ TrackObj makeTrackObj(Track track) {
     result.define('dump', dump(track));
     result.define('crunch', crunch(track));
     result.define('clone', clone(track));
+    result.define('span', span(track));
     result.define('mutable', mutable(track));
     return result;
 }
@@ -396,7 +402,26 @@ MutMidiTrackObj _makeMutMidiTrack(Track track) {
         result.define(def.key, def.val);
 
     ## Add a single event to the track, returns the event.
+    ##
+    ## This gives special treatment to EndTrack events to ensure that we
+    ## maintain the end track invariants.  It should always do the "right
+    ## thing", and it will return the existing EndTrack (potentially with a
+    ## modified time) if there was one.
     @function(MutMidiTrack) Event add(Event event) {
+        # If it's an EndTrack event, do special stuff.
+        if (event.isa(EndTrack) && self.track.count()) {
+            last := self.track[-1];
+
+            # If we've already got an end track, just use the latter of the two.
+            if (last.isa(EndTrack)) {
+                if (last.time < event.time)
+                    last.time = event.time;
+                return last;
+            }
+
+            if (last.time > event.time)
+                event.time = last.time;
+        }
         self.track.add(event);
         return event;
     }
@@ -554,6 +579,18 @@ class PortDescriptor {
 
 @function int Ev_getValue(Event event) {
     return ControlChange.cast(event).value;
+}
+
+@function NoteOn makeNoteOn(int time, int channel, int note, int velocity) {
+    return NoteOn(time, byte(channel), byte(note), byte(velocity));
+}
+
+@function NoteOff makeNoteOff(int time, int channel, int note) {
+    return NoteOff(time, byte(channel), byte(note), 0);
+}
+
+@function EndTrack makeEndTrack(int time) {
+    return EndTrack(time);
 }
 
 # Note that this is the _old style_ EventProcessor, prefer the
@@ -1040,7 +1077,7 @@ alias NoteMapperObj = ObjOf[NoteMapper];
 ## Returns a NoteMapper object, which is an event processor that maps one note
 ## to another.
 ##
-## NoteMapper has a "map" method that accepts to integers and causes the
+## NoteMapper has a "map" method that accepts two integers and causes the
 ## mapper to do the translation for a specific note.
 @function NoteMapperObj makeNoteMapper() {
 
@@ -1481,6 +1518,9 @@ class InterpWrapper {
         ctx.define('connect', connect());
         ctx.define('disconnect', disconnect());
         ctx.define('Ev_getValue', Ev_getValue());
+        ctx.define('NoteOn', makeNoteOn());
+        ctx.define('NoteOff', makeNoteOff());
+        ctx.define('EndTrack', makeEndTrack());
         ctx.define('volumeControl', volumeControl());
         ctx.define('setVolume', setVolume());
         ctx.define('panControl', panControl());
