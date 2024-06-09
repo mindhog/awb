@@ -234,6 +234,11 @@ class AWBEngine @impl ModelObserver {
     ## Replace the indexed track in the current section.
     void replaceTrack(uint index, OmniTrack track) {
         __project.replaceTrack(index, track);
+
+        # Reset the position.  This has the effect of resetting all track
+        # cursors, which will remove the cursor for the old track and install
+        # a cursor for the new one.
+        __midi.setPos(__midi.getTicks());
     }
 
     ## Add a wave file as a track in the current section.
