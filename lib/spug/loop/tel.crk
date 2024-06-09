@@ -137,9 +137,20 @@ alias OrchestraObj = ObjOf[Orchestra];
     return engine.addWaveFile(filename);
 }
 
+alias WaveObj = ObjOf[Wave];
+
 ## Read an entire wave file in as a Wave buffer.
-@function Wave readWave(String filename) {
-    return Wave.read(makePath(filename).reader());
+@function WaveObj readWave(String filename) {
+
+    ## Returns the number of frames in the wave.
+    @function(Wave) int getFrameCount() {
+        return self.size / self.channels;
+    }
+
+    wave := Wave.read(makePath(filename).reader());
+    result := WaveObj(wave);
+    result.define('getFrameCount', getFrameCount(wave));
+    return result;
 }
 
 ## Lengthen a wave by repeating the last nframes frames reps times.  rampLen
