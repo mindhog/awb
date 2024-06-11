@@ -1200,6 +1200,171 @@ class WriteThread : Thread {
     }
 }
 
+## Raised when the number of instructions added to a WaveTablePlayer exceeds
+## the size of the cicular buffer.
+class OverflowError : Exception {}
+
+@abstract class WaveTablePlayer @impl Functor1[void, JackWrapper] {
+    class __Voice {
+        ## A null buffer indicates that the voice is not active.
+        ManagedWaveBuffer buf;
+
+        uint pos;
+        byte note;
+        float multiplier;
+    }
+
+    Array[__Voice] _voices;
+    Array[ManagedWaveBuffer] __waves;
+    float volume = 0.75;
+
+    ## Instruction ring buffer.  Instructions are packed and of the form:
+    ## Note on:         01 00   note velocity
+    ## Note off:        02 00   00   note
+    ## Master volume:   03 [volume          ]  (multiplier to divide by 2^12)
+    Array[uint32] __instructions = {256, 0};
+    atomic_int __read, __write;
+
+    oper init(uint voiceCount, Array[ManagedWaveBuffer] waveTable) :
+        _voices(voiceCount),
+        __waves = waveTable {
+
+        for (int i = 0; i < voiceCount; ++i)
+            _voices.append(__Voice());
+    }
+
+    @final void __writeInstruction(uint32 inst) {
+        if (__write == (uint(__read) - 1) % 256)
+            throw OverflowError();
+        __instructions[__write] = inst;
+        __write += 1;
+        if (__write == 256)
+            __write -= 256;
+    }
+
+    @final void noteOn(byte note, byte velocity) {
+        __writeInstruction(uint32(0x01000000 | (uint(note) << 8) | velocity));
+    }
+
+    @final void noteOff(byte note) {
+        __writeInstruction(uint32(0x02000000 | note));
+    }
+
+    @final void setVolume(float vol) {
+        __writeInstruction(uint32(0x03000000 | int(vol * 4096) & 0xffffff));
+    }
+
+    @final void _processInstructions() {
+        while (__read != __write) {
+            instruction := __instructions[__read];
+            __read += 1;
+            if (__read == 256)
+                __read -= 256;
+            if ((instruction & 0xff000000) == 0x01000000) {
+                # Note on.
+
+                __Voice voice, oldest;
+                for (voice in _voices) {
+                    if (!voice.buf)
+                        break;
+                    if (!oldest || voice.pos > oldest.pos)
+                        oldest = voice;
+                }
+
+                if (voice.buf)
+                    # Didn't find a vacant voice, use the oldest.
+                    voice = oldest;
+
+                note := byte(instruction >> 8);
+                voice.buf = __waves[note];
+                voice.pos = 0;
+                voice.multiplier = float(instruction & 0xff) / 127.0;
+                voice.note = note;
+            } else if ((instruction & 0xff000000) == 0x02000000) {
+                # Note off.
+
+                # find the voice
+                __Voice voice;
+                note := instruction & 0xff;
+                for (voice in _voices) {
+                    if (voice.note == note)
+                        break;
+                }
+
+                # If we found a match, disable it.
+                if (voice.note == note)
+                    voice.buf = null;
+            } else if ((instruction & 0xff000000) == 0x03000000) {
+                # Set volume.
+                volume = float(instruction & 0xffffff) / 4096.0;
+            }
+        }
+    }
+}
+
+class StereoWaveTablePlayer : WaveTablePlayer {
+
+    oper init(uint voiceCount, Array[ManagedWaveBuffer] waveTable) :
+        WaveTablePlayer(voiceCount, waveTable) {
+    }
+
+    void oper call(JackWrapper jack) {
+        _processInstructions();
+        for (voice :in _voices) {
+            if (voice.buf) {
+                if (voice.pos > voice.buf.size - 2) {
+                    voice.buf = null;
+                } else {
+                    lbuf := jack.left.getBuffer(jack.frameCount);
+                    rbuf := jack.right.getBuffer(jack.frameCount);
+                    v := volume * voice.multiplier;
+                    for (int i; i < jack.frameCount; ++i) {
+                        lbuf[i] =
+                            lbuf[i] + float(voice.buf[voice.pos++]) / 32768.0 * v;
+                        rbuf[i] =
+                            rbuf[i] + float(voice.buf[voice.pos++]) / 32768.0 * v;
+                    }
+                }
+            }
+        }
+    }
+}
+
+class MonoWaveTablePlayer : WaveTablePlayer {
+
+    float __pan;
+
+    ## 'pan' is a value from -1 to +1, -1 is hard pan left, +1 is hard pan
+    ## right.
+    oper init(uint voiceCount, Array[ManagedWaveBuffer] waveTable,
+              float pan) :
+        WaveTablePlayer(voiceCount, waveTable),
+        __pan = pan {
+    }
+
+    void oper call(JackWrapper jack) {
+        _processInstructions();
+        for (voice :in _voices) {
+            if (voice.buf) {
+                if (voice.pos >= voice.buf.size) {
+                    voice.buf = null;
+                } else {
+                    leftMult := (1.0 - (__pan + 1.0) / 2) * volume *
+                                voice.multiplier;
+                    rightMult := (__pan + 1.0) / 2 * volume * voice.multiplier;
+                    lbuf := jack.left.getBuffer(jack.frameCount);
+                    rbuf := jack.right.getBuffer(jack.frameCount);
+                    for (int i; i < jack.frameCount; ++i) {
+                        sample := float(voice.buf[voice.pos++]) / (32768.0 * 2.0);
+                        lbuf[i] = lbuf[i] + sample * leftMult;
+                        rbuf[i] = rbuf[i] + sample * rightMult;
+                    }
+                }
+            }
+        }
+    }
+}
+
 class WaveManager : JackWrapper {
 
     Array[PCMTrackAdapter] adapters = {};

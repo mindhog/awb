@@ -5,10 +5,13 @@
 
 import crack.cont.array Array;
 import crack.lang AssertionError;
+import crack.audio.wavfile ManagedWaveBuffer;
 import crack.midi.alsa Port;
 import crack.midi.event ChannelEvent, ControlChange, Event, NoteOn, NoteOff,
     PitchWheel, ProgramChange;
 import crack.midi.fluidsynth FluidSynth;
+import .jack JackWrapper, MonoWaveTablePlayer, StereoWaveTablePlayer,
+    Wave, WaveTablePlayer;
 
 @import crack.ann interface, implements;
 
@@ -153,21 +156,54 @@ class FluidSynthInstrument : Object @implements Instrument {
     }
 }
 
-#class WavePlayerInstrument : Object @implements Instrument {
-#
-#    array[byte] __velocities;
-#
-#    Array[uint]
-#    Array[byte]
-#
-#    oper init() {}
-#
-#    void noteOn(byte note, byte velocity) {
-#
-#    }
-#
-#    void noteOff(byte note) {}
-#    void programChange(byte program) {}
-#    void pitchBend(int value) {}
-#    void stop() {}
-#}
+## Instrument where each note plays a wave in a table.
+class WavePlayerInstrument : Object @implements Instrument {
+
+    WaveTablePlayer processor;
+
+    # The midi note of the first wave in the table.  Higher notes map to
+    # sequentially increasing values in the table.
+    byte startNote;
+
+    # Number of waves in the table.
+    int waveCount;
+
+    oper init(JackWrapper jack, Array[Wave] waves, uint voiceCount,
+              byte startNote) :
+        startNote = startNote {
+
+        waveCount = waves.count();
+        jackWaves := Array[ManagedWaveBuffer](waveCount);
+        for (wave :in waves)
+            jackWaves.append(wave);
+        if (waves[0].channels == 1)
+            processor = MonoWaveTablePlayer(voiceCount, jackWaves, 0);
+        else
+            processor = StereoWaveTablePlayer(voiceCount, jackWaves);
+        jack.addProcessor(processor);
+    }
+
+    @final bool __noteInRange(byte note) {
+        return note >= startNote && note < startNote + waveCount;
+    }
+
+    void noteOn(byte note, byte velocity) {
+        if (!__noteInRange(note))
+            return;
+        processor.noteOn(note - startNote, velocity);
+    }
+
+    void noteOff(byte note) {
+        if (!__noteInRange(note))
+            return;
+        processor.noteOff(note - startNote);
+    }
+
+    void programChange(byte program) {}
+    void pitchBend(int value) {}
+    void stop() {}
+    void controlChange(byte controller, byte value) {
+        if (controller == 7)
+            processor.setVolume(value / 127);
+    }
+}

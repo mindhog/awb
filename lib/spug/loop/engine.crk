@@ -106,6 +106,8 @@ class AWBEngine @impl ModelObserver {
         __jack.deactivate();
     }
 
+    JackWrapper oper .jack() { return __jack }
+
     void copySection();
 
     ## Toggle playing midi and jack.

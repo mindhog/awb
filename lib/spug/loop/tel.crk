@@ -38,7 +38,7 @@ import spug.loop.jack jackCallback, RecordBuffer, SequencerWaveModel, Wave,
 import .engine engine, makeMidiEngine, AudioFileRecorder, AWBEngine,
     MidiTrackRecorder, Recorder, LEFT, RIGHT;
 import .instrument FluidSynthInstrument, Instrument, MidiInstrument,
-    Orchestra;
+    Orchestra, WavePlayerInstrument;
 import .midifile MidiFile;
 import .server startServer;
 
@@ -109,9 +109,34 @@ alias OrchestraObj = ObjOf[Orchestra];
         return makeInstrumentObj(orch.getChild(byte(index)));
     }
 
+    @function(Orchestra) int setInstrument(int index, Instrument inst) {
+        orch[index] = inst;
+        return 0;
+    }
+
     result := OrchestraObj(orch);
     result.define('getInstrument', getInstrument(orch));
+    result.define('setInstrument', setInstrument(orch));
     return result;
+}
+
+alias ObjArray = Array[Object];
+alias WaveObj = ObjOf[Wave];
+
+@function InstrumentObj makeWaveTableSynth(ObjArray waves, int voiceCount,
+                                           int startNote) {
+    waveBuffers := Array[Wave](waves.count());
+    for (wave :in waves) {
+        if (w := WaveObj.cast(wave, null))
+            waveBuffers.append(Wave.cast(w.inst));
+        else
+            waveBuffers.append(Wave.cast(wave));
+    }
+    return InstrumentObj(WavePlayerInstrument(engine.jack, waveBuffers,
+                                              voiceCount,
+                                              byte(startNote)
+                                              )
+                         );
 }
 
 @function int metro(int beats) {
@@ -136,8 +161,6 @@ alias OrchestraObj = ObjOf[Orchestra];
 @function WindowBufferAdapter load(String filename) {
     return engine.addWaveFile(filename);
 }
-
-alias WaveObj = ObjOf[Wave];
 
 ## Read an entire wave file in as a Wave buffer.
 @function WaveObj readWave(String filename) {
@@ -1445,8 +1468,6 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
     return pow(base, exp_coefficient * x * x);
 }
 
-alias ObjArray = Array[Object];
-
 ## Given a mapping of a -> b expressed as an array of floats and a value
 ## ('val') corresponding to a value in 'a', returns the interpolated value in
 ## 'b'.  For example, for the mapping [1 -> 2, 2 -> 4, 3 -> 6] and a value of
@@ -1524,6 +1545,7 @@ class InterpWrapper {
         ctx.define('loadProject', loadProject());
         ctx.define('saveProject', saveProject());
         ctx.define('getOrchestra', getOrchestra());
+        ctx.define('makeWaveTableSynth', makeWaveTableSynth());
         ctx.define('metro', metro());
         ctx.define('channel_connect', channelConnect());
         ctx.define('connect', connect());
