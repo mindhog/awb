@@ -11,7 +11,7 @@ import crack.functor Functor0, Functor1, Functor2;
 import crack.io cin, cout, cerr, FStr;
 import crack.lang AppendBuffer, CString, Exception;
 import crack.logger levelNames, setLogLevel, DEBUG, ERROR, FATAL, INFO, WARN;
-import crack.midi.alsa PortInfo, Sequencer, SND_SEQ_OPEN_OUTPUT,
+import crack.midi.alsa ClientInfo, PortInfo, Sequencer, SND_SEQ_OPEN_OUTPUT,
     SND_SEQ_OPEN_INPUT;
 import crack.net Poller, POLLIN, POLLERR, POLLOUT;
 import crack.process Process;
@@ -551,6 +551,29 @@ class PortDescriptor {
         }
     }
 
+    ClientInfo __getClientInfo(Sequencer seq, String clientName) {
+        for (client :in seq.getAllClients()) {
+            if (client.getName() == clientName)
+                return client;
+        }
+        throw Exception(FStr() `Client $clientName not found.`);
+    }
+
+    ClientInfo getClientInfo(Sequencer seq) {
+        if (mode != PM_MIDI)
+            throw Exception(FStr() `Port $name is not a midi port.`);
+
+        # Get the client name/port name.
+        sep := name.lfind('/');
+        if (sep == -1)
+            throw Exception(
+                FStr() I`$(name.getRepr()) is not a legal midi port name \
+                         (should be of the form <client>/<port>)`
+            );
+        clientName := name.substr(0, sep);
+        return __getClientInfo(seq, clientName);
+    }
+
     PortInfo getPortInfo(Sequencer seq) {
         if (mode != PM_MIDI)
             throw Exception(FStr() `Port $name is not a midi port.`);
@@ -565,13 +588,10 @@ class PortDescriptor {
         clientName := name.substr(0, sep);
         portName := name.substr(sep + 1);
 
-        for (client :in seq.getAllClients()) {
-            if (client.getName() == clientName) {
-                for (port :in client.getAllPorts(seq.seq)) {
-                    if (portName == port.getName())
-                        return port;
-                }
-            }
+        client := __getClientInfo(seq, clientName);
+        for (port :in client.getAllPorts(seq.seq)) {
+            if (portName == port.getName())
+                return port;
         }
 
         throw Exception(FStr() `Port $name not found.`);
@@ -1519,6 +1539,16 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
     }
 }
 
+## Creates a MidiInstrument.
+##
+## makeMidiInstrument <name> <channel>
+## name - output port name.  This will be created if it doesn't exist.
+## channel - channel to send all channel events to (the channel in the event
+##      itself will be ignored)
+@function MidiInstrument makeMidiInstrument(String name, int channel) {
+    return MidiInstrument(engine.getOutPort(name), byte(channel));
+}
+
 class InterpWrapper {
 
     EvalContext __rootCtx = createRootContext();
@@ -1560,6 +1590,7 @@ class InterpWrapper {
         ctx.define('setPan', setPan());
         ctx.define('setGain', setGain());
         ctx.define('makeAudioFileRecorder', makeAudioFileRecorder());
+        ctx.define('makeMidiInstrument', makeMidiInstrument());
         ctx.define('makeMidiTrackRecorder', makeMidiTrackRecorder());
         ctx.define('makeControllerOffsetChange',
                          makeControllerOffsetChange());

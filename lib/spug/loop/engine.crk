@@ -81,6 +81,9 @@ class AWBEngine @impl ModelObserver {
     # Input processor that serves as a bridge to legacy controller events.
     ControllerDispatcher __controllerDispatcher = {};
 
+    # Midi output ports.
+    TreeMap[String, Port] __outputPorts = {};
+
     void setTempo(int bpm);
 
     ## Construct the engine using the old event manager.
@@ -549,6 +552,16 @@ class AWBEngine @impl ModelObserver {
             __portCache[client << 16 | portNum] = port;
         }
         port.connectTo(client, portNum);
+        return port;
+    }
+
+    ## Returns a named midi output port, creating it if it doesn't exist.
+    Port getOutPort(String name) {
+        port := __outputPorts.get(name);
+        if (!port) {
+            port = __seq.makeReadPort(name.toCString());
+            __outputPorts[name] = port;
+        }
         return port;
     }
 }
