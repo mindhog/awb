@@ -830,13 +830,21 @@ def v {} 'Bring up the text panel UI.' {
             [get_engine] deleteTrack [self getSelection]
             give true
         }
+        tracklist bind $KEY_UP {
+            tracklist selectUp
+            give true
+        }
+        tracklist bind $KEY_DOWN {
+            tracklist selectDown
+            give true
+        }
         centerPane setParcel $tracklist
 
         bind $KEY_SPACE play
         bind $KEY_LEFT bak
         bind $KEY_RIGHT fwd
         bind $KEY_F2 saveProject
-        bind $KEY_F5 {seek 0}
+        bind $KEY_F5 {[get_engine] resetPos}
 
         # Lower-case "r" to record.
         bind 114 {[get_engine] toggleRecord}

@@ -1,13 +1,14 @@
 
 import crack.cont.array Array;
 import crack.cont.hashmap HashMap;
-import crack.exp.termui Event, KeyEvent, TermApp, Window, KEY_UP, KEY_DOWN,
-    KEY_LEFT, KEY_RIGHT, KEY_PGUP, KEY_PGDN, KEY_BACKSPACE, KEY_ENTER,
-    KEY_ESC, KEY_SPACE;
+import crack.exp.termui Event, GraphicsContext, KeyEvent, TermApp,
+    Window, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_PGUP, KEY_PGDN,
+    KEY_BACKSPACE, KEY_ENTER, KEY_ESC, KEY_SPACE;
 import crack.functor Functor0, Functor1, Functor2;
 import crack.io cerr, cout, FStr, StandardFormatter, StringFormatter;
 import crack.lang AppendBuffer, Exception;
 import crack.logger cerrLogger;
+import crack.midi.event Track;
 import crack.net Poller;
 import crack.net.pollqueue PollQueue;
 import crash.crash createRootContext, eval, parseBlockArg, parseString, Block,
@@ -24,6 +25,7 @@ import .engine engine, AWBEngine;
 import .model Controller, OmniTrack;
 import .midieng MidiEngine, TimeCallback, TimeEvent;
 import .tel AppMethods, CrashCallback, InterpWrapper;
+import .uiutil renderTrack;
 
 @import crack.ann cvars, impl, implements, interface;
 @import crash.ann function;
@@ -75,23 +77,142 @@ class Status : Window {
     }
 }
 
-class TrackList : List {
+_trackAttrs := Array[byte]![
+    0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70,
+    0x01, 0x21, 0x31, 0x41, 0x71,
+    0x02, 0x12, 0x42, 0x52,
+    0x03, 0x43, 0x53,
+    0x14, 0x24, 0x34, 0x54, 0x64, 0x74,
+    0x05, 0x25, 0x35, 0x45, 0x65, 0x75,
+    0x06, 0x16, 0x46, 0x56,
+    0x07, 0x17, 0x47, 0x57,
+];
+int _nextAttr;
+
+## Track extensions.  Stores information on a track that is useful to the UI.
+class TrackExt {
+    byte attr;
+
+    ## Set to true when reloading tracks, and reset to false when the track is
+    ## found so that we can clean up any unused tracks.
+    bool gc;
+
+    oper init() {
+        attr = _trackAttrs[_nextAttr++];
+    }
+}
+
+HashMap[uintz, TrackExt] _trackExtensions = {};
+
+class TrackList : Window {
+
+    byte
+        normalAttr = 6,  # cyan
+        selectionAttr = 0x47; # white on blue
+
+    alias EventCallback = Functor2[bool, TrackList, Event];
+    HashMap[int, EventCallback] __bindings = {};
+    int selection, top;
+
+    ## The start position of the left edge of the track viewer in midi pulses.
+    int left;
+
     @final void reloadTracks() {
-        model = Array[String]();
-        for (track :in engine.getCurrentSection().tracks)
-            model.append(track.name);
+        # Set the GC flag for each extension so we can clean up the unused
+        # ones.
+        for (item :in _trackExtensions)
+            item.val.gc = true;
+
+        for (track :in engine.getCurrentSection().tracks) {
+            if (ext := _trackExtensions.get(uintz(track))) {
+                ext.gc = false;
+            } else {
+                ext := TrackExt();
+                _trackExtensions[uintz(track)] = ext;
+            }
+        }
+
+        for (iter := _trackExtensions.iter(); iter;) {
+            entry := iter.elem();
+            if (entry.val.gc) {
+                _trackExtensions.delete(entry.key);
+                iter = _trackExtensions.iter();
+            } else {
+                iter.next();
+            }
+        }
     }
 
-    oper init(Window parent) : List(parent, Array[String]()) {
+    oper init(Window parent) :
+        Window(parent) {
         reloadTracks();
     }
 
+    void bind(int key, EventCallback action) {
+        __bindings[key] = action;
+    }
+
+    bool onEvent(Event event) {
+        if ((event := KeyEvent.cast(event, null)) &&
+            (handler := __bindings.get(convertKey(event)))) {
+                return handler(this, event);
+        }
+
+        return false;
+    }
+
+    int __maxFirstCol(Array[Track] tracks) {
+        max := 0;
+        for (track :in tracks) {
+            if (track.name.size > max)
+                max = track.name.size;
+        }
+        return max;
+    }
+
+    void paint() {
+        gc := getGraphicsContext();
+        gc.fillRect(0, 0, width, height, 0, b' ');
+        focused := getFocus();
+        tracks := engine.getCurrentSection().tracks;
+        firstColWidth := __maxFirstCol(tracks);
+
+        # Write the header column.
+        gc.write(firstColWidth, 0, normalAttr, 'contents');
+
+        lastEvent := 0;
+        for (track :in tracks) {
+            if (track[-1].time > lastEvent)
+                lastEvent = track[-1].time;
+        }
+
+        for (int row = 0; row < height - 1; ++row) {
+            if (top + row >= tracks.count())
+                break;
+
+            attr := (row + top == selection) ? selectionAttr : normalAttr;
+            track := tracks[top + row];
+            gc.write(0, row + 1, attr, track.name);
+            ext := _trackExtensions.get(uintz(track));
+
+            # Create a nested graphics context to render the track
+            # visualization column to.
+            absPos := getAbsPos();
+            gc := GraphicsContext(getApp(),
+                                  absPos.x + firstColWidth,
+                                  absPos.y + row + 1,
+                                  width - firstColWidth,
+                                  1);
+            renderTrack(gc, 0, lastEvent, track, ext.attr);
+        }
+    }
+
     void trackAdded() {
-        model.append(engine.getCurrentSection().tracks[-1].name);
+        reloadTracks();
     }
 
     void waveAdded() {
-        model.append(engine.getCurrentSection().waves[-1].name);
+        # New wave should get a color assignment.
     }
 
     void trackDeleted() {
@@ -99,7 +220,20 @@ class TrackList : List {
     }
 
     @over void trackReplaced(uint index, OmniTrack track) {
-        model[index] = track.name;
+        reloadTracks();
+    }
+
+    @function(TrackList) int selectUp() {
+        if (self.selection)
+            self.selection--;
+        return self.selection;
+    }
+
+    @function(TrackList) int selectDown() {
+        tracks := engine.getCurrentSection().tracks;
+        if (self.selection < tracks.count() - 1)
+            self.selection++;
+        return self.selection;
     }
 
     @function(TrackList) int getSelection() {
@@ -679,7 +813,7 @@ class TextController : Object @implements Controller, AppMethods {
             }
         }
 
-        alias TrackListObj = ObjOf[List];
+        alias TrackListObj = ObjOf[TrackList];
 
         @function(TextController)
         TrackListObj makeTrackList(Window parent, int size) {
@@ -688,8 +822,10 @@ class TextController : Object @implements Controller, AppMethods {
             result := TrackListObj(list);
             result.define('getSelection', TrackList.getSelection(list));
             result.define('setSelection', TrackList.setSelection(list));
+            result.define('selectUp', TrackList.selectUp(list));
+            result.define('selectDown', TrackList.selectDown(list));
             result.define('setFocus', setFocus(list));
-            result.define('bind', BindCmd[List](list, result));
+            result.define('bind', BindCmd[TrackList](list, result));
             self.__trackLists.append(list);
             return result;
         }

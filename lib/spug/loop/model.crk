@@ -367,6 +367,11 @@ class Section {
 
         return Mut(result);
     }
+
+    ## Returns the number of measuers in the section.
+    int oper .measureCount() {
+        return span / measure;
+    }
 }
 
 ## Global play modes.
