@@ -1,0 +1,44 @@
+## Utilities for graphically representing tracks.
+
+import crack.exp.termui GraphicsContext;
+import crack.midi.event Track;
+
+## Render a track onto a grpahics context.
+##
+## start: Left-most position in the view in midi ticks.
+## length: Width of the view in midi ticks.
+## attr: Attribute to use for characters in the track.
+void renderTrack(GraphicsContext gc,
+                 uint start,
+                 uint length,
+                 Track track,
+                 byte attr
+                 ) {
+    # Number of midi ticks in a single character column.
+    charLength := length / gc.getWidth();
+
+    iter := track.iter();
+    iter.setPos(start);
+    if (!iter)
+        return;
+
+    uint offset;
+    if (track[0].time > start + charLength)
+        offset = (track[0].time - start) / charLength;
+
+    end := start + length;
+    while (iter && (elem := iter.elem()).time < end) {
+        # Get the position of the character _after_ the element.
+        pos := (elem.time - start) / charLength + 1;
+
+        # Fill in everything up to the character before with blanks (since
+        # those regions have no events), fill in that character with a dash.
+        for (; offset < pos - 1; ++offset)
+            gc.write(offset, 0, attr, ' ');
+        if (offset < pos) {
+            gc.write(offset, 0, attr, '-');
+            ++offset;
+        }
+        iter.next();
+    }
+}
