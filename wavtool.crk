@@ -415,6 +415,11 @@ plugins := PluginLibrary();
     return 0;
 }
 
+@function int masterVol() {
+    cerr `masterVol has no effect on legacy mixer.\n`;
+    return 0;
+}
+
 ## Alternate command set and datastructures to support scanning.
 ## Wrapping this up in a class for modularity.
 ##
@@ -480,6 +485,10 @@ class Scan {
         return 0;
     }
 
+    @function(Scan) int masterVol(float val) {
+        return 0;
+    }
+
     void dump() {
         for (channel :in vols)
             cout `vol $(channel.key) $(channel.val)\n`;
@@ -508,6 +517,7 @@ if (argv[1] == 'legacy_mix') {
     ctx.define('close', close());
     ctx.define('collectStats', collectStats());
     ctx.define('showStats', showStats());
+    ctx.define('masterVol', masterVol());
 
     eval(makePath(argv[2]).readAll(), ctx);
 
@@ -532,6 +542,7 @@ if (argv[1] == 'legacy_mix') {
     ctx.define('close', Scan.close(scan));
     ctx.define('collectStats', Scan.collectStats(scan));
     ctx.define('showStats', Scan.showStats(scan));
+    ctx.define('masterVol', Scan.masterVol(scan));
 
     # Define the "merk" command so we can handle raw output without having to
     # add output filenames first.

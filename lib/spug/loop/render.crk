@@ -7,6 +7,7 @@ import crack.functor Functor1;
 import crack.io cerr, cout, SeekableReader, SeekableWriter, StandardFormatter,
     SEEK_END, SEEK_SET;
 import crack.lang Exception;
+import crack.math abs;
 import crash.crash createRootContext, eval, Builtin, EvalContext, Obj, ParmInfo;
 import crash.types FloatObj, IntObj;
 
@@ -76,6 +77,10 @@ class Renderer {
 
     SeekableWriter __outFile;
     WaveDef __outDef;
+    float __maxClip;
+
+    ## Master volume.
+    float masterVol = 1;
 
     @abstract class Track {
         @cvars {
@@ -199,21 +204,33 @@ class Renderer {
         __trackInfo[track].addWave(pos, wave);
     }
 
+    void __recordClip(float sample) {
+        # We only care about clipping if we're writing.
+        if (__outDef) {
+            sample = abs(sample);
+            if (sample > __maxClip)
+                __maxClip = sample;
+        }
+    }
+
     void writeBuffers(uint32 frames) {
 
-        int16 clip(float sample) {
-            if (sample > 1.0)
+        int16 clip(Renderer rend, float sample) {
+            if (sample > 1.0) {
+                rend.__recordClip(sample);
                 return 32767;
-            else if (sample < -1.0)
+            } else if (sample < -1.0) {
+                rend.__recordClip(sample);
                 return -32767;
-            else
+            } else {
                 return int16(sample * 32767);
+            }
         }
 
         outBuf := ManagedWaveBuffer(frames * 2);
         for (uint32 i; i < frames; ++i) {
-            outBuf.append(clip(__jack.lbuf[i]));
-            outBuf.append(clip(__jack.rbuf[i]));
+            outBuf.append(clip(this, __jack.lbuf[i] * masterVol));
+            outBuf.append(clip(this, __jack.rbuf[i] * masterVol));
         }
 
         if (__outDef)
@@ -255,6 +272,10 @@ class Renderer {
         forwardTo(uint32(frames));
         if (__outDef)
             __outDef.finish(__outFile);
+        if (__maxClip) {
+            cerr `Clipped.  Max sample is $__maxClip\n`;
+            __maxClip = 0;
+        }
     }
 
     void closeFile() {
@@ -330,6 +351,11 @@ PluginLibrary plugins;
     return makeEffectObj(inst);
 }
 
+@function(Renderer) int masterVol(float val) {
+    self.masterVol = val;
+    return 0;
+}
+
 ## Close the file ("pen up").
 @function(Renderer) int close() {
     self.closeFile();
@@ -352,6 +378,7 @@ void defineRendererFuncs(EvalContext ctx) {
     ctx.define('volume', volume(renderer));
     ctx.define('gain', gain(renderer));
     ctx.define('insertEffect', insertEffect(renderer));
+    ctx.define('masterVol', masterVol(renderer));
     ctx.define('close', close(renderer));
     ctx.define('finish', finish(renderer));
 }
