@@ -10,7 +10,7 @@ import crack.midi.event ChannelEvent, ControlChange, Event;
 import crash.crash parseBlockArg, Block, Builtin, EvalContext, Obj, ParmInfo;
 import crash.types BoolObj, FloatObj, IntObj;
 import spug.loop.model EventContext;
-import spug.loop.jack WaveManager, WaveModel, PCMTrackAdapter;
+import spug.loop.jack Mixer, WaveManager, WaveModel, PCMTrackAdapter;
 import .engine AWBEngine;
 import .plugins PluginInstance, PluginLibrary;
 import .plugincmds makeEffectObj;
@@ -86,6 +86,25 @@ class VolumeControl : DirectControllerProcessor {
 
     float convertControllerValue(int val) {
         return float(val) / 128.0;
+    }
+}
+
+class MasterVolumeControl : DirectControllerProcessor {
+    Mixer __mixer;
+
+    oper init(Mixer mixer, WaveManager waveMan, Formatter out) :
+        DirectControllerProcessor(waveMan, out),
+        __mixer = mixer {
+    }
+
+    float oper .value=(float vol) {
+        __mixer.volume = vol;
+        out `masterVol $vol\n`;
+        return vol;
+    }
+
+    float convertControllerValue(int val) {
+        return float(val) / 127.0;
     }
 }
 
@@ -241,6 +260,9 @@ class Project {
 
     PluginLibrary __plugins = {};
 
+    ## Mixer that we use for the main volume control.
+    Mixer __mixer;
+
     class Channel {
         @cvars {
             PCMTrackAdapter __adapter;
@@ -300,6 +322,14 @@ class Project {
         engine.addEventProcessor(volumeController, vol);
         ++__trackIndex;
         __channels.append(Channel(adapter, vol, pan));
+    }
+
+    Mixer __getMixer() {
+        if (!__mixer) {
+            __mixer = Mixer(2);
+            engine.addMasterComponent(__mixer);
+        }
+        return __mixer;
     }
 
     ## Adds a track given the name of a wave file.
@@ -389,11 +419,27 @@ class Project {
         return inst;
     }
 
+    ## Set the master volume.
+    void setMasterVolume(float vol) { __getMixer().volume = vol }
+
+    ## Get the master volume.
+    float getMasterVolume() { return __getMixer().volume }
+
     ## Bind an arbitrary controller event to an event processor.
     ## As elsewhere, 'controller' is an integer in which the low-byte is the
     ## controller id and the high-byte is the channel number.
     void bindController(int controller, EventProcessor processor) {
         engine.addEventProcessor(controller, processor);
+    }
+
+    ## Bind the master volume to a controller.
+    void bindMasterVolume(int controller) {
+        engine.addEventProcessor(controller,
+                                 MasterVolumeControl(__getMixer(),
+                                                     engine.getWaveManager(),
+                                                     out
+                                                     )
+                                 );
     }
 }
 
@@ -498,6 +544,11 @@ class Project_bindControllerScriptCmd : Builtin {
     return self.dir.getFullName();
 }
 
+@function(Project) int Project_bindMasterVolume(int controller) {
+    self.bindMasterVolume(controller);
+    return 0;
+}
+
 class EventRecorderModule {
     AWBEngine engine;
     oper init(AWBEngine engine) : engine = engine {}
@@ -529,6 +580,7 @@ Obj makeEventRecorderModule(AWBEngine engine) {
         obj.define('setEnabled', Project_setEnabled(proj));
         obj.define('getEnabled', Project_getEnabled(proj));
         obj.define('getDir', Project_getDir(proj));
+        obj.define('bindMasterVolume', Project_bindMasterVolume(proj));
         cerr `makeProject() -> $(obj.vars)\n`;
         return obj;
     }

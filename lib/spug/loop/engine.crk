@@ -22,6 +22,7 @@ import .midieng ControllerDispatcher, EventProcessor, MidiDispatcher,
 import .midifile MidiFile;
 import .model AudioTrack, EventContext, OmniTrack, ProjectRef, Section,
     WaveTrack;
+import .processors Component;
 
 @import crack.ann assert, cvars, impl;
 @import .ann immut, nullable;
@@ -563,6 +564,11 @@ class AWBEngine @impl ModelObserver {
             __outputPorts[name] = port;
         }
         return port;
+    }
+
+    ## Add a component for processing master output.
+    void addMasterComponent(Component comp) {
+        __jack.addComponent(comp);
     }
 }
 

@@ -64,6 +64,14 @@ int bufferFrameCount = 4096;
         _next = other;
     }
 
+    ## Returns the last component in the chain.
+    Component getLast() {
+        comp := this;
+        while (comp._next)
+            comp = comp._next;
+        return comp;
+    }
+
     @abstract void run(int numFrames);
 
     ## Activate the component.

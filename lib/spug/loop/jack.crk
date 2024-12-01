@@ -1365,10 +1365,54 @@ class MonoWaveTablePlayer : WaveTablePlayer {
     }
 }
 
+## A jack processor that runs the jack buffers through a component chain.
+## Used to apply effects to the final output.
+class ComponentProcessor @impl Functor1[void, JackWrapper] {
+    BufferVector __outputs;
+    @cvars {
+        Component __comp;
+    }
+
+    @static void __copy(array[float] src, array[float] dest, int size) {
+        for (int i; i < size; ++i)
+            dest[i] = src[i];
+    }
+
+    void oper call(JackWrapper jack) {
+        # Create the output vectors if we don't already have them and set them
+        # for the last component in the chain.
+        if (!__outputs)
+            __outputs = BufferVector![AudioBuffer(jack.frameCount, 0),
+                                      AudioBuffer(jack.frameCount, 0)];
+        __comp.getLast().setOutputBuffers(__outputs);
+
+        bufs := __comp.getInputBuffers();
+
+        for (int i; i < jack.frameCount; ++i) {
+            __outputs[0][i] = 0;
+            __outputs[1][i] = 0;
+        }
+        __copy(jack.lbuf, bufs[0].data(), jack.frameCount);
+        __copy(jack.rbuf, bufs[1].data(), jack.frameCount);
+        __comp.run(jack.frameCount);
+        __copy(__outputs[0].data(), jack.lbuf, jack.frameCount);
+        __copy(__outputs[1].data(), jack.rbuf, jack.frameCount);
+    }
+
+    ## Add a new component to the end of the chain.
+    void add(Component comp) {
+        __comp.getLast().append(comp);
+    }
+}
+
 class WaveManager : JackWrapper {
 
     Array[PCMTrackAdapter] adapters = {};
     RefreshThread refreshThread;
+
+    # Effects processing for the main output.  This processor must remain at
+    # the end of the chain.
+    ComponentProcessor __master;
 
     oper init() {
         # Add a processor to clear the output buffers.
@@ -1399,9 +1443,21 @@ class WaveManager : JackWrapper {
         return wm;
     }
 
+    ## Add a processor while ensuring that the master processor remains at the
+    ## end of the chain.
+    void __addProc(Functor1[void, JackWrapper] proc) {
+        if (__master) {
+            removeProcessor(__master);
+            addProcessor(proc);
+            addProcessor(__master);
+        } else {
+            addProcessor(proc);
+        }
+    }
+
     WaveAdapter addWave(Wave wave) {
         model := SimpleWaveModel(wave);
-        addProcessor(result := WaveAdapter(model));
+        __addProc(result := WaveAdapter(model));
         adapters.append(result);
         return result;
     }
@@ -1415,7 +1471,7 @@ class WaveManager : JackWrapper {
     ## Add a raw WaveModel.  This is most useful for adding a
     ## SequenceWaveModel.
     WaveAdapter addWaveModel(WaveModel model) {
-        addProcessor(result := WaveAdapter(model));
+        __addProc(result := WaveAdapter(model));
         adapters.append(result);
         return result;
     }
@@ -1441,17 +1497,28 @@ class WaveManager : JackWrapper {
         frameCount = 1;
         # Another hack to force precompilation of WindowBufferAdapter.
         adapter(this);
-        addProcessor(adapter);
+        __addProc(adapter);
         adapters.append(adapter);
 
         return adapter;
+    }
+
+    ## Add a new component to the master output processor.
+    ComponentProcessor addComponent(Component comp) {
+        if (__master) {
+            __master.add(comp);
+        } else {
+            __master = ComponentProcessor(comp);
+            addProcessor(__master);
+        }
+        return __master;
     }
 
     ## Add a "pass-through" adapter for the given jack inputs.
     PassThroughAdapter addPassThrough(Array[String] inputs) {
         adapter := PassThroughAdapter(this, inputs);
         adapter(this);
-        addProcessor(adapter);
+        __addProc(adapter);
         adapters.append(adapter);
         return adapter;
     }
@@ -1485,7 +1552,7 @@ class WaveManager : JackWrapper {
                                         'stero or mono.');
         }
         WriteThread(buf, def, out).start();
-        addProcessor(recorder);
+        __addProc(recorder);
 
         return buf;
     }
