@@ -49,6 +49,8 @@ def makeProject {} {
         print 'done with control event\n'
     }
 
+    makeProjectHook $result
+
     # Store in the project variable.
     set project $result
 
@@ -92,6 +94,15 @@ def setTCF {newTCF} \
 
    setTCF <tcf-object>' {
     set tcf $newTCF
+}
+
+var makeProjectHook [def defaultHook {project} {}]
+
+def setMakeProjectHook {func} \
+    'Set the function to be called when a new project is created using
+    makeProject.  The function will be called with the new project as its only
+    argument.' {
+    set makeProjectHook $func
 }
 
 ## Stores information for interacting with a plugin.
