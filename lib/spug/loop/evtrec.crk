@@ -10,7 +10,8 @@ import crack.midi.event ChannelEvent, ControlChange, Event;
 import crash.crash parseBlockArg, Block, Builtin, EvalContext, Obj, ParmInfo;
 import crash.types BoolObj, FloatObj, IntObj;
 import spug.loop.model EventContext;
-import spug.loop.jack Mixer, WaveManager, WaveModel, PCMTrackAdapter;
+import spug.loop.jack Mixer, MultiChannelVolume, WaveManager, WaveModel,
+    PCMTrackAdapter;
 import .engine AWBEngine;
 import .plugins PluginInstance, PluginLibrary;
 import .plugincmds makeEffectObj;
@@ -90,15 +91,16 @@ class VolumeControl : DirectControllerProcessor {
 }
 
 class MasterVolumeControl : DirectControllerProcessor {
-    Mixer __mixer;
+    MultiChannelVolume __volumeComponent;
 
-    oper init(Mixer mixer, WaveManager waveMan, Formatter out) :
+    oper init(MultiChannelVolume volumeComponent, WaveManager waveMan,
+              Formatter out) :
         DirectControllerProcessor(waveMan, out),
-        __mixer = mixer {
+        __volumeComponent = volumeComponent {
     }
 
     float oper .value=(float vol) {
-        __mixer.volume = vol;
+        __volumeComponent.volume = vol;
         out `masterVol $vol\n`;
         return vol;
     }
@@ -260,8 +262,11 @@ class Project {
 
     PluginLibrary __plugins = {};
 
-    ## Mixer that we use for the main volume control.
-    Mixer __mixer;
+    ## Component chain for the master output channels.
+    Component __master;
+
+    ## Master volume control.
+    MultiChannelVolume __volumeComponent;
 
     class Channel {
         @cvars {
@@ -324,12 +329,19 @@ class Project {
         __channels.append(Channel(adapter, vol, pan));
     }
 
-    Mixer __getMixer() {
-        if (!__mixer) {
-            __mixer = Mixer(2);
-            engine.addMasterComponent(__mixer);
+    ## Get the master volume controller, creating it if necessary.
+    MultiChannelVolume __getVolumeComponent() {
+        if (!__volumeComponent)
+            __volumeComponent = MultiChannelVolume(2, 1.0);
+
+        if (!__master) {
+            __master = __volumeComponent;
+            engine.addMasterComponent(__master);
+        } else {
+            __master.getLast().append(__volumeComponent);
         }
-        return __mixer;
+
+        return __volumeComponent;
     }
 
     ## Adds a track given the name of a wave file.
@@ -420,10 +432,10 @@ class Project {
     }
 
     ## Set the master volume.
-    void setMasterVolume(float vol) { __getMixer().volume = vol }
+    void setMasterVolume(float vol) { __getVolumeComponent().volume = vol }
 
     ## Get the master volume.
-    float getMasterVolume() { return __getMixer().volume }
+    float getMasterVolume() { return __getVolumeComponent().volume }
 
     ## Bind an arbitrary controller event to an event processor.
     ## As elsewhere, 'controller' is an integer in which the low-byte is the
@@ -435,11 +447,16 @@ class Project {
     ## Bind the master volume to a controller.
     void bindMasterVolume(int controller) {
         engine.addEventProcessor(controller,
-                                 MasterVolumeControl(__getMixer(),
+                                 MasterVolumeControl(__getVolumeComponent(),
                                                      engine.getWaveManager(),
                                                      out
                                                      )
                                  );
+    }
+
+    ## Add a component to the master output.
+    void addMasterComponent(Component comp) {
+        engine.addMasterComponent(comp);
     }
 }
 
@@ -549,6 +566,11 @@ class Project_bindControllerScriptCmd : Builtin {
     return 0;
 }
 
+@function(Project) int Project_addMasterComponent(Component comp) {
+    self.addMasterComponent(comp);
+    return 0;
+}
+
 class EventRecorderModule {
     AWBEngine engine;
     oper init(AWBEngine engine) : engine = engine {}
@@ -581,6 +603,7 @@ Obj makeEventRecorderModule(AWBEngine engine) {
         obj.define('getEnabled', Project_getEnabled(proj));
         obj.define('getDir', Project_getDir(proj));
         obj.define('bindMasterVolume', Project_bindMasterVolume(proj));
+        obj.define('addMasterComponent', Project_addMasterComponent(proj));
         cerr `makeProject() -> $(obj.vars)\n`;
         return obj;
     }

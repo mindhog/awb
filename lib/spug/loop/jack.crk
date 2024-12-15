@@ -10,13 +10,14 @@ import crack.functor Function1, Functor1;
 import crack.io cout, cerr, FStr, Reader, SeekableReader, SeekableWriter,
     SEEK_SET;
 import crack.lang Buffer, CString, Exception, InvalidArgumentError;
-import crack.math max, abs;
+import crack.math min, max, abs;
 import crack.runtime free, sleep;
 import crack.threads Mutex, MutexLock, Thread;
 import crack.time Time;
 
 import .sysextra jack_disconnect;
-import .processors bufferFrameCount, AudioBuffer, BufferVector, Component;
+import .processors bufferFrameCount, AudioBuffer, BufferVector, Component,
+    SimpleComponent;
 
 @import crack.ann assert, cvars, impl, implements;
 
@@ -265,6 +266,7 @@ class Mixer @impl Component {
     void run(int frameCount) {
         if (!__active)
             return;
+
         numTracks := buffers.count();
         for (int i; i < frameCount; ++i) {
             for (int j; j < numTracks; ++j) {
@@ -287,6 +289,34 @@ class Mixer @impl Component {
 
     void deactivate() {
         __active = false;
+    }
+}
+
+## Applies volume to all channels.
+##
+## There should be the same number of input channels as there are output
+## channels, if this is not the case the effect will be applied across the
+## smaller number of channels, 1 to 1.  So for both the case of 2 input, 1
+## output and 1 input, 2 outputs, volume will only be modulated for the first
+## channel.
+class MultiChannelVolume : SimpleComponent {
+
+    float volume = 1.0;
+
+    oper init(int numChannels, float volume) :
+        SimpleComponent(numChannels),
+        volume = volume {
+    }
+
+    void run(int frameCount) {
+        channels := min(getInputChannelCount(), getOutputChannelCount());
+        for (int i; i < channels; ++i) {
+            for (int j; j < frameCount; ++j) {
+                _outputs[i][j] = _inputs[i][j] * volume;
+            }
+        }
+        if (_next)
+            _next.run(frameCount);
     }
 }
 
@@ -1388,10 +1418,6 @@ class ComponentProcessor @impl Functor1[void, JackWrapper] {
 
         bufs := __comp.getInputBuffers();
 
-        for (int i; i < jack.frameCount; ++i) {
-            __outputs[0][i] = 0;
-            __outputs[1][i] = 0;
-        }
         __copy(jack.lbuf, bufs[0].data(), jack.frameCount);
         __copy(jack.rbuf, bufs[1].data(), jack.frameCount);
         __comp.run(jack.frameCount);

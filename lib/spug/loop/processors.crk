@@ -3,7 +3,7 @@
 import crack.cont.array Array;
 import crack.io cerr;
 
-@import crack.ann interface;
+@import crack.ann impl, interface;
 
 alias AudioBuffer = Array[float];
 alias BufferVector = Array[AudioBuffer];
@@ -79,6 +79,29 @@ int bufferFrameCount = 4096;
 
     ## Deactivate the component.
     @abstract void deactivate();
+}
+
+## Implements the framework of a component (input and output buffers and a
+## flag to indicate whether it is active).
+##
+## Derived classes must implement the run() method, checking for _active and
+## processing _inputs and writing the result to _outputs.
+@abstract class SimpleComponent @impl Component {
+
+    bool _active;
+    BufferVector _inputs, _outputs;
+
+    oper init(int channelCount) : _inputs(channelCount) {
+        for (int i; i < channelCount; ++i)
+            _inputs.append(AudioBuffer(bufferFrameCount, 0));
+    }
+
+    int getInputChannelCount() { return _inputs.count() }
+    BufferVector getInputBuffers() { return _inputs }
+    int getOutputChannelCount() { return _outputs ? _outputs.count() : 0 }
+    void setOutputBuffers(BufferVector buffers) { _outputs = buffers }
+    void activate() { _active = true }
+    void deactivate() { _active = false }
 }
 
 ## Returns a buffer vector consisting of numBuffers buffers of length

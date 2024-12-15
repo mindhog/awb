@@ -35,6 +35,7 @@ import spug.loop.sysextra pow;
 import spug.loop.jack jackCallback, RecordBuffer, SequencerWaveModel, Wave,
     WaveAdapter, WaveManager, WaveModel, WindowBufferAdapter;
 
+import .components defineComponents;
 import .engine engine, makeMidiEngine, AudioFileRecorder, AWBEngine,
     MidiTrackRecorder, Recorder, LEFT, RIGHT;
 import .instrument FluidSynthInstrument, Instrument, MidiInstrument,
@@ -1624,6 +1625,8 @@ class InterpWrapper {
         ctx.define('LEFT', SimpleValue(IntObj(LEFT)));
         ctx.define('RIGHT', SimpleValue(IntObj(RIGHT)));
         ctx.define('STEREO', SimpleValue(IntObj(LEFT | RIGHT)));
+
+        defineComponents(ctx);
     }
 
     oper init(AppMethods app) {

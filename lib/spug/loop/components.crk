@@ -1,0 +1,112 @@
+## Native components.
+
+import crack.cont.array Array;
+import crack.math abs, log, min, E;
+import crash.crash Builtin, EvalContext, Obj, ObjOf, ParmInfo;
+import crash.types FloatObj, IntObj;
+
+import .processors SimpleComponent;
+
+@import crack.ann cvars;
+@import crash.ann function, method;
+
+## Logarithmic compressor.  Compresses amplitudes from 'knee' to 'high' to the
+## 'knee' to 'max' range on the logarithmic scale.
+class LogCompressor : SimpleComponent {
+    # The point at which we begin compressing.
+    float knee;
+
+    ## The top end of the compression range.  This is generally set to the
+    ## highest sample value.
+    float top;
+
+    ## The maximum value that the top is translated to.  This is normally
+    ## 1.0, but lower values can be used to compress to less than the
+    ## maximum volume.
+    float max;
+
+    float __highest;
+
+    oper init(int channels, float knee, float top, float max) :
+        SimpleComponent(channels),
+        knee = knee,
+        top = top,
+        max = max {
+    }
+
+    void run(int numFrames) {
+        channels := min(getInputChannelCount(), getOutputChannelCount());
+        range := top - knee;
+        import crack.io cerr;
+        for (int i; i < channels; ++i) {
+            for (int j; j < numFrames; ++j) {
+                sample := _inputs[i][j];
+                magnitude := abs(sample);
+                if (magnitude > 1.0 && magnitude > __highest) {
+                    __highest = magnitude;
+                    cerr `new high = $__highest\n`;
+                }
+                if (magnitude > knee) {
+                    sign := sample > 0 ? 1.0 : -1.0;
+                    sample = (log((magnitude - knee) / range * (E - 1) + 1) *
+                              (max - knee) + knee) * sign;
+                }
+                if (abs(sample) > 1.0)
+                    cerr `xxx clipping $(abs(sample))\n`;
+                _outputs[i][j] = sample;
+            }
+        }
+
+        if (_next)
+            _next.run(numFrames);
+    }
+}
+
+Obj _makeLogCompressorMethods() {
+    @method(LogCompressor, wrap) ObjOf[LogCompressor] setKnee(float val) {
+        self.knee = val;
+        return wrap;
+    }
+
+    @method(LogCompressor) float knee() { return self.knee }
+
+    @method(LogCompressor, wrap) ObjOf[LogCompressor] setTop(float val) {
+        self.top = val;
+        return wrap;
+    }
+
+    @method(LogCompressor) float top() { return self.top }
+
+    @method(LogCompressor, wrap) ObjOf[LogCompressor] setMax(float val) {
+        self.max = val;
+        return wrap;
+    }
+
+    @method(LogCompressor) float max() { return self.max }
+
+    obj := Obj();
+    obj.define('setKnee', setKnee());
+    obj.define('knee', knee());
+    obj.define('setTop', setTop());
+    obj.define('top', top());
+    obj.define('setMax', setMax());
+    obj.define('max', max());
+
+    return obj;
+}
+
+_logCompressorMethods := _makeLogCompressorMethods();
+
+@function ObjOf[LogCompressor] makeLogCompressor(int channels,
+                                                 float knee,
+                                                 float top,
+                                                 float max) {
+    result := LogCompressor(channels, knee, top, max);
+    obj := ObjOf[LogCompressor](result);
+    obj.parent = _logCompressorMethods;
+    return obj;
+}
+
+void defineComponents(EvalContext ctx) {
+    ctx.define('LogCompressor', makeLogCompressor());
+}
