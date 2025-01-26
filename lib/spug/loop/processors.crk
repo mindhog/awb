@@ -24,6 +24,10 @@ int bufferFrameCount = 4096;
 ##   jack output buffers.
 @interface Component {
 
+    ## Nullable unique identifier.  Used to store the variable that a
+    ## component is bound to in the logfile.
+    String id;
+
     ## The next component in the chain.
     Component _next;
 

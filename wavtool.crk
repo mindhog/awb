@@ -8,11 +8,12 @@ import crack.io cerr, cout, SeekableReader, SeekableWriter, StandardFormatter,
     SEEK_END, SEEK_SET;
 import crack.lang Exception;
 import crack.sys argv;
-import crash.crash createRootContext, eval, Builtin, EvalContext, Obj, ParmInfo;
+import crash.crash createRootContext, eval, Builtin, EvalContext, Obj, ObjOf,
+    ParmInfo;
 import crash.stdlib stdlib;
 import crash.collections collections;
 import spug.loop.jack BYTES_PER_SAMPLE;
-import spug.loop.plugins PluginInstance, PluginLibrary;
+import spug.loop.plugins DummyPlugin, PluginInstance, PluginLibrary;
 import spug.loop.plugincmds makeEffectObj;
 import spug.loop.processors makeBufferVector, BufferVector, Component;
 import spug.loop.render defineRendererFuncs;
@@ -465,7 +466,23 @@ class Scan {
         return 0;
     }
 
-    @function(Scan) int insertEffect(int track, String effect) {
+    @function(Scan)
+    ObjOf[PluginInstance] insertEffect(int track, String effect) {
+        return makeEffectObj(DummyPlugin());
+    }
+
+    @function(Scan)
+    ObjOf[PluginInstance] makePluginInst(String pluginName) {
+        return makeEffectObj(DummyPlugin());
+    }
+
+    @function(Scan)
+    int insertComponent(int index, Component comp) {
+        return 0;
+    }
+
+    @function(Scan)
+    int addMasterComponent(Component comp) {
         return 0;
     }
 
@@ -538,6 +555,9 @@ if (argv[1] == 'legacy_mix') {
     ctx.define('volume', Scan.volume(scan));
     ctx.define('gain', Scan.gain(scan));
     ctx.define('insertEffect', Scan.insertEffect(scan));
+    ctx.define('makePluginInst', Scan.makePluginInst(scan));
+    ctx.define('insertComponent', Scan.insertComponent(scan));
+    ctx.define('addMasterComponent', Scan.addMasterComponent(scan));
     ctx.define('finish', Scan.finish(scan));
     ctx.define('close', Scan.close(scan));
     ctx.define('collectStats', Scan.collectStats(scan));

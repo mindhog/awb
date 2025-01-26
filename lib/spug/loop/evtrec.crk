@@ -5,9 +5,10 @@ import crack.cont.treemap TreeMap;
 import crack.fs makePath, Path;
 import crack.functor Functor2;
 import crack.io cerr, Formatter, FStr, StandardFormatter;
-import crack.lang Exception, StaticString;
+import crack.lang Exception, InvalidArgumentError, StaticString;
 import crack.midi.event ChannelEvent, ControlChange, Event;
-import crash.crash parseBlockArg, Block, Builtin, EvalContext, Obj, ParmInfo;
+import crash.crash parseBlockArg, Block, Builtin, EvalContext, Obj, ObjOf,
+    ParmInfo;
 import crash.types BoolObj, FloatObj, IntObj;
 import spug.loop.model EventContext;
 import spug.loop.jack Mixer, MultiChannelVolume, WaveManager, WaveModel,
@@ -431,6 +432,34 @@ class Project {
         return inst;
     }
 
+    ## Create an instance of a plugin with the named identifier.
+    ##
+    ## 'id' can be null or empty, but it is otherwise used to associate the
+    ## plugin with a variable in the logfile that can subsequently be used to
+    ## change the parameters of the plugin.
+    PluginInstance makePluginInst(String id, String pluginName) {
+        plugin := __plugins.getPluginByName(pluginName);
+        if (!plugin)
+            throw Exception(FStr() `Unknown plugin $(pluginName.getRepr())`);
+        # TODO: need to get the rate from somewhere in the system.
+        inst := plugin.makeInstance(44100);
+        if (!id)
+            throw InvalidArgumentError('Identifier must be provided');
+        inst.id = id;
+        out `var $id [makePluginInst '$pluginName']\n`;
+        return inst;
+    }
+
+    ## Insert the component into the component chain for the track.
+    void insertComponent(int index, Component comp) {
+        if (!comp.id)
+            throw InvalidArgumentError(
+                FStr() `Component $comp does not have an identifier.`
+            );
+        __channels[index].insertComponent(comp);
+        out `insertComponent $index \$$(comp.id)\n`;
+    }
+
     ## Set the master volume.
     void setMasterVolume(float vol) { __getVolumeComponent().volume = vol }
 
@@ -455,8 +484,12 @@ class Project {
     }
 
     ## Add a component to the master output.
+    ##
+    ## This will only be added to the log if the component has an id.
     void addMasterComponent(Component comp) {
         engine.addMasterComponent(comp);
+        if (comp.id)
+            out `addMasterComponent \$$(comp.id)\n`;
     }
 }
 
@@ -512,6 +545,16 @@ alias ObjectArray = Array[Object];
 
 @function(Project) Obj Project_insertEffect(int index, String pluginName) {
     return makeEffectObj(self.insertEffect(index, pluginName));
+}
+
+@function(Project)
+ObjOf[PluginInstance] Project_makePluginInst(String id, String pluginName) {
+    return makeEffectObj(self.makePluginInst(id, pluginName));
+}
+
+@function(Project) int Project_insertComponent(int index, Component comp) {
+    self.insertComponent(index, comp);
+    return 0;
 }
 
 class Project_bindControllerScriptCmd : Builtin {
@@ -596,6 +639,8 @@ Obj makeEventRecorderModule(AWBEngine engine) {
         obj.define('getVol', Project_getVol(proj));
         obj.define('writeLog', Project_writeLog(proj));
         obj.define('insertEffect', Project_insertEffect(proj));
+        obj.define('makePluginInst', Project_makePluginInst(proj));
+        obj.define('insertComponent', Project_insertComponent(proj));
         obj.define('bindControllerScript',
                    Project_bindControllerScriptCmd(proj)
                    );

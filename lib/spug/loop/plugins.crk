@@ -170,6 +170,9 @@ class PluginInstance @impl Component {
         __rep.activate();
     }
 
+    class _Private {}
+    oper init(_Private privateConstructor) {}
+
     int getInputChannelCount() {
         if (__inBufs)
             return __inBufs.count();
@@ -275,6 +278,13 @@ class PluginInstance @impl Component {
     void deactivate() {
         __rep.deactivate();
     }
+}
+
+## A dummy plugin suitable for use by "wavtool scan"
+class DummyPlugin : PluginInstance {
+    oper init() : PluginInstance(null) {}
+
+    void setControlValue(String name, float value) {}
 }
 
 PluginInstance _makePluginInstance(Plugin plugin, LilvInstance inst) {

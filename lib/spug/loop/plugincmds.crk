@@ -33,6 +33,11 @@ float PluginInstance_getControlVal(String name) {
     return self.getControlValue(name);
 }
 
+@function(PluginInstance)
+String PluginInstance_id() {
+    return self.id;
+}
+
 alias PortObj = ObjOf[Port];
 
 @function(PluginInstance)
@@ -45,10 +50,11 @@ PortObj PluginInstance_getPortByName(String name) {
     return result;
 }
 
-Obj makeEffectObj(PluginInstance plugin) {
-    obj := Obj();
+ObjOf[PluginInstance] makeEffectObj(PluginInstance plugin) {
+    obj := ObjOf[PluginInstance](plugin);
     obj.define('setControl', PluginInstance_setControl(plugin));
     obj.define('getControlVal', PluginInstance_getControlVal(plugin));
+    obj.define('id', PluginInstance_id(plugin));
     obj.define('getPortByName', PluginInstance_getPortByName(plugin));
     return obj;
 }

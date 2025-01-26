@@ -4,16 +4,18 @@ import crack.audio.wavfile readWave, ManagedWaveBuffer, WaveBuffer, WaveDef;
 import crack.cont.array Array;
 import crack.fs makePath, Path;
 import crack.functor Functor1;
-import crack.io cerr, cout, SeekableReader, SeekableWriter, StandardFormatter,
-    SEEK_END, SEEK_SET;
-import crack.lang Exception;
+import crack.io cerr, cout, FStr, SeekableReader, SeekableWriter,
+    StandardFormatter, SEEK_END, SEEK_SET;
+import crack.lang Exception, InvalidArgumentError;
 import crack.math abs;
 import crash.crash createRootContext, eval, Builtin, EvalContext, Obj, ParmInfo;
 import crash.types FloatObj, IntObj;
 
-import .jack JackWrapper, SequencerWaveModel, Wave, WaveAdapter, WaveModel;
+import .jack ComponentProcessor, JackWrapper, SequencerWaveModel, Wave,
+    WaveAdapter, WaveModel;
 import .plugincmds makeEffectObj;
 import .plugins PluginInstance, PluginLibrary;
+import .processors Component;
 
 @import crash.ann function;
 @import crack.ann assert, cvars, impl;
@@ -103,8 +105,8 @@ class Renderer {
 
         int oper .rate() { return model.rate }
         uint oper .frames() { return model.frames }
-        void insertPlugin(PluginInstance plugin) {
-            adapter.insertComponent(plugin);
+        void insertComponent(Component comp) {
+            adapter.insertComponent(comp);
         }
 
         @abstract void addWave(uint pos, Wave wave);
@@ -167,8 +169,8 @@ class Renderer {
         __jack.initDumb(1024);
     }
 
-    void insertPlugin(int track, PluginInstance plugin) {
-        __trackInfo[track].insertPlugin(plugin);
+    void insertComponent(int track, Component comp) {
+        __trackInfo[track].insertComponent(comp);
     }
 
     void openOutput(Path file) {
@@ -259,6 +261,11 @@ class Renderer {
         __trackInfo[track].gain = gain;
     }
 
+    void addMasterComponent(Component comp) {
+        # At the JackWrapper level, we only need to add a processor.
+        __jack.addProcessor(ComponentProcessor(comp));
+    }
+
     ## Finish writing the current file from the remainder of all track data.
     void finish() {
         # Find the longest track.
@@ -347,8 +354,33 @@ PluginLibrary plugins;
     if (!plugin)
         throw Exception('No plugin with the specified name');
     inst := plugin.makeInstance(self.rate);
-    self.insertPlugin(track, inst);
+    self.insertComponent(track, inst);
     return makeEffectObj(inst);
+}
+
+## Creates and returns a new effects plugin.
+@function(Renderer) Obj makePluginInst(String pluginName) {
+    if (!plugins)
+         plugins = PluginLibrary();
+    plugin := plugins.getPluginByName(pluginName);
+    if (!plugin)
+        throw InvalidArgumentError('No plugin with the specified name');
+    inst := plugin.makeInstance(self.rate);
+    return makeEffectObj(inst);
+}
+
+## Inserts a new component onto the component chain of the track.
+@function(Renderer)
+int insertComponent(int index, Component comp) {
+    self.insertComponent(index, comp);
+    return 0;
+}
+
+## Adds a new component to the master channel component chain.
+@function(Renderer)
+int addMasterComponent(Component comp) {
+    self.addMasterComponent(comp);
+    return 0;
 }
 
 @function(Renderer) int masterVol(float val) {
@@ -378,7 +410,10 @@ void defineRendererFuncs(EvalContext ctx) {
     ctx.define('volume', volume(renderer));
     ctx.define('gain', gain(renderer));
     ctx.define('insertEffect', insertEffect(renderer));
+    ctx.define('makePluginInst', makePluginInst(renderer));
+    ctx.define('insertComponent', insertComponent(renderer));
     ctx.define('masterVol', masterVol(renderer));
+    ctx.define('addMasterComponent', addMasterComponent(renderer));
     ctx.define('close', close(renderer));
     ctx.define('finish', finish(renderer));
 }
