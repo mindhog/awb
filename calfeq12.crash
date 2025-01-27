@@ -1,4 +1,36 @@
 ## Crash wrapper for the Calf 12 band Equalizer.
+##
+## Usage:
+##    import [load_module /home/mmuller/w/awb/cafeq12.crash] initCalfEQ12
+##    var eq [initCalfEQ12 [project insertEffect $track 'Calf Equalizer 12 Band']]
+##    eq setControllers $midiControllers
+##    eq bind       # bind the controllers
+##    eq unbind     # Unbind them.
+##
+## We don't currently have a way to set the plugins for a specific track, but
+## if we did we'd probably do something like this to add the EQ for a track to
+## the track menu:
+##
+##     addTrackPlugin $track [
+##         Plugin EQ [
+##             def f {parent onTerminate name} {
+##                 # Bind controls on creation.
+##                 eq bind
+##
+##                 # unbind on termination
+##                 def myTerminate {} {
+##                     eq unbind
+##                     onTerminate
+##                 }
+##
+##                 eq startUI $parent $myTerminate $name
+##             }
+##         ]
+##     ]
+##
+## TODO:
+##  -   add an easy way to add a menu plugin per track
+##  -   write the eq creation and eq log to the logfile
 
 import [collections] map range
 
@@ -143,6 +175,9 @@ def initCalfEQ12 {eq} {
 
     # Activate the band gain ports.
     [range 1 8] each i {
+        project writeLog [
+            format [eq id] ' setControl \'F' $i ' Active\' 1\n'
+        ]
         eq setControl [format 'F' $i ' Active'] 1
     }
 
@@ -156,10 +191,17 @@ def initCalfEQ12 {eq} {
 
     def makeEQ {name} {
         def func {evt} {
-            # get value as a float from 0..1
+            # get value as a float from 0..1, bend it to the weird controller
+            # range and set it.
             var val [/ [* [Ev_getValue $evt] 1.0] 127.0]
-            # bend it to the weird controller range.
-            eq setControl $name [- [curve1 4 3 $val] 0.984375]
+            set val [- [curve1 4 3 $val] 0.984375]
+            eq setControl $name $val
+
+            # Write to the logfile.
+            project writeLog [
+                format 'forward ' [tell] '\n' \
+                       [eq id] ' setControl \'' $name '\' ' $val '\n'
+            ]
 
             # Dispatch to any observing UIs
             if {!= $ui undefined} {
