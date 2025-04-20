@@ -102,7 +102,7 @@ class TrackExt {
     }
 }
 
-HashMap[uintz, TrackExt] _trackExtensions = {};
+HashMap[String, TrackExt] _trackExtensions = {};
 
 class TrackList : Window {
 
@@ -124,11 +124,11 @@ class TrackList : Window {
             item.val.gc = true;
 
         for (track :in engine.getCurrentSection().tracks) {
-            if (ext := _trackExtensions.get(uintz(track))) {
+            if (ext := _trackExtensions.get(track.name)) {
                 ext.gc = false;
             } else {
                 ext := TrackExt();
-                _trackExtensions[uintz(track)] = ext;
+                _trackExtensions[track.name] = ext;
             }
         }
 
@@ -193,7 +193,7 @@ class TrackList : Window {
             attr := (row + top == selection) ? selectionAttr : normalAttr;
             track := tracks[top + row];
             gc.write(0, row + 1, attr, track.name);
-            ext := _trackExtensions.get(uintz(track));
+            ext := _trackExtensions.get(track.name);
 
             # Create a nested graphics context to render the track
             # visualization column to.
