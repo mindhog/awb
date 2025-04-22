@@ -326,7 +326,9 @@ alias TimeCallback = Functor1[void, TimeEvent];
         __recordTrack = Track(__recordTrackName);
         if (__transportState != JACK_TRANSPORT_ROLLING) {
             __jack.start();
+            __posIsValid = false;
             __updateJackState();
+            __startTime += __pos.usecs - __lastTime;
         }
         __computeStartTime();
         # If there are no tracks here or in jack, we started out in "latched"
