@@ -200,12 +200,13 @@ class Section {
 
         ## Records the "end of track" time.  If there is only one track it also
         ## sets the measure time.
-        ## If 'snapToMeasure' is true, snap the end time and events to the nearest
-        ## measure boundary.  That is to say, it changes the end time to the end of the last
-        ## measure if that is closer than the end of the next measure and
-        ## moves all events past the end of the last measure back to align with
-        ## the ending.
-        @final void markEnding(Track lastTrack, uint time, bool snapToMeasure) {
+        ##
+        ## If the new time is greater than the current span, adds as many
+        ## measures to the current span as necessary to encompass the new end
+        ## time.  If the new time is less than the current span, change the
+        ## track end time to the current span so that LoopCursor's work as
+        ## expected.
+        @final void markEnding(Track lastTrack, uint time) {
 
             if (!span) {
                 span = measure = time;
@@ -216,24 +217,10 @@ class Section {
                 if (!measure)
                     measure = time;
 
-                # if the end time is closer to the beginning of the measure than
-                # to the end, trim all events to the end of the measure boundary.
-                if (snapToMeasure) {
-                    timeInMeasure := time % measure;
-                    if (timeInMeasure < measure - timeInMeasure) {
-                        time -= timeInMeasure;
-                        if (lastTrack) {
-                            for (event :in lastTrack)
-                                if (event.time > time)
-                                    event.time = time;
-                        }
-                    }
-                }
-
                 if (time > span) {
                     info `increasing span: $time / $span`;
-                    multiple := (time - 1) / span + 1;
-                    span *= multiple;
+                    multiple := (time - 1) / measure + 1;
+                    span = multiple * measure;
                 }
                 time = span;
             }
@@ -241,8 +228,12 @@ class Section {
             # If we've been given a track with no end event, add one.  If there
             # is already an end event, we've already snapped it to the measure if
             # this was requested.
-            if (lastTrack && (!lastTrack.count() || !lastTrack[-1].isa(EndTrack)))
-                lastTrack.add(EndTrack(time));
+            if (lastTrack) {
+                if (!lastTrack.count() || !lastTrack[-1].isa(EndTrack))
+                    lastTrack.add(EndTrack(time));
+                else
+                    lastTrack[-1].time = time;
+            }
         }
 
         Mut deleteTrack(uint index) {
@@ -560,7 +551,7 @@ class ProjectRef {
         Event lastEvent;
         @assert(track.count() && (lastEvent = track[-1]).isa(EndTrack));
         sec := __section.clone();
-        sec.markEnding(track, lastEvent.time, true);
+        sec.markEnding(track, lastEvent.time);
         sec.tracks.append(track);
         __replaceSection(sec);
 
@@ -579,7 +570,7 @@ class ProjectRef {
             sec.tracks.append(track);
         }
         if (lastEvent) {
-            sec.markEnding(null, lastEvent.time, true);
+            sec.markEnding(null, lastEvent.time);
             __replaceSection(sec);
         }
 
