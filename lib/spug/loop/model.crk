@@ -696,6 +696,14 @@ class ProjectRef {
         lk := MutexLock(__mutex);
         return __project.getSectionCount();
     }
+
+    ## Sets the size of a measure in the current section.
+    void setMeasure(int pulses) {
+        lk := MutexLock(__mutex);
+        section := __section.clone();
+        section.measure = pulses;
+        __replaceSection(section);
+    }
 }
 
 Array[String] programNames = [

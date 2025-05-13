@@ -2,6 +2,7 @@
 ## used to provide the interface to the "TEL" language, an early predecessor
 ## to Crash.
 
+import crack.ascii parseInt;
 import crack.audio.wavfile ManagedWaveBuffer, WaveBuffer, WaveDef;
 import crack.strutil split, StringArray;
 import crack.cont.array Array;
@@ -11,6 +12,7 @@ import crack.functor Functor0, Functor1, Functor2;
 import crack.io cin, cout, cerr, FStr;
 import crack.lang AppendBuffer, CString, Exception;
 import crack.logger levelNames, setLogLevel, DEBUG, ERROR, FATAL, INFO, WARN;
+import crack.math strtod;
 import crack.midi.alsa ClientInfo, PortInfo, Sequencer, SND_SEQ_OPEN_OUTPUT,
     SND_SEQ_OPEN_INPUT;
 import crack.net Poller, POLLIN, POLLERR, POLLOUT;
@@ -19,6 +21,7 @@ import crack.runtime free;
 import crack.midi.event ChannelEvent, ControlChange, EndTrack, Event,
     NoteEvent, NoteOn, NoteOff, Track;
 import crack.midi.fluidsynth FluidSettings, FluidSynth;
+import crack.regex Regex;
 import crack.time TimeDelta;
 import crash.collections collections;
 import crash.crash createRootContext, eval, parseBlockArg, ActiveFunc, Block, Builtin,
@@ -252,6 +255,24 @@ alias WaveObj = ObjOf[Wave];
     if (pos != wave.size)
         def.writeData(out, buf.from(wave.size - pos, wave.buffer + pos));
     def.finish(out);
+    return 0;
+}
+
+const Regex
+    FLOAT_RX = Regex(r'\d+.\d+$'),
+    INT_RX = Regex(r'\d+$');
+
+## Set a fluidsynth setting.
+##
+## Settings can be either floating point (with a decimal point), integer or a
+## string.
+@function int fluidSet(String name, String value) {
+    if (FLOAT_RX.match(value))
+        settings.set(name, strtod(value));
+    else if (INT_RX.match(value))
+        settings.set(name, parseInt(value));
+    else
+        settings.set(name, value);
     return 0;
 }
 
@@ -1436,6 +1457,12 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
         return 0;
     }
 
+    ## Set the size of a measure in the current section in beats.
+    @function(AWBEngine) int setMeasure(int beats) {
+        self.setMeasure(self.getPPB() * beats);
+        return 0;
+    }
+
     result.define('play', play(engine));
     result.define('pause', pause(engine));
     result.define('addRecorder', addRecorder(engine));
@@ -1467,6 +1494,7 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
     result.define('setMidiRecordTrackName', setMidiRecordTrackName(engine));
     result.define('createNewSection', createNewSection(engine));
     result.define('setSection', setSection(engine));
+    result.define('setMeasure', setMeasure(engine));
 
     return result;
 }
@@ -1568,6 +1596,7 @@ class InterpWrapper {
         ctx.define('readWave', readWave());
         ctx.define('lengthenWave', lengthenWave());
         ctx.define('writeWave', writeWave());
+        ctx.define('fluidSet', fluidSet());
         ctx.define('makeSequencerWaveModel', makeSequencerWaveModel());
         ctx.define('addWaveModel', addWaveModel());
         ctx.define('addMemFile', addMemFile());

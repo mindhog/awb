@@ -505,6 +505,11 @@ class AWBEngine @impl ModelObserver {
         __project.setSection(index);
     }
 
+    ## Set the size of the measure in pulses.
+    void setMeasure(int pulses) {
+        __project.setMeasure(pulses);
+    }
+
     ## Set the next section to be played based on the index.
     ##
     ## Currently actually does nothing.
