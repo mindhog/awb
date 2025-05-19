@@ -13,7 +13,7 @@ app bind 45 [callback { bak }]
 app bind 61 [callback { fwd }]
 
 # Keeps track of the next track to be allocated with the "track" command.
-var trackNum 0
+var trackNum [+ 0]
 
 # The current project.
 var project 'project-not-defined'
