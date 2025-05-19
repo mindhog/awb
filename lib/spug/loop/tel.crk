@@ -145,19 +145,32 @@ alias WaveObj = ObjOf[Wave];
 
 @function int metro(int beats) {
     metroTrack := Track('Metronome');
-    metroTrack.append(NoteOn(0, 9, 31, 127));
-    metroTrack.append(NoteOff(1, 9, 31, 0));
 
     int i;
     ppb := engine.getPPB();
-    for (i = 1; i < beats; ++i) {
-        metroTrack.append(NoteOn(i * ppb, 9, 33, 127));
-        metroTrack.append(NoteOff(i * ppb + 1, 9, 33, 127));
+    start := 0;
+    span := engine.getCurrentSection().span;
+    if (span == 0)
+        # No current span, use 1 so we get a single measure of metronome.
+        span = 1;
+    measure := beats * ppb;
+
+    # Generate enough repetitions of the metronome pattern to fill the current
+    # span.
+    while (start < span) {
+        metroTrack.append(NoteOn(start, 9, 31, 127));
+        metroTrack.append(NoteOff(start + 1, 9, 31, 0));
+
+        for (i = 1; i < beats; ++i) {
+            metroTrack.append(NoteOn(start + i * ppb, 9, 33, 127));
+            metroTrack.append(NoteOff(start + i * ppb + 1, 9, 33, 127));
+        }
+
+        start += measure;
     }
 
-    metroTrack.append(EndTrack(i * ppb));
+    metroTrack.append(EndTrack(start));
     engine.addTrack(metroTrack);
-
     return 0;
 }
 
