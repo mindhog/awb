@@ -1,9 +1,10 @@
 ## Crash commands for controlling plugins.
 
 import crack.cont.array Array;
+import crash.collections wrapIterator, Iter;
 import crash.crash Builtin, EvalContext, Obj, ObjOf, ParmInfo;
 import crash.types FloatObj, IntObj;
-import .plugins PluginInstance, Port;
+import .plugins Plugin, PluginInstance, Port;
 
 @import crash.ann function;
 
@@ -22,6 +23,22 @@ float Port_default() {
     return self.default;
 }
 
+@function(Port)
+String Port_name() {
+    return self.getName();
+}
+
+alias PortObj = ObjOf[Port];
+
+PortObj wrapPort(Port port) {
+    result := PortObj(port);
+    result.define('min', Port_min(port));
+    result.define('max', Port_max(port));
+    result.define('default', Port_max(port));
+    result.define('name', Port_name(port));
+    return result;
+}
+
 @function(PluginInstance)
 int PluginInstance_setControl(String name, float val) {
     self.setControlValue(name, val);
@@ -38,16 +55,34 @@ String PluginInstance_id() {
     return self.id;
 }
 
-alias PortObj = ObjOf[Port];
+class PortIter : Iter {
+    Plugin.PortIter __rep;
+
+    oper init(Plugin.PortIter rep) : __rep = rep {}
+
+    Object elem() {
+        return wrapPort(__rep.elem());
+    }
+
+    bool next() {
+        __rep.next();
+        return __rep;
+    }
+
+    bool isTrue() {
+        return __rep;
+    }
+}
+
+@function(PluginInstance)
+Obj PluginInstance_getAllPorts() {
+    return wrapIterator(PortIter(self.iter()));
+}
 
 @function(PluginInstance)
 PortObj PluginInstance_getPortByName(String name) {
     port := self.getPortByName(name);
-    result := PortObj(port);
-    result.define('min', Port_min(port));
-    result.define('max', Port_max(port));
-    result.define('default', Port_max(port));
-    return result;
+    return wrapPort(port);
 }
 
 ObjOf[PluginInstance] makeEffectObj(PluginInstance plugin) {
@@ -56,5 +91,6 @@ ObjOf[PluginInstance] makeEffectObj(PluginInstance plugin) {
     obj.define('getControlVal', PluginInstance_getControlVal(plugin));
     obj.define('id', PluginInstance_id(plugin));
     obj.define('getPortByName', PluginInstance_getPortByName(plugin));
+    obj.define('getAllPorts', PluginInstance_getAllPorts(plugin));
     return obj;
 }

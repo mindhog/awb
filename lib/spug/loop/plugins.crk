@@ -253,6 +253,8 @@ class PluginInstance @impl Component {
         return PortNameIter(__controlsByName.iter());
     }
 
+    Plugin.PortIter iter() { return __plugin.iterPorts() }
+
     void setControlValue(String name, float value) {
         __controls[__controlsByName[name]] = value;
     }
