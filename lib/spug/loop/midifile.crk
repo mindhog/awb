@@ -1,8 +1,8 @@
 
 import crack.cont.array Array;
-import crack.io FStr, StringWriter, Reader, Writer;
+import crack.io BufferReader, FStr, StringWriter, Reader, Writer;
 import crack.lang AppendBuffer, Buffer, Exception;
-import crack.midi.event Event, MidiReader, MidiWriter, Track;
+import crack.midi.event Event, MetaEvent, MidiReader, MidiWriter, Track;
 
 class RBuf = Buffer {
     uint32 read4(uint pos) {
@@ -124,44 +124,45 @@ class MidiFile {
                     FStr() `Track header expected, got $(header.getRepr())`
                 );
 
-            # TODO: read the entire track into a StringReader based on its
-            # size.
+            # Read in the whole track and use it as the input for a MidiReader.
+            trackSize := (uint32(header[4]) << 24) |
+                         (uint32(header[5]) << 16) |
+                         (uint32(header[6]) << 8) |
+                         uint32(header[7]);
+            reader := MidiReader(BufferReader(src.read(trackSize)));
+            track := reader.readTrack(FStr() `$i`);
 
-            reader := MidiReader(src);
+            # Process certain meta events.
+            bool gotNonMetaEvents;
+            for (event :in track) {
+                if (meta := MetaEvent.cast(event, null)) {
+                    if (meta.action == 0x51) {
+                        # Tempo event.
+                        if (meta.contents.count() != 3)
+                            throw BadFileFormat(
+                                FStr() I`Expected set tempo event size of 3, \
+                                         got $(meta.contents.getRepr())`
+                            );
 
-            # See if we've got a set tempo event, read it if we've got it.
-            reader.needByte();
-            if (reader.buf.size >= 6 && reader.buf.startsWith('\0\xff\x51')) {
-                reader.readByte();  # Read and ignore the time.
-                b := reader.readByte();
-                if (b != 0xff)
-                    throw BadFileFormat(
-                        FStr() `Expected 0xff for synthetic event, got $b`
-                    );
+                        tempo := (uint(meta.contents[0]) << 16) |
+                                 (uint(meta.contents[1]) << 8) |
+                                 uint(meta.contents[2]);
 
-                b = reader.readByte();
-                if (b != 0x51)
-                    throw BadFileFormat(
-                        FStr() `Expected synthetic event 0x51, got $b`
-                    );
-
-                b = reader.readByte();
-                if (b != 3)
-                    throw BadFileFormat(
-                        FStr() `Expected set tempo event size of 3, got $b`
-                    );
-
-                tempo := (uint(reader.readByte()) << 16) |
-                         (uint(reader.readByte()) << 8) |
-                         uint(reader.readByte());
-                if (usecsPerBeat == -1) {
-                    usecsPerBeat = tempo;
-                } else if (usecsPerBeat != tempo) {
-                    throw BadFileFormat(
-                        FStr() I`Mismatched tempo specified for track $i, \
-                                 previously got $usecsPerBeat, new values is \
-                                 $tempo`
-                    );
+                        if (usecsPerBeat == -1) {
+                            usecsPerBeat = tempo;
+                        } else if (usecsPerBeat != tempo) {
+                            throw BadFileFormat(
+                                FStr() I`Mismatched tempo specified for track \
+                                         $i, previously got $usecsPerBeat, \
+                                         new values is $tempo`
+                            );
+                        }
+                    } else if (meta.action == 3) {
+                        # Track name.
+                        track.name = meta.contents;
+                    }
+                } else {
+                    gotNonMetaEvents = true;
                 }
             }
 
@@ -169,7 +170,8 @@ class MidiFile {
             if (usecsPerBeat == -1)
                 throw BadFileFormat('No set-tempo event found in first track');
 
-            result.append(reader.readTrack(FStr() `$i`));
+            if (gotNonMetaEvents)
+                result.append(track);
         }
 
         result.bpm = 6e+7 / float(usecsPerBeat);
