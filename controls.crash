@@ -1,0 +1,38 @@
+# Bind controllers to LV2 plugin ports.
+#
+# Example:
+#   def callback {fraction} { prerr $fraction }
+#   var reverb [project insertEffect 0 'Calf Reverb']
+#   bindControl $reverb 'Wet Amount' 3896 $callback
+#
+# If a "callback" is provided, it should be a function that accepts a fraction
+# (a value from 0 to 1).  It will be called whenever an event comes in from
+# the controller.  A string value of 'undefined' should be used if no callback
+# is desired.
+
+var dispatcher [ControllerDispatcher]
+get_engine | insertOutputProcessor 0 $dispatcher
+
+def bindControl {plugin portName cc callback} {
+
+    var port [plugin getPortByName $portName]
+    var floor [port min]
+    var increment [/ [- [port max] [port min]] 127]
+
+    def onEvent {event} {
+        var eventVal [Ev_getValue $event]
+        var val [+ [* $increment $eventVal] $floor]
+        plugin setControl $portName $val
+        project writeLog [
+             format 'forward ' [tell] '\n' [plugin id] ' setControl \'' \
+                $portName '\' ' $val '\n'
+        ]
+
+        if {!= $callback undefined} {
+            callback [/ [* 1.0 $eventVal] 127]
+        }
+
+    }
+
+    dispatcher setEventProcessor $cc [CrashEventProcessor $onEvent]
+}
