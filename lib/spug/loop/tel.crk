@@ -24,8 +24,9 @@ import crack.midi.fluidsynth FluidSettings, FluidSynth;
 import crack.regex Regex;
 import crack.time TimeDelta;
 import crash.collections collections;
-import crash.crash createRootContext, eval, parseBlockArg, ActiveFunc, Block, Builtin,
-    EvalContext, Obj, ObjOf, ParmInfo, SimpleValue, Value;
+import crash.crash createRootContext, eval, parseBlockArg, setCrashPathFromEnv,
+    ActiveFunc, Block, Builtin, EvalContext, Obj, ObjOf, ParmInfo,
+    SimpleValue, Value;
 import crash.repl repl;
 import crash.stdlib stdlib;
 import crash.types BoolObj, FloatObj, IntObj;
@@ -1675,6 +1676,7 @@ class InterpWrapper {
         __poller.add(cin, POLLIN | POLLERR);
 
         addCrashMethods(__rootCtx, app);
+        setCrashPathFromEnv(__rootCtx, 'AWB_CRASH_PATH');
     }
 
     void doREPL() {

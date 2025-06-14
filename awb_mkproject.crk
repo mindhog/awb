@@ -13,8 +13,7 @@ for (file :in cwd.children()) {
 
 dst := StandardFormatter(makePath(argv[1]).writer());
 dst I`\
-    import [load_module /home/mmuller/w/awb/awbconfig.crash] makeProject track \
-        vol pan gain
+    import [load_module awbconfig.crash] makeProject track vol pan gain
     var project [makeProject]
 
 `;
