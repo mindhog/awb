@@ -7,6 +7,7 @@ import crack.functor Functor2;
 import crack.io cerr, Formatter, FStr, StandardFormatter;
 import crack.lang Exception, InvalidArgumentError, StaticString;
 import crack.midi.event ChannelEvent, ControlChange, Event;
+import crash.collections wrapIterator, Iter;
 import crash.crash parseBlockArg, Block, Builtin, EvalContext, Obj, ObjOf,
     ParmInfo;
 import crash.types BoolObj, FloatObj, IntObj;
@@ -15,7 +16,7 @@ import spug.loop.jack Mixer, MultiChannelVolume, WaveManager, WaveModel,
     PCMTrackAdapter;
 import .engine AWBEngine;
 import .plugins PluginInstance, PluginLibrary;
-import .plugincmds makeEffectObj;
+import .plugincmds makeComponentObj, makeEffectObj;
 import .processors Component;
 
 @import crack.ann cvars, impl;
@@ -300,6 +301,9 @@ class Project {
         void insertComponent(Component component) {
             __adapter.insertComponent(component);
         }
+
+        ## Returns the first component of the component chain.
+        Component getHeadComponent() { return __adapter.headComponent }
     }
 
     Array[Channel] __channels = {};
@@ -446,6 +450,9 @@ class Project {
         if (!id)
             throw InvalidArgumentError('Identifier must be provided');
         inst.id = id;
+
+        # We don't specify the id for makePluginInst; the renderer version of
+        # the command doesn't accept an id.
         out `var $id [makePluginInst '$pluginName']\n`;
         return inst;
     }
@@ -458,6 +465,11 @@ class Project {
             );
         __channels[index].insertComponent(comp);
         out `insertComponent $index \$$(comp.id)\n`;
+    }
+
+    ## Return the head component for the track.
+    Component getHeadComponent(int index) {
+        return __channels[index].getHeadComponent();
     }
 
     ## Set the master volume.
@@ -557,6 +569,34 @@ ObjOf[PluginInstance] Project_makePluginInst(String id, String pluginName) {
     return 0;
 }
 
+class ComponentIter : Iter {
+    @cvars {
+        Component __cur;
+    }
+
+    bool next() {
+        if (__cur)
+            __cur = __cur.next;
+        return __cur;
+    }
+
+    Object elem() {
+        if (!__cur)
+            throw Exception(
+                'Trying to get element of empty component iterator'
+            );
+
+        return makeComponentObj(__cur);
+    }
+
+    bool isTrue() { return __cur }
+}
+
+## Returns an iterator over the set of components for the track.
+@function(Project) Obj Project_components(int track) {
+    return wrapIterator(ComponentIter(self.getHeadComponent(track)));
+}
+
 class Project_bindControllerScriptCmd : Builtin {
     @cvars{
         Project proj;
@@ -641,6 +681,7 @@ Obj makeEventRecorderModule(AWBEngine engine) {
         obj.define('insertEffect', Project_insertEffect(proj));
         obj.define('makePluginInst', Project_makePluginInst(proj));
         obj.define('insertComponent', Project_insertComponent(proj));
+        obj.define('components', Project_components(proj));
         obj.define('bindControllerScript',
                    Project_bindControllerScriptCmd(proj)
                    );

@@ -3,8 +3,9 @@
 import crack.cont.array Array;
 import crash.collections wrapIterator, Iter;
 import crash.crash Builtin, EvalContext, Obj, ObjOf, ParmInfo;
-import crash.types FloatObj, IntObj;
+import crash.types BoolObj, FloatObj, IntObj;
 import .plugins Plugin, PluginInstance, Port;
+import .processors Component;
 
 @import crash.ann function;
 
@@ -50,11 +51,6 @@ float PluginInstance_getControlVal(String name) {
     return self.getControlValue(name);
 }
 
-@function(PluginInstance)
-String PluginInstance_id() {
-    return self.id;
-}
-
 class PortIter : Iter {
     Plugin.PortIter __rep;
 
@@ -85,12 +81,31 @@ PortObj PluginInstance_getPortByName(String name) {
     return wrapPort(port);
 }
 
+@function(Component)
+String Component_id() {
+    return self.id;
+}
+
+@function(Component) bool Component_true() { return true }
+@function(Component) bool Component_false() { return false }
+
 ObjOf[PluginInstance] makeEffectObj(PluginInstance plugin) {
     obj := ObjOf[PluginInstance](plugin);
     obj.define('setControl', PluginInstance_setControl(plugin));
     obj.define('getControlVal', PluginInstance_getControlVal(plugin));
-    obj.define('id', PluginInstance_id(plugin));
+    obj.define('id', Component_id(plugin));
     obj.define('getPortByName', PluginInstance_getPortByName(plugin));
     obj.define('getAllPorts', PluginInstance_getAllPorts(plugin));
+    obj.define('isPluginInst', Component_true(plugin));
+    return obj;
+}
+
+Obj makeComponentObj(Component component) {
+    if (plugin := PluginInstance.cast(component, null))
+        return makeEffectObj(plugin);
+
+    obj := ObjOf[Component](component);
+    obj.define('isPluginInst', Component_false(component));
+    obj.define('id', Component_id(component));
     return obj;
 }

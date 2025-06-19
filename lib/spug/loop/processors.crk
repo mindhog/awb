@@ -76,6 +76,9 @@ int bufferFrameCount = 4096;
         return comp;
     }
 
+    ## Returns the next component in the chain, null for the last.
+    Component oper .next() { return _next }
+
     @abstract void run(int numFrames);
 
     ## Activate the component.
