@@ -647,6 +647,35 @@ var projectBasename 'project-auto'
 var projectFilename [format $projectBasename '.crash']
 var midiOutChannel [+ 0]
 
+def writeTrackAttrs {out index} {
+    project components $index | each comp {
+        print 'ok\n'
+        if {comp isPluginInst} {
+
+            var id [
+                if {comp id} {
+                    comp id
+                } else {
+                    give [format 't' $index 'fx' $j]
+                }
+            ]
+
+            out write [
+                format \
+                    'var ' $id ' [project makePluginInst ' $id ' \'' [comp name] \
+                        '\']\n' \
+                    'project insertComponent ' $index ' $' $id '\n'
+            ]
+        }
+    }
+
+    # Write the gain.
+    var gain [project getGain $index]
+    if {!= $gain [+ 1.0]} {
+        out write [format 'project setGain ' $index ' ' $gain '\n']
+    }
+}
+
 ## Save the current project.
 def saveProject {} {
     # Export all of the midi tracks to midi files.
@@ -660,6 +689,7 @@ def saveProject {} {
             out write [format 'midiTrack ' [track getName] '.mid\n']
         } else {
             out write [format 'track ' [track getName] '\n']
+            writeTrackAttrs $out $i
         }
         set i [+ $i 1]
     }

@@ -40,6 +40,14 @@ PortObj wrapPort(Port port) {
     return result;
 }
 
+## Returns the name of the plugin.
+##
+## The plugin name can be used to instantiate the plugin, so this isn't
+## purely descriptive.
+@function(PluginInstance) String PluginInstance_name() {
+    return self.plugin.getName();
+}
+
 @function(PluginInstance)
 int PluginInstance_setControl(String name, float val) {
     self.setControlValue(name, val);
@@ -91,6 +99,7 @@ String Component_id() {
 
 ObjOf[PluginInstance] makeEffectObj(PluginInstance plugin) {
     obj := ObjOf[PluginInstance](plugin);
+    obj.define('name', PluginInstance_name(plugin));
     obj.define('setControl', PluginInstance_setControl(plugin));
     obj.define('getControlVal', PluginInstance_getControlVal(plugin));
     obj.define('id', Component_id(plugin));

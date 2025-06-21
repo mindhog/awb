@@ -170,6 +170,8 @@ class PluginInstance @impl Component {
         __rep.activate();
     }
 
+    Plugin oper .plugin() { return __plugin }
+
     class _Private {}
     oper init(_Private privateConstructor) {}
 
