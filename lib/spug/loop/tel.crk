@@ -12,7 +12,7 @@ import crack.functor Functor0, Functor1, Functor2;
 import crack.io cin, cout, cerr, FStr;
 import crack.lang AppendBuffer, CString, Exception;
 import crack.logger levelNames, setLogLevel, DEBUG, ERROR, FATAL, INFO, WARN;
-import crack.math strtod;
+import crack.math ceil, strtod;
 import crack.midi.alsa ClientInfo, PortInfo, Sequencer, SND_SEQ_OPEN_OUTPUT,
     SND_SEQ_OPEN_INPUT;
 import crack.net Poller, POLLIN, POLLERR, POLLOUT;
@@ -23,7 +23,7 @@ import crack.midi.event ChannelEvent, ControlChange, EndTrack, Event,
 import crack.midi.fluidsynth FluidSettings, FluidSynth;
 import crack.regex Regex;
 import crack.time TimeDelta;
-import crash.collections collections;
+import crash.collections collections, makeArrayObj;
 import crash.crash createRootContext, eval, parseBlockArg, setCrashPathFromEnv,
     ActiveFunc, Block, Builtin, EvalContext, Obj, ObjOf, ParmInfo,
     SimpleValue, Value;
@@ -180,18 +180,63 @@ alias WaveObj = ObjOf[Wave];
     return engine.addWaveFile(filename);
 }
 
-## Read an entire wave file in as a Wave buffer.
-@function WaveObj readWave(String filename) {
+alias ArrayObj = ObjOf[Array[Object]];
 
+WaveObj makeWaveObj(Wave wave) {
     ## Returns the number of frames in the wave.
     @function(Wave) int getFrameCount() {
         return self.size / self.channels;
     }
 
-    wave := Wave.read(makePath(filename).reader());
+    ## Returns the frame rate, frames per second.
+    @function(Wave) int getRate() {
+        return self.rate;
+    }
+
+    ## Return an array consisting of the wave split into measures, based on
+    ## the number of beats per measure and tempo.
+    ##
+    ## If the measure size hasn't yet been defined, splits the wave into 1
+    ## second chunks.
+    @function(Wave) ArrayObj split() {
+        # beats per measure ("beats per bar" so as not to confuse with bpm)
+        bpb := engine.getCurrentSection().measure / engine.getPPB();
+
+        # Get the duration of a measure in frames.
+        fpm := bpb ? (60.0 / (float(engine.getTempo()) / bpb)) * self.rate :
+                     float(self.rate);
+
+        # Split the wave up into chunks.
+        result := Array[Object]();
+        cur := float(0);
+        frameCount := self.size / self.channels;
+        while (cur < frameCount) {
+            chunk := Wave(self.channels, uint(ceil(fpm)) * self.channels,
+                          self.rate);
+            end := uint(cur + fpm);
+            if (end > frameCount)
+                end = frameCount;
+            for (uint fi = uint(cur); fi < end; ++fi) {
+                for (uint ch; ch < self.channels; ++ch)
+                    chunk.append(self[fi * self.channels + ch]);
+            }
+            result.append(makeWaveObj(chunk));
+            cur += fpm;
+        }
+        return makeArrayObj(result);
+    }
+
     result := WaveObj(wave);
     result.define('getFrameCount', getFrameCount(wave));
+    result.define('getRate', getRate(wave));
+    result.define('split', split(wave));
     return result;
+}
+
+## Read an entire wave file in as a Wave buffer.
+@function WaveObj readWave(String filename) {
+    wave := Wave.read(makePath(filename).reader());
+    return makeWaveObj(wave);
 }
 
 ## Lengthen a wave by repeating the last nframes frames reps times.  rampLen
