@@ -72,7 +72,7 @@ def importer {symbols} \
     'Returns an import statement that imports "symbols" from the config
     script.' {
 
-    format 'import [load_module /home/mmuller/w/awb/awbconfig.crash] ' \
+    format 'import [load_module awbconfig.crash] ' \
         $symbols '\n'
 }
 
@@ -635,6 +635,14 @@ var sources [
         [StereoSource 'sys' 'system:capture_1' 'system:capture_2']
 ]
 
+## User UI callbacks.  These are called when the UI is started, allowing
+## projects and user configuration to customize the UI.
+##
+## This should be an array of callable objects accepting a single argument,
+## that being the "ui" object defined below (see "var ui" in the run closure).
+prerr 'defining callbacks\n'
+var uiCallbacks [array]
+
 # Show the menu of audio sources for audio recording.
 def showAudioSourceMenu {parent alternate textWidget} {
     var menu [makeMenu $parent $alternate $textWidget]
@@ -898,6 +906,18 @@ def v {} 'Bring up the text panel UI.' {
         var bottomBar [Frame $mainColumn 1]
         var timeBar [TimeBar $mainColumn 1 [getAWBEngine]]
         bottomBar setParcel $timeBar
+
+        # Bundle all of the interface points into an object and pass that to
+        # the user UI callbacks.
+        prerr [format 'in the house:' $uiCallbacks]
+        var ui [object {
+            var bind $bind
+            var setStatusText $setStatusText
+        }]
+        uiCallbacks iter | each callback {
+            prerr [format 'wtf??? - ' $ui]
+            callback $ui
+        }
     }
 }
 
