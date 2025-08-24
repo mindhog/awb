@@ -20,8 +20,8 @@ import .midieng ControllerDispatcher, EventProcessor, MidiDispatcher,
     MidiEngine, MidiSequencer, ModelObserver, ST_IDLE, ST_PLAY, ST_LATCHED,
     ST_RECORD;
 import .midifile MidiFile;
-import .model AudioTrack, EventContext, OmniTrack, ProjectRef, Section,
-    WaveTrack;
+import .model AudioTrack, EventContext, MidiTrack, OmniTrack, ProjectRef,
+    Section, WaveTrack;
 import .processors Component;
 
 @import crack.ann assert, cvars, impl;
@@ -374,12 +374,12 @@ class AWBEngine @impl ModelObserver {
     }
 
     ## Returns the first track that has the given name.
-    Track getTrackByName(String name) {
+    OmniTrack getTrackByName(String name) {
         return __project.getTrackByName(name);
     }
 
     ## Returns the set of tracks in the current section as an array.
-    @immut Array[Track] getAllTracks() {
+    @immut Array[OmniTrack] getAllTracks() {
         return __project.curSection.tracks;
     }
 
@@ -455,7 +455,12 @@ class AWBEngine @impl ModelObserver {
         file := MidiFile(__midi.getPPB(), float(__midi.getBPM()));
         for (trackNum :in trackNumbers) {
             track := __project.curSection.tracks[trackNum];
-            file.append(track);
+            mtrk := MidiTrack.cast(track, null);
+            if (!mtrk)
+                throw InvalidArgumentError(
+                    FStr() `Track $trackNum is not a midi track.`
+                );
+            file.append(mtrk.track);
         }
         file.write(makePath(filename).writer());
     }

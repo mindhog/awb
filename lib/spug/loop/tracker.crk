@@ -10,6 +10,7 @@ import crack.midi.event NoteEvent, MidiEvent = Event, Track;
 import crash.crash Builtin, EvalContext, ObjOf, ParmInfo;
 import crash.types IntObj;
 import deadly.util convertKey;
+import .model MidiTrack, OmniTrack;
 import .textui BindCmd;
 import .tel makeTrackObj, TrackObj;
 
@@ -153,7 +154,7 @@ class Tracker : Window {
 }
 
 alias TrackerObj = ObjOf[Tracker];
-alias TrackObj = ObjOf[Track];
+alias TrackObj = ObjOf[OmniTrack];
 
 @function TrackerObj makeTracker(Window parent, Track track) {
     tracker := Tracker(parent, track);
@@ -184,7 +185,7 @@ alias TrackObj = ObjOf[Track];
     }
 
     @function(Tracker) TrackObj getTrack() {
-        return makeTrackObj(self.track);
+        return makeTrackObj(MidiTrack(self.track));
     }
 
     @function(Tracker) int setTrack(Track track) {

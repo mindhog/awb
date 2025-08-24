@@ -442,7 +442,7 @@ alias SequencerWaveModelObj = ObjOf[SequencerWaveModel];
     return 0;
 }
 
-alias TrackObj = ObjOf[Track];
+alias TrackObj = ObjOf[OmniTrack];
 
 # A Mutable midi track.
 @struct MutMidiTrack {
@@ -452,44 +452,49 @@ alias TrackObj = ObjOf[Track];
 alias MutMidiTrackObj = ObjOf[MutMidiTrack];
 MutMidiTrackObj _makeMutMidiTrack(Track track);
 
-TrackObj makeTrackObj(Track track) {
+TrackObj makeTrackObj(OmniTrack track) {
     result := TrackObj(track);
 
-    @function(Track) String getName() {
+    @function(OmniTrack) String getName() {
         return self.name;
     }
 
     ## Returns true if the track is a midi track.
-    @function(Track) bool isMidi() {
-        # This is kind of weak, we need to convert all tracks to OmniTrack.
-        # But for now, we can recognize a midi track as a track having more
-        # than one event (the TrackEnd event is present for both midi and
-        # audio tracks).
-        return self.count() > 1;
+    @function(OmniTrack) bool isMidi() {
+        return MidiTrack.cast(self, null);
     }
 
     ## Dump the track to standard output.
-    @function(Track) int dump() {
+    @function(OmniTrack) int dump() {
         cout `$self\n`;
         return 0;
     }
 
-    @function(Track) TrackObj crunch(int ticks) {
-        return makeTrackObj(MidiTrack.crunch(self, ticks));
+    @function(OmniTrack) TrackObj crunch(int ticks) {
+        mtrk := MidiTrack.cast(self, null);
+        if (mtrk is null)
+            throw Exception('Can only crunch midi tracks.');
+        return makeTrackObj(MidiTrack(MidiTrack.crunch(mtrk.track, ticks)));
     }
 
-    @function(Track) TrackObj clone() {
-        return makeTrackObj(MidiTrack.clone(self));
+    @function(OmniTrack) TrackObj clone() {
+        mtrk := MidiTrack.cast(self, null);
+        if (mtrk is null)
+            throw Exception('Can only clone midi tracks.');
+        return makeTrackObj(MidiTrack(MidiTrack.clone(mtrk.track)));
     }
 
     ## Return a mutable copy of the track.
-    @function(Track) MutMidiTrackObj mutable() {
-        return _makeMutMidiTrack(MidiTrack.clone(self));
+    @function(OmniTrack) MutMidiTrackObj mutable() {
+        mtrk := MidiTrack.cast(self, null);
+        if (mtrk is null)
+            throw Exception('Can only make midi tracks mutable.');
+        return _makeMutMidiTrack(MidiTrack.clone(mtrk.track));
     }
 
     ## Returns the span of the underlying track in ticks.
-    @function(Track) int span() {
-        return self ? self[-1].time : 0;
+    @function(OmniTrack) int span() {
+        return self.span;
     }
 
     # Note that because these methods are reused by MutMidiTrack, we must not
@@ -507,14 +512,38 @@ TrackObj makeTrackObj(Track track) {
 
 ## The track object will be consumed, so it should be owned by the caller.
 MutMidiTrackObj _makeMutMidiTrack(Track track) {
-    # Start with an immutable track object.
-    trackObj := makeTrackObj(track);
+    result := MutMidiTrackObj(mutTrack := MutMidiTrack(track));
 
-    # Copy all of the methods of the track object.
-    mutTrack := MutMidiTrack(track);
-    result := MutMidiTrackObj(mutTrack);
-    for (def :in trackObj.vars)
-        result.define(def.key, def.val);
+    @function(MutMidiTrack) String getName() {
+        return self.track.name;
+    }
+
+    ## Returns true if the track is a midi track.
+    @function(MutMidiTrack) bool isMidi() { return true }
+
+    ## Dump the track to standard output.
+    @function(MutMidiTrack) int dump() {
+        cout `$self\n`;
+        return 0;
+    }
+
+    @function(MutMidiTrack) TrackObj crunch(int ticks) {
+        return makeTrackObj(MidiTrack(MidiTrack.crunch(self.track, ticks)));
+    }
+
+    @function(MutMidiTrack) TrackObj clone() {
+        return makeTrackObj(MidiTrack(MidiTrack.clone(self.track)));
+    }
+
+    ## Return a mutable copy of the track.
+    @function(MutMidiTrack) MutMidiTrackObj mutable() {
+        return _makeMutMidiTrack(MidiTrack.clone(self.track));
+    }
+
+    ## Returns the span of the underlying track in ticks.
+    @function(MutMidiTrack) int span() {
+        return self.track ? self.track[-1].time : 0;
+    }
 
     ## Add a single event to the track, returns the event.
     ##
@@ -568,6 +597,13 @@ MutMidiTrackObj _makeMutMidiTrack(Track track) {
         return 0;
     }
 
+    result.define('getName', getName(mutTrack));
+    result.define('isMidi', isMidi(mutTrack));
+    result.define('dump', dump(mutTrack));
+    result.define('crunch', crunch(mutTrack));
+    result.define('clone', clone(mutTrack));
+    result.define('span', span(mutTrack));
+    result.define('mutable', mutable(mutTrack));
     result.define('add', add(mutTrack));
     result.define('merge', merge(mutTrack));
     return result;
@@ -585,7 +621,7 @@ MutMidiTrackObj _makeMutMidiTrack(Track track) {
 ## In addition to the normal iterator methods, the result includes a "last"
 ## method which returns the last track (or null for an empty track list).
 @function Obj getTracks() {
-    alias TrackArrayIter = Array[Track].ArrayIter;
+    alias TrackArrayIter = Array[OmniTrack].ArrayIter;
     class TrackIter : Iter {
         @cvars {
             TrackArrayIter __rep;

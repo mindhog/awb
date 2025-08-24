@@ -632,16 +632,14 @@ class TrackPanel : Widget {
 
     ## Add a new track, creating a new track widget.
     ## If 'surface is not null, draws the track.
-    TrackWidget addTrack(Track track, uint endTime, Surface surface) {
-        w := MIDITrackWidget(track, endTime);
-        __addTrackWidget(w, surface);
-        return w;
-    }
-
-    ## Adds a wave track, creating a new track widget.  If 'surface' is not
-    ## null, draws the track.
-    TrackWidget addTrack(WaveTrack track, uint endTime, Surface surface) {
-        w := WaveTrackWidget(track, track.name);
+    TrackWidget addTrack(OmniTrack track, uint endTime, Surface surface) {
+        TrackWidget w;
+        if (t := MidiTrack.cast(track, null)) {
+            w = MIDITrackWidget(t.track, endTime);
+        } else {
+            t := WaveTrack.cast(track);
+            w = WaveTrackWidget(t, track.name);
+        }
         __addTrackWidget(w, surface);
         return w;
     }
@@ -678,7 +676,7 @@ class TrackPanel : Widget {
 
     void trackReplaced(Surface surface, uint index, OmniTrack track) {
         if (t := MidiTrack.cast(track, null)) {
-            __elems[index] = MIDITrackWidget(t.track, t.track[-1].time);
+            __elems[index] = MIDITrackWidget(t.track, t.span);
         } else if (t := WaveTrack.cast(track, null)) {
             __elems[index] = WaveTrackWidget(t, t.name);
         } else {
@@ -691,7 +689,7 @@ class TrackPanel : Widget {
     void sectionChanged() {
         __elems.clear();
         for (track :in engine.getCurrentSection().tracks)
-            addTrack(track, track[-1].time, null);
+            addTrack(track, track.span, null);
     }
 
     void drawPosition(Surface surface) {
@@ -871,13 +869,6 @@ class App : Object @implements AppMethods, KeyboardHandler, MouseButtonHandler,
                             null
                             );
         app.flip();
-    }
-
-    void waveAdded() {
-        trackPanel.addTrack(engine.getCurrentSection().waves[-1],
-                            engine.getCurrentSection().span,
-                            null
-                            );
     }
 
     void trackDeleted(uint index) {

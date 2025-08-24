@@ -17,7 +17,7 @@ import crack.runtime sleep, PollEvt, PollSet;
 import crack.threads Mutex, MutexLock, Thread;
 import crack.time TimeDelta;
 import spug.loop.jack JackPos, JackWrapper, WaveManager, JACK_TRANSPORT_ROLLING;
-import spug.loop.model EventContext, LoopCursor, ProjectRef, Section;
+import spug.loop.model EventContext, LoopCursor, MidiTrack, ProjectRef, Section;
 
 @import crack.ann assert, cvars, impl, interface, struct;
 
@@ -252,13 +252,15 @@ alias TimeCallback = Functor1[void, TimeEvent];
         __trackCursors = Array[LoopCursor](tracks.count());
         debug `midieng: initializing track cursors`;
         for (track :in tracks) {
-            # Ignore tracks containing only an end event.
-            if (track.count() < 2)
-                continue;
+            if (mtrk := MidiTrack.cast(track, null)) {
+                # Ignore tracks containing only an end event.
+                if (mtrk.track.count() < 2)
+                    continue;
 
-            __trackCursors.append(cur := LoopCursor(track));
-            cur.setPos(pos := __getTicks(cur.span));
-            debug `midieng: track $(track.name) set to position $pos`;
+                __trackCursors.append(cur := LoopCursor(mtrk.track));
+                cur.setPos(pos := __getTicks(cur.span));
+                debug `midieng: track $(track.name) set to position $pos`;
+            }
         }
     }
 
@@ -269,8 +271,10 @@ alias TimeCallback = Functor1[void, TimeEvent];
         # Recreate the track cursors (this should be refactored out).
         tracks := __project.curSection.tracks;
         __trackCursors = Array[LoopCursor](tracks.count());
-        for (track :in tracks)
-            __trackCursors.append(LoopCursor(track));
+        for (track :in tracks) {
+            if (mtrk := MidiTrack.cast(track, null))
+                __trackCursors.append(LoopCursor(mtrk.track));
+        }
 
         for (cur :in __trackCursors) {
             # Find the first event that is after 'pos'.

@@ -1,7 +1,9 @@
 ## Utilities for graphically representing tracks.
 
+import crack.io cerr;
 import crack.exp.termui GraphicsContext;
-import crack.midi.event Track;
+
+import .model MidiTrack, OmniTrack, WaveTrack;
 
 ## Render a track onto a grpahics context.
 ##
@@ -11,34 +13,45 @@ import crack.midi.event Track;
 void renderTrack(GraphicsContext gc,
                  uint start,
                  uint length,
-                 Track track,
+                 OmniTrack track,
                  byte attr
                  ) {
     # Number of midi ticks in a single character column.
     charLength := length / gc.getWidth();
 
-    iter := track.iter();
-    iter.setPos(start);
-    if (!iter)
-        return;
+    if (mtrk := MidiTrack.cast(track, null)) {
+        track := mtrk.track;
+        iter := track.iter();
+        iter.setPos(start);
+        if (!iter)
+            return;
 
-    uint offset;
-    if (track[0].time > start + charLength)
-        offset = (track[0].time - start) / charLength;
+        uint offset;
+        if (track[0].time > start + charLength)
+            offset = (track[0].time - start) / charLength;
 
-    end := start + length;
-    while (iter && (elem := iter.elem()).time < end) {
-        # Get the position of the character _after_ the element.
-        pos := (elem.time - start) / charLength + 1;
+        end := start + length;
+        while (iter && (elem := iter.elem()).time < end) {
+            # Get the position of the character _after_ the element.
+            pos := (elem.time - start) / charLength + 1;
 
-        # Fill in everything up to the character before with blanks (since
-        # those regions have no events), fill in that character with a dash.
-        for (; offset < pos - 1; ++offset)
-            gc.write(offset, 0, attr, ' ');
-        if (offset < pos) {
-            gc.write(offset, 0, attr, '-');
-            ++offset;
+            # Fill in everything up to the character before with blanks (since
+            # those regions have no events), fill in that character with a dash.
+            for (; offset < pos - 1; ++offset)
+                gc.write(offset, 0, attr, ' ');
+            if (offset < pos) {
+                gc.write(offset, 0, attr, '-');
+                ++offset;
+            }
+            iter.next();
         }
-        iter.next();
+    } else {
+        visibleSpan := track.span - start;
+        if (visibleSpan > length) {
+            gc.clear(attr);
+        } else {
+            gc.fillRect(0, 0, visibleSpan * gc.getWidth() / length, 1, attr,
+                        b' ');
+        }
     }
 }

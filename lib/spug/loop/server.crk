@@ -34,6 +34,7 @@ import crash.crash Builtin, EvalContext, ParmInfo;
 import crash.types IntObj;
 
 import .engine AWBEngine;
+import .model MidiTrack;
 import .protocol BaseRPCContext, HandlerCallbacks, MethodMap,
     RemoteError, RPCConnectionFactory, TypedMethodHandler;
 
@@ -162,9 +163,9 @@ class AWBHandler @impl UserHandler {
 
                 track := engine.getTrackByName(name);
                 String encodedTrack;
-                if (track) {
+                if (track := MidiTrack.cast(track, null)) {
                     writer := StringWriter();
-                    track.writeTo(MidiWriter(writer));
+                    track.track.writeTo(MidiWriter(writer));
                     encodedTrack = writer.string();
                 } else {
                     # Should probably give an error in these cases.
@@ -248,9 +249,9 @@ GetMidiResponse getMidiTrack(GetMidiRequest req) {
     String encodedTrack;
     resp := GetMidiResponse();
     resp.name = req.name;
-    if (track) {
+    if (track := MidiTrack.cast(track, null)) {
         writer := StringWriter();
-        track.writeTo(MidiWriter(writer));
+        track.track.writeTo(MidiWriter(writer));
         resp.contents = writer.string();
     } else {
         # Should probably give an error in these cases.

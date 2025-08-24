@@ -73,6 +73,9 @@ class WavePlayerBank : Object @implements Bank {
 
     ## Clone the track with a new name.
     @abstract OmniTrack rename(String name);
+
+    ## Returns the duration of the track in pulses.
+    @abstract uint oper .span();
 }
 
 class AudioTrack @impl OmniTrack {
@@ -82,7 +85,7 @@ class AudioTrack @impl OmniTrack {
     }
 
     String oper .name() { return __name; }
-    uint oper .span() { return __span }
+    @over uint oper .span() { return __span }
 
     OmniTrack rename(String name) {
         return AudioTrack(name, __span);
@@ -165,6 +168,10 @@ class MidiTrack @impl OmniTrack {
     @final MidiTrack clone() {
         return MidiTrack(clone(__track));
     }
+
+    @over uint oper .span() {
+        return __track.count() ? __track[-1].time - __track[0].time : 0;
+    }
 }
 
 ## This is a "section" of the piece.  A section consists of a group of tracks
@@ -184,13 +191,10 @@ class Section {
     SectionOptionalData optionalData;
 
     ## The set of all tracks in the section.
-    Array[Track] tracks;
-
-    ## The set of all waves in the section.
-    Array[WaveTrack] waves = {};
+    Array[OmniTrack] tracks;
 
     oper init() : tracks() {}
-    oper init(Array[Track] tracks, uint measure, uint span) :
+    oper init(Array[OmniTrack] tracks, uint measure, uint span) :
         tracks = tracks,
         measure = measure,
         span = span {
@@ -249,7 +253,7 @@ class Section {
             maxSpan := 0;
             uint t;
             for (track :in tracks) {
-                t = track[-1].time;
+                t = track.span;
                 if (t > maxSpan)
                     maxSpan = t;
             }
@@ -258,15 +262,7 @@ class Section {
         }
 
         Mut replaceTrack(uint index, OmniTrack track) {
-            if (t := MidiTrack.cast(track, null)) {
-                tracks[index] = t.track;
-            } else if (t := WaveTrack.cast(track, null)) {
-                waves[index - tracks.count()] = t;
-            } else {
-                throw Exception(
-                    FStr() `Unknown track type $(track.class.name)`
-                );
-            }
+            tracks[index] = track;
             return this;
         }
 
@@ -278,7 +274,7 @@ class Section {
             for (int i = 0; i < trackCount; ++i) {
                 trackName := src.readString();
                 MidiReader mr = {StringReader(src.readString())};
-                tracks.append(track := mr.readTrack(trackName));
+                tracks.append(MidiTrack(track := mr.readTrack(trackName)));
 
                 # Read and discard the optional track data.
                 src.readString();
@@ -300,55 +296,15 @@ class Section {
     ## Returns an immutable OmniTrack wrapper around the specified track (midi
     ## or audio).
     OmniTrack getTrack(uint index) {
-        if (index > tracks.count())
-            return waves[index - tracks.count()];
-
-        return MidiTrack(tracks[index]);
+        return tracks[index];
     }
 
+    # Obsolete code, remove.
     void writeTo(SerialWriter out) {
-        out.write(measure);
-        out.write(span);
-        out.write(tracks.count());
-
-        for (track :in tracks) {
-
-            # write the track name
-            out.write(track.name);
-
-            # serialize the track, then write it out as a string since tracks
-            # are not delimited.
-            StringWriter temp = {};
-            MidiWriter mw = {temp};
-            track.writeTo(mw);
-            mw.flush();
-            out.write(temp.makeString());
-
-            # Write the track's optional data (we don't currently preserve
-            # this).
-            out.write(0);
-        }
-
-        # Write the section's optional data.
-        if (optionalData)
-            optionalData.serialize(ProtoWriter(out));
-        else
-            out.write(0);
     }
 
     Mut clone() {
-        newTracks := Array[Track]();
-        for (track :in tracks) {
-            newTrack := Track(track.name);
-            newTracks.append(newTrack);
-            for (event :in track)
-                newTrack.append(event.clone());
-        }
-        result := Section(newTracks, measure, span);
-
-        # We treat WaveTracks as immutable (they seem to effectively be so).
-        # The array, however, is not.
-        result.waves = waves.clone();
+        result := Section(tracks.clone(), measure, span);
 
         if (optionalData) {
             # Clone optional data by serializing and deserializing.
@@ -481,7 +437,6 @@ class Project {
     @abstract void changeState(int oldState, int newState);
     @abstract void trackAdded();
     @abstract void trackReplaced(uint index, OmniTrack track);
-    @abstract void waveAdded();
     @abstract void trackDeleted(uint index);
     @abstract void sectionCreated();
     @abstract void sectionChanged();
@@ -552,7 +507,7 @@ class ProjectRef {
         @assert(track.count() && (lastEvent = track[-1]).isa(EndTrack));
         sec := __section.clone();
         sec.markEnding(track, lastEvent.time);
-        sec.tracks.append(track);
+        sec.tracks.append(MidiTrack(track));
         __replaceSection(sec);
 
         lk = null;
@@ -567,7 +522,7 @@ class ProjectRef {
         Event lastEvent;
         for (track :in tracks) {
             @assert(track.count() && (lastEvent = track[-1]).isa(EndTrack));
-            sec.tracks.append(track);
+            sec.tracks.append(MidiTrack(track));
         }
         if (lastEvent) {
             sec.markEnding(null, lastEvent.time);
@@ -578,25 +533,14 @@ class ProjectRef {
         __controller.trackAdded();
     }
 
-    void __addTrack(Track track) {
+    void addTrack(OmniTrack track) {
+        lk := MutexLock(__mutex);
         sec := __section.clone();
-        Event lastEvent;
-        @assert(track.count() && (lastEvent = track[-1]).isa(EndTrack));
-        if (lastEvent.time > sec.span)
-            sec.span = lastEvent.time;
+        if (track.span > sec.span)
+            sec.span = track.span;
 
         sec.tracks.append(track);
         __replaceSection(sec);
-    }
-
-    void addTrack(OmniTrack track) {
-        lk := MutexLock(__mutex);
-        if (t := AudioTrack.cast(track, null))
-            __addTrack(Track(t.name, Array[Event]![EndTrack(t.span)]));
-        else if (t := MidiTrack.cast(track, null))
-            __addTrack(t.track);
-        else
-            throw Exception(FStr() `Unknown track type $(track.class.name)`);
 
         lk = null;
         if (__controller)
@@ -628,12 +572,14 @@ class ProjectRef {
         Section newSection = Section();
         if (seedTracks) {
             uint span;
+            trks := Array[OmniTrack](seedTracks.count());
             for (track :in seedTracks) {
                 t := track[-1].time;
                 if (t > span)
                     span = t;
+                trks.append(MidiTrack(track));
             }
-            newSection = Section(seedTracks, __section.measure, span);
+            newSection = Section(trks, __section.measure, span);
         } else {
             newSection = Section();
         }
@@ -666,7 +612,7 @@ class ProjectRef {
         return __section;
     }
 
-    @immut Track getTrackByName(String name) {
+    @immut OmniTrack getTrackByName(String name) {
         lk := MutexLock(__mutex);
         for (track :in __section.tracks) {
             if (track.name == name)

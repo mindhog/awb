@@ -8,7 +8,6 @@ import crack.functor Functor0, Functor1, Functor2;
 import crack.io cerr, cout, FStr, StandardFormatter, StringFormatter;
 import crack.lang AppendBuffer, Exception;
 import crack.logger cerrLogger;
-import crack.midi.event Track;
 import crack.net Poller;
 import crack.net.pollqueue PollQueue;
 import crash.crash createRootContext, eval, parseBlockArg, parseString, Block,
@@ -161,7 +160,7 @@ class TrackList : Window {
         return false;
     }
 
-    int __maxFirstCol(Array[Track] tracks) {
+    int __maxFirstCol(Array[OmniTrack] tracks) {
         max := 0;
         for (track :in tracks) {
             if (track.name.size > max)
@@ -182,8 +181,8 @@ class TrackList : Window {
 
         lastEvent := 0;
         for (track :in tracks) {
-            if (track[-1].time > lastEvent)
-                lastEvent = track[-1].time;
+            if (track.span > lastEvent)
+                lastEvent = track.span;
         }
 
         for (int row = 0; row < height - 1; ++row) {
