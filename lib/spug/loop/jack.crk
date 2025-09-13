@@ -1560,6 +1560,25 @@ class WaveManager : JackWrapper {
         return adapters ? adapters[0].getPos() : 0;
     }
 
+    ## Remove an adapater from the WaveManager.
+    void removeAdapter(PCMTrackAdapter adapter) {
+        deleted := false;
+        for (iter :on adapters) {
+            if (iter.elem() is adapter) {
+                adapters.delete(iter.index);
+                deleted = true;
+                break;
+            }
+        }
+        if (!deleted)
+            throw InvalidArgumentError(
+                FStr() I`Adapter $adapter is not registered with the wave \
+                         manager.`
+            );
+
+        removeProcessor(adapter);
+    }
+
     ## Begin recording.  To end the record call the finish() method on the
     ## returned RecordBuffer.
     ## 'def' should have been initialized with def.writeHeader(out).  It must

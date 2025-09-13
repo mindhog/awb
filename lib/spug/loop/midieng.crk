@@ -784,6 +784,17 @@ alias TimeCallback = Functor1[void, TimeEvent];
         __interrupter.signal();
     }
 
+    ## Invalidates all of the track cursors, forcing them to be reinitialized
+    ## the next time they're needed.
+    ##
+    ## This should be called after any changes to the Project affecting midi
+    ## tracks.
+    void invalidateTrackCursors() {
+        lk := MutexLock(__lock);
+        __trackCursors = null;
+        __interrupter.signal();
+    }
+
     void subscribeTimeEvent(TimeCallback callback) {
         lk := MutexLock(__lock);
         __timeCallbacks[uintz(callback)] = callback;
@@ -965,6 +976,11 @@ alias TimeCallback = Functor1[void, TimeEvent];
     ## Set the current section.
     void setSection(Section section) {
         __mseq.setSection(section);
+    }
+
+    ## Invalidate the track cursors.
+    void invalidateTrackCursors() {
+        __mseq.invalidateTrackCursors();
     }
 
     ## Subscribe to the time callback.

@@ -537,7 +537,19 @@ class AWBEngine @impl ModelObserver {
 
     ## Delete the specified track in the current section.
     void deleteTrack(int index) {
+        track := __project.curSection.getTrack(index);
         __project.deleteTrack(index);
+        if (wtrk := WaveTrack.cast(track, null)) {
+            # Remove all WaveAdapters referencing the model.
+            for (adapter :in __jack.adapters) {
+                if ((waveAdapter := WaveAdapter.cast(adapter)) &&
+                    waveAdapter.model is wtrk.model
+                    )
+                    __jack.removeAdapter(waveAdapter);
+            }
+        } else if (mtrk := MidiTrack.cast(track, null)) {
+            __midi.invalidateTrackCursors();
+        }
     }
 
     ## Returns true if the engine is currently in play/record and there are

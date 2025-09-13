@@ -8,7 +8,7 @@ import crack.cont.hashmap HashMap;
 import crack.cont.treemap TreeMap;
 import crack.fs cwd, makePath;
 import crack.functor Functor1, Functor2;
-import crack.io cerr, FStr, StringReader, StringWriter;
+import crack.io cerr, Formatter, FStr, StringReader, StringWriter;
 import crack.lang cmp, makeHashVal, CString, Exception;
 import crack.logger error, info;
 import crack.math floor;
@@ -121,6 +121,9 @@ class WaveTrack : AudioTrack {
     @final void read(uint pos, WaveBuffer out, uint frames) {
         return __model.read(pos, out, frames);
     }
+
+    ## Returns the wave model for the track.
+    @final WaveModel oper .model() { return __model }
 }
 
 class MidiTrack @impl OmniTrack {
@@ -198,6 +201,13 @@ class Section {
         tracks = tracks,
         measure = measure,
         span = span {
+    }
+
+    void formatTo(Formatter out) {
+        out `Tracks![`;
+        for (track :in tracks)
+            out `{@$(uintz(track)) $(track.oper to Object())}`;
+        out `]`;
     }
 
     class Mut = Section {
