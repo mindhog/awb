@@ -658,6 +658,7 @@ var midiOutChannel [+ 0]
 def writeTrackAttrs {out index} {
     project components $index | each comp {
         print 'ok\n'
+        var j 0
         if {comp isPluginInst} {
 
             var id [
@@ -667,6 +668,7 @@ def writeTrackAttrs {out index} {
                     give [format 't' $index 'fx' $j]
                 }
             ]
+            set j [+ $j 1]
 
             out write [
                 format \
