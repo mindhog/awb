@@ -252,7 +252,11 @@ class TrackList : Window {
 class BindCmd[WidgetType]  : Builtin {
     @cvars {
         WidgetType innerSelf;
-        ObjOf[WidgetType] self;
+
+        # It would be better to use ObjOf[WidgetType] for this, but that
+        # wouldn't respect covariant types, and we need that for Row & Column
+        # which have bind methods using the Container type.
+        Obj self;
     }
 
     String getDoc() {
@@ -517,16 +521,55 @@ alias RowObj = ObjOf[Row];
         return 0;
     }
 
+    @function(Row) int nextCell() {
+        self.nextCell();
+        return 0;
+    }
+
+    @function(Row) int prevCell() {
+        self.prevCell();
+        return 0;
+    }
+
     result := RowObj(self);
     result.define('setFocus', setFocus(self));
+    result.define('bind', BindCmd[Container](self, result));
+    result.define('nextCell', nextCell(self));
+    result.define('prevCell', prevCell(self));
+    return result;
+}
+
+alias ColumnObj = ObjOf[Column];
+
+ColumnObj _wrapColumn(Column column) {
+    @function(Column) int setFocus(int focus) {
+        self.setFocus(focus);
+        return 0;
+    }
+
+    @function(Column) int nextCell() {
+        self.nextCell();
+        return 0;
+    }
+
+    @function(Column) int prevCell() {
+        self.prevCell();
+        return 0;
+    }
+
+    result := ColumnObj(column);
+    result.define('setFocus', setFocus(column));
+    result.define('bind', BindCmd[Container](column, result));
+    result.define('nextCell', nextCell(column));
+    result.define('prevCell', prevCell(column));
     return result;
 }
 
 ## Make a "Column" layout control, which manages a row of child windows.
-@function Column makeColumn(Window parent, int size) {
+@function ColumnObj makeColumn(Window parent, int size) {
     self := Column(parent);
     addToContainer(parent, self, size);
-    return self;
+    return _wrapColumn(self);
 }
 
 alias ObjOfFrame = ObjOf[Frame];
@@ -786,7 +829,7 @@ class TextController : Object @implements Controller, AppMethods {
                 Exception error;
                 try {
                     context.pushFuncFrame();
-                    context.define('mainColumn', SimpleValue(col));
+                    context.define('mainColumn', _wrapColumn(col));
                     block.evaluate(context);
                     self.__app.run(self.__poller);
                 } catch (Exception ex) {
