@@ -445,8 +445,52 @@ alias SequencerWaveModelObj = ObjOf[SequencerWaveModel];
 alias TrackObj = ObjOf[OmniTrack];
 
 # A Mutable midi track.
-@struct MutMidiTrack {
-    Track track;
+class MutMidiTrack = Track {
+
+    ## Similar to Track.add(), only returns the added event and handles
+    ## EndTrack events correctly.
+    Event safeAdd(Event event) {
+        # If it's an EndTrack event, do special stuff.
+        if (event.isa(EndTrack) && count()) {
+            last := this[-1];
+
+            # If we've already got an end track, just use the latter of the two.
+            if (last.isa(EndTrack)) {
+                if (last.time < event.time)
+                    last.time = event.time;
+                return last;
+            }
+
+            if (last.time > event.time)
+                event.time = last.time;
+        }
+        add(event);
+        return event;
+    }
+
+    void merge(int pos, Track other) {
+        endEvent := count() && this[-1].isa(EndTrack) ?
+                    this[-1] : null;
+        int endEventIndex = endEvent ? count() - 1 : 0;
+
+        # Change the time of the last event of the new track if necessary.
+        if (endEvent) {
+            endEventIndex = count() - 1;
+            if (other.count() &&
+                (lastNewEventTime := other[-1].time + pos) > endEvent.time)
+                endEvent.time = lastNewEventTime;
+        }
+
+        for (event :in other) {
+            event = event.clone();
+            event.time += pos;
+            isEndTrack := event.isa(EndTrack);
+            if (!endEvent || !isEndTrack) {
+                add(event);
+            }
+        }
+    }
+
 }
 
 alias MutMidiTrackObj = ObjOf[MutMidiTrack];
@@ -457,6 +501,11 @@ TrackObj makeTrackObj(OmniTrack track) {
 
     @function(OmniTrack) String getName() {
         return self.name;
+    }
+
+    @function(OmniTrack, wrap) TrackObj rename(String name) {
+        self.rename(name);
+        return wrap;
     }
 
     ## Returns true if the track is a midi track.
@@ -501,6 +550,7 @@ TrackObj makeTrackObj(OmniTrack track) {
     # add any methods that expose the underlying track.  If there's a need for
     # that, refactor these safe methods out into a shared function.
     result.define('getName', getName(track));
+    result.define('rename', rename(track));
     result.define('isMidi', isMidi(track));
     result.define('dump', dump(track));
     result.define('crunch', crunch(track));
@@ -515,7 +565,7 @@ MutMidiTrackObj _makeMutMidiTrack(Track track) {
     result := MutMidiTrackObj(mutTrack := MutMidiTrack(track));
 
     @function(MutMidiTrack) String getName() {
-        return self.track.name;
+        return self.name;
     }
 
     ## Returns true if the track is a midi track.
@@ -528,21 +578,21 @@ MutMidiTrackObj _makeMutMidiTrack(Track track) {
     }
 
     @function(MutMidiTrack) TrackObj crunch(int ticks) {
-        return makeTrackObj(MidiTrack(MidiTrack.crunch(self.track, ticks)));
+        return makeTrackObj(MidiTrack(MidiTrack.crunch(self, ticks)));
     }
 
     @function(MutMidiTrack) TrackObj clone() {
-        return makeTrackObj(MidiTrack(MidiTrack.clone(self.track)));
+        return makeTrackObj(MidiTrack(MidiTrack.clone(self)));
     }
 
     ## Return a mutable copy of the track.
     @function(MutMidiTrack) MutMidiTrackObj mutable() {
-        return _makeMutMidiTrack(MidiTrack.clone(self.track));
+        return _makeMutMidiTrack(MidiTrack.clone(self));
     }
 
     ## Returns the span of the underlying track in ticks.
     @function(MutMidiTrack) int span() {
-        return self.track ? self.track[-1].time : 0;
+        return self ? self[-1].time : 0;
     }
 
     ## Add a single event to the track, returns the event.
@@ -552,48 +602,14 @@ MutMidiTrackObj _makeMutMidiTrack(Track track) {
     ## thing", and it will return the existing EndTrack (potentially with a
     ## modified time) if there was one.
     @function(MutMidiTrack) Event add(Event event) {
-        # If it's an EndTrack event, do special stuff.
-        if (event.isa(EndTrack) && self.track.count()) {
-            last := self.track[-1];
-
-            # If we've already got an end track, just use the latter of the two.
-            if (last.isa(EndTrack)) {
-                if (last.time < event.time)
-                    last.time = event.time;
-                return last;
-            }
-
-            if (last.time > event.time)
-                event.time = last.time;
-        }
-        self.track.add(event);
-        return event;
+        return self.safeAdd(event);
     }
 
     ## Merge "other" into the track at the specified position (in ticks).
     ## Note that this will exclude any EndTrack if the track already ends
     ## with one.
     @function(MutMidiTrack) int merge(int pos, Track other) {
-        endEvent := self.track.count() && self.track[-1].isa(EndTrack) ?
-                    self.track[-1] : null;
-        int endEventIndex = endEvent ? self.track.count() - 1 : 0;
-
-        # Change the time of the last event of the new track if necessary.
-        if (endEvent) {
-            endEventIndex = self.track.count() - 1;
-            if (other.count() &&
-                (lastNewEventTime := other[-1].time + pos) > endEvent.time)
-                endEvent.time = lastNewEventTime;
-        }
-
-        for (event :in other) {
-            event = event.clone();
-            event.time += pos;
-            isEndTrack := event.isa(EndTrack);
-            if (!endEvent || !isEndTrack) {
-                self.track.add(event);
-            }
-        }
+        self.merge(pos, other);
         return 0;
     }
 
@@ -1199,21 +1215,9 @@ AudioFileRecorderObj makeAudioFileRecorder(String filename, int channels) {
     return MidiTrackRecorder();
 }
 
-alias OmniTrackObj = ObjOf[OmniTrack];
-
-OmniTrackObj makeOmniTrackObj(OmniTrack track) {
-    @function(OmniTrack) OmniTrackObj rename(String name) {
-        return makeOmniTrackObj(self.rename(name));
-    }
-
-    result := OmniTrackObj(track);
-    result.define('rename', rename(track));
-    return result;
-}
-
 SectionObj makeSectionObj(Section section) {
-    @function(Section) OmniTrackObj getTrack(int index) {
-        return makeOmniTrackObj(self.getTrack(uint(index)));
+    @function(Section) TrackObj getTrack(int index) {
+        return makeTrackObj(self.getTrack(uint(index)));
     }
 
     ## Returns the number of clock ticks in a measure.
@@ -1418,13 +1422,11 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
     ## Replace the specified track in the current section with the new track.
     ##
     ## This method can accept any of Track, OmniTrack or their corresponding
-    ## crash wrappers (TrackObj, OmniTrackObj).
+    ## crash wrappers (e.g. TrackObj).
     @function(AWBEngine) int replaceTrack(int index, Object track) {
         OmniTrack omniTrack;
         if (t := TrackObj.cast(track, null))
             omniTrack = MidiTrack(Track.cast(t.convertTo(Track)));
-        else if (t := OmniTrackObj.cast(track, null))
-            omniTrack = OmniTrack.cast(t.convertTo(OmniTrack));
         else if (t := OmniTrack.cast(track, null))
             omniTrack = t;
         else if (t := Track.cast(track, null))
