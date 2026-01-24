@@ -4,8 +4,8 @@ import crack.audio.wavfile readWave, ManagedWaveBuffer, WaveBuffer, WaveDef;
 import crack.cont.array Array;
 import crack.cont.treemap TreeMap;
 import crack.fs makePath;
-import crack.io cerr, cout, SeekableReader, SeekableWriter, StandardFormatter,
-    SEEK_END, SEEK_SET;
+import crack.io cerr, cout, FStr, SeekableReader, SeekableWriter,
+    StandardFormatter, SEEK_END, SEEK_SET;
 import crack.lang Exception;
 import crack.sys argv;
 import crash.crash createRootContext, eval, Builtin, EvalContext, Obj, ObjOf,
@@ -20,7 +20,7 @@ import spug.loop.render defineRendererFuncs;
 import crash.types FloatObj, IntObj;
 
 @import crash.ann function;
-@import crack.ann assert;
+@import crack.ann assert, cvars;
 
 class TrackInfo {
     ## This can really only be a mono wave at this time.
@@ -421,6 +421,23 @@ plugins := PluginLibrary();
     return 0;
 }
 
+class PluginScanner : DummyPlugin {
+    TreeMap[String, float] controls = {};
+
+    @cvars {
+        String var;
+    }
+
+    void setControlValue(String name, float value) {
+        controls[name] = value;
+    }
+
+    void dump() {
+        for (item :in controls)
+            cout `$var setControl $(item.key.getRepr()) $(item.val)\n`;
+    }
+}
+
 ## Alternate command set and datastructures to support scanning.
 ## Wrapping this up in a class for modularity.
 ##
@@ -430,6 +447,7 @@ class Scan {
     int pos;
     TreeMap[int, float] vols = {};
     TreeMap[int, float] pans = {};
+    Array[PluginScanner] plugins = {};
 
     @function(Scan) int forward(int pos) {
         self.pos = pos;
@@ -466,14 +484,20 @@ class Scan {
         return 0;
     }
 
+    ObjOf[PluginInstance] makePluginScanner() {
+        scanner := PluginScanner(FStr() `p$(plugins.count())`);
+        plugins.append(scanner);
+        return makeEffectObj(scanner);
+    }
+
     @function(Scan)
     ObjOf[PluginInstance] insertEffect(int track, String effect) {
-        return makeEffectObj(DummyPlugin());
+        return self.makePluginScanner();
     }
 
     @function(Scan)
     ObjOf[PluginInstance] makePluginInst(String pluginName) {
-        return makeEffectObj(DummyPlugin());
+        return self.makePluginScanner();
     }
 
     @function(Scan)
@@ -512,6 +536,9 @@ class Scan {
 
         for (channel :in pans)
             cout `pan $(channel.key) $(channel.val)\n`;
+
+        for (plugin :in plugins)
+            plugin.dump();
 
         cout `seek $pos\n`;
     }
