@@ -1,6 +1,7 @@
 
 import crack.cont.array Array;
 import crack.cont.hashmap HashMap;
+import crack.cont.treemap TreeMap;
 import crack.exp.termui Event, GraphicsContext, KeyEvent, TermApp,
     Window, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_PGUP, KEY_PGDN,
     KEY_BACKSPACE, KEY_ENTER, KEY_ESC, KEY_SPACE;
@@ -8,10 +9,12 @@ import crack.functor Functor0, Functor1, Functor2;
 import crack.io cerr, cout, FStr, StandardFormatter, StringFormatter;
 import crack.lang AppendBuffer, Exception;
 import crack.logger cerrLogger;
+import crack.midi.event Track;
 import crack.net Poller;
 import crack.net.pollqueue PollQueue;
-import crash.crash createRootContext, eval, parseBlockArg, parseString, Block,
-    Builtin, EvalContext, Obj, ObjOf, ParmInfo, SimpleValue;
+import crash.crash convert, createRootContext, eval, parseBlockArg,
+    parseString, Block, Builtin, EvalContext, Obj, ObjOf, ParmInfo,
+    SimpleValue;
 import crash.repl repl;
 import crash.types BoolObj, FloatObj, IntObj;
 import deadly.entry Entry;
@@ -21,9 +24,9 @@ import deadly.util convertKey, KEY_F1, KEY_F2, KEY_F3, KEY_F4, KEY_F5, KEY_F6,
     KEY_HOME, KEY_INS;
 import deadly.termlist List;
 import .engine engine, AWBEngine;
-import .model Controller, OmniTrack;
+import .model Controller, MidiArrangement, OmniTrack;
 import .midieng MidiEngine, TimeCallback, TimeEvent;
-import .tel AppMethods, CrashCallback, InterpWrapper;
+import .tel AppMethods, CrashCallback, InterpWrapper, MutMidiTrack;
 import .uiutil renderTrack;
 
 @import crack.ann cvars, impl, implements, interface;
@@ -719,6 +722,226 @@ alias ListObj = ObjOf[List];
     return result;
 }
 
+## Presents a grid that allows the user to compose a midi track from a set of
+## midi patterns, aligned on measures.
+class MidiArranger : Window {
+
+    uint pos;
+
+    # 'row' is the pattern index, 'col' is effectively the measure.
+    # The 'start' values are the offset to the top-left corner.  The 'sel'
+    # values are the selected row
+    uint row, col, startRow, startCol, selRow, selCol;
+
+    # Sorted pattern names.
+    Array[String] patternNames = {};
+
+    # Width of the pattern column.
+    uint patternColWidth;
+
+    alias EventCallback = Functor2[bool, MidiArranger, Event];
+    HashMap[int, EventCallback] __bindings = {};
+
+    uint ticksPerMeasure;
+    MidiArrangement arrangement;
+    HashMap[String, MutMidiTrack] patterns;
+    int trackIndex;
+
+    oper init(Window parent,
+              uint ticksPerMeasure,
+              MidiArrangement arrangement,
+              HashMap[String, MutMidiTrack] patterns,
+              int trackIndex) :
+        Window(parent),
+        ticksPerMeasure = ticksPerMeasure,
+        arrangement = arrangement,
+        patterns = patterns,
+        trackIndex = trackIndex {
+
+        for (item :in patterns) {
+            patternNames.append(item.key);
+            if (item.key.count() > patternColWidth)
+                patternColWidth = item.key.count();
+        }
+        patternNames.sort();
+    }
+
+    void paint() {
+        gc := getGraphicsContext();
+        for (int y; y < height; ++y) {
+            curRow := y + startRow;
+
+            if (curRow >= patternNames.count())
+                break;
+
+            name := patternNames[curRow];
+            pad := String(patternColWidth - name.count(), b' ');
+            name = name + pad;
+            rowPattern := patterns[name];
+
+            attr := _trackAttrs[curRow % _trackAttrs.count()];
+
+            gc.write(0, y, attr, name);
+
+            # Paint the row in the pattern grid column.
+            for (int x; x < width - patternColWidth; ++x) {
+                curCol := x + startCol;
+
+                # Count the number of overlapping instances of the current
+                # row's pattern at the current measure and store it in
+                # 'depth'.
+                depth := 0;
+                startTicks := ticksPerMeasure * curCol;
+                index := 0;
+                while ((index = arrangement.getOverlap(startTicks, index)) !=
+                       -1) {
+                    if (arrangement[index].pattern is rowPattern)
+                        ++depth;
+                    ++index;
+                }
+
+                cellAttr := byte((depth ? attr : 7) | (getFocus() ? 8 : 0));
+                byte cellChar;
+                if (curRow == selRow && curCol == selCol)
+                    cellChar = b'#';
+                else if (depth == 1)
+                    cellChar = b'-';
+                else if (depth == 2)
+                    cellChar = b'=';
+                else if (depth)
+                    cellChar = b'*';
+
+                if (cellChar)
+                    gc.write(patternColWidth + x, y, cellAttr,
+                             String(1, cellChar));
+            }
+        }
+    }
+
+    bool onEvent(Event event) {
+        if ((event := KeyEvent.cast(event, null)) &&
+            (handler := __bindings.get(convertKey(event)))) {
+                return handler(this, event);
+        }
+
+        return false;
+    }
+
+    void bind(int key, EventCallback callback) {
+        __bindings[key] = callback;
+    }
+
+    void nextRow() {
+        if (selRow < patternNames.count() - 1) {
+            ++selRow;
+            if (selRow >= startRow + height)
+                startRow = selRow - height + 1;
+        }
+    }
+
+    void nextCol() {
+        ++selCol;
+        gridWidth := width - patternColWidth;
+        if (selCol >= startCol + gridWidth)
+            startCol = selCol + gridWidth - 1;
+    }
+
+    void prevRow() {
+        if (selRow > 0) {
+            --selRow;
+            if (startRow > selRow)
+                startRow = selRow;
+        }
+    }
+
+    void prevCol() {
+        if (selCol > 0) {
+            --selCol;
+            if (startCol > selCol)
+                startCol = selCol;
+        }
+    }
+
+    ## Add a pattern at the selected measure.
+    void add() {
+        arrangement.insert(selCol * ticksPerMeasure,
+                           patterns[patternNames[selRow]]);
+    }
+
+    ## Delete the latest selected pattern.
+    void delete() {
+        int index, lastPatternIndex = -1;
+        startTicks := selCol * ticksPerMeasure;
+        selPattern := patterns[patternNames[selRow]];
+
+        while ((index = arrangement.getOverlap(startTicks, index)) != -1) {
+            if (arrangement[index].pattern is selPattern)
+                lastPatternIndex = index;
+            ++index;
+        }
+
+        arrangement.delete(lastPatternIndex);
+    }
+}
+
+alias MidiArrangerObj = ObjOf[MidiArranger];
+
+@function MidiArrangerObj makeMidiArranger(Window parent,
+                                           int ticksPerMeasure,
+                                           MidiArrangement arrangement,
+                                           TreeMap[Object, Object] patterns,
+                                           int index) {
+    patternMap := HashMap[String, MutMidiTrack]();
+    for (item :in patterns) {
+        track := Track.cast(convert(item.val, Track));
+        patternMap[String.cast(item.key)] = MutMidiTrack(track);
+    }
+    arranger := MidiArranger(parent, uint(ticksPerMeasure), arrangement,
+                             patternMap,
+                             index);
+    result := MidiArrangerObj(arranger);
+
+    @function(MidiArranger) int setFocus(int focus) {
+        self.setFocus(focus);
+        return 0;
+    }
+
+    @function(MidiArranger) bool nextRow() {
+        self.nextRow();
+        return true;
+    }
+    @function(MidiArranger) bool nextCol() {
+        self.nextCol();
+        return true;
+    }
+    @function(MidiArranger) bool prevRow() {
+        self.prevRow();
+        return true;
+    }
+    @function(MidiArranger) bool prevCol() {
+        self.prevCol();
+        return true;
+    }
+    @function(MidiArranger) bool add() {
+        self.add();
+        return true;
+    }
+    @function(MidiArranger) bool delete() {
+        self.delete();
+        return true;
+    }
+
+    result.define('setFocus', setFocus(arranger));
+    result.define('nextRow', nextRow(arranger));
+    result.define('nextCol', nextCol(arranger));
+    result.define('prevRow', prevRow(arranger));
+    result.define('prevCol', prevCol(arranger));
+    result.define('add', add(arranger));
+    result.define('delete', delete(arranger));
+    result.define('bind', BindCmd[MidiArranger](arranger, result));
+    return result;
+}
+
 alias MQCallback = MessageQueue.Callback;
 
 class TextController : Object @implements Controller, AppMethods {
@@ -929,6 +1152,7 @@ class TextController : Object @implements Controller, AppMethods {
         __interp.define('Frame', makeFrame());
         __interp.define('Entry', makeEntry());
         __interp.define('List', makeList());
+        __interp.define('MidiArranger', makeMidiArranger());
         __interp.define('TrackList', makeTrackList(this));
         __interp.define('TimeBar', makeTimeBar(this));
         __interp.define('HBarSlider', makeHBarSlider());

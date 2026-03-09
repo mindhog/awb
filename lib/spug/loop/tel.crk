@@ -34,7 +34,8 @@ import crash.collections wrapIterator, Iter;
 import spug.loop.evtrec makeEventRecorderModule;
 import spug.loop.midieng ControllerDispatcher, EventProcessor,
     MidiDispatcher, MidiEngine, MidiSequencer, ModelObserver;
-import spug.loop.model EventContext, MidiTrack, OmniTrack, Section;
+import spug.loop.model EventContext, MidiArrangement, MidiTrack, OmniTrack,
+    Section;
 import spug.loop.sysextra pow;
 import spug.loop.jack jackCallback, RecordBuffer, SequencerWaveModel, Wave,
     WaveAdapter, WaveManager, WaveModel, WindowBufferAdapter;
@@ -629,6 +630,46 @@ MutMidiTrackObj _makeMutMidiTrack(Track track) {
 @function MutMidiTrackObj makeMutMidiTrack(String name) {
     track := Track(name);
     return _makeMutMidiTrack(track);
+}
+
+alias MidiFileObj = ObjOf[MidiFile];
+
+@function MidiFileObj readMidiFile(String filename) {
+    mf := MidiFile.read(makePath(filename).reader());
+    result := MidiFileObj(mf);
+
+    @function(MidiFile) float getBPM() { return self.bpm }
+    @function(MidiFile) int getTicksPerQN() { return int(self.ticksPerQN) }
+
+    ## Returns the tracks in the file as MutMidiTrack.
+    @function(MidiFile) ArrayObj getTracks() {
+        result := Array[Object]();
+        for (track :in self.tracks)
+            result.append(_makeMutMidiTrack(track));
+        return makeArrayObj(result);
+    }
+
+    result.define('getBPM', getBPM(mf));
+    result.define('getTicksPerQN', getTicksPerQN(mf));
+    result.define('getTracks', getTracks(mf));
+    return result;
+}
+
+alias MidiArrangementObj = ObjOf[MidiArrangement];
+
+## Create an empty MidiArrangement.
+@function MidiArrangementObj makeMidiArrangement() {
+    arrangement := MidiArrangement();
+    result := MidiArrangementObj(arrangement);
+
+    ## Creates a single midi track from the arrangement.
+    @function(MidiArrangement) MutMidiTrackObj toTrack() {
+        return _makeMutMidiTrack(self.toTrack());
+    }
+
+    result.define('toTrack', toTrack(arrangement));
+
+    return result;
 }
 
 ## Returns an iterator over the tracks in the current section (an iterator
@@ -1426,7 +1467,7 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
     @function(AWBEngine) int replaceTrack(int index, Object track) {
         OmniTrack omniTrack;
         if (t := TrackObj.cast(track, null))
-            omniTrack = MidiTrack(Track.cast(t.convertTo(Track)));
+            omniTrack = OmniTrack.cast(t.convertTo(OmniTrack));
         else if (t := OmniTrack.cast(track, null))
             omniTrack = t;
         else if (t := Track.cast(track, null))
@@ -1698,6 +1739,8 @@ class InterpWrapper {
         ctx.define('addWaveModel', addWaveModel());
         ctx.define('addMemFile', addMemFile());
         ctx.define('MutMidiTrack', makeMutMidiTrack());
+        ctx.define('MidiArrangement', makeMidiArrangement());
+        ctx.define('readMidiFile', readMidiFile());
         ctx.define('getTracks', getTracks());
         ctx.define('loadProject', loadProject());
         ctx.define('saveProject', saveProject());

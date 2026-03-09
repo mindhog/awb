@@ -250,15 +250,7 @@ class Section {
             }
         }
 
-        Mut deleteTrack(uint index) {
-            tracks.delete(index);
-
-            # deal with deleting the last track.
-            if (!tracks.count()) {
-                span = measure = 0;
-                return this;
-            }
-
+        void _recalculateSpan() {
             # recalculate the span
             maxSpan := 0;
             uint t;
@@ -268,11 +260,32 @@ class Section {
                     maxSpan = t;
             }
             span = t;
+        }
+
+        Mut deleteTrack(uint index) {
+            tracks.delete(index);
+
+            # deal with deleting the last track.
+            if (!tracks.count()) {
+                span = measure = 0;
+                return this;
+            }
+
+            _recalculateSpan();
             return this;
         }
 
         Mut replaceTrack(uint index, OmniTrack track) {
             tracks[index] = track;
+            if (t := MidiTrack.cast(track, null)) {
+                # If we're replacing the only track, reset the sizes.
+                if (tracks.count() == 1)
+                    span = measure = 0;
+                else
+                    _recalculateSpan();
+
+                markEnding(t.track, t.span);
+            }
             return this;
         }
 
@@ -879,4 +892,126 @@ const BILLION := MILLION * 1000;
 
 @interface EventContext {
     @abstract void setControllerOffset(uint offset);
+}
+
+## Stores a pattern and its position in a MidiArrangement.
+class PatternPos {
+    @cvars {
+        ## Where the pattern starts in the arrangement, in ticks.
+        uint start;
+
+        Track pattern;
+    }
+
+    uint oper .end() {
+        return start + pattern[-1].time;
+    }
+
+    int cmp(PatternPos other) {
+        rc := cmp(start, other.start);
+        if (rc) return rc;
+        return cmp(pattern, other.pattern);
+    }
+
+    int cmp(Object other) {
+        if (o := PatternPos.cast(other))
+            return cmp(o);
+        else
+            return Object.cmp(other);
+    }
+}
+
+# An ordered collection of midi patterns (Tracks).
+class MidiArrangement {
+    Array[PatternPos] __patterns = {};
+
+    class Iter {
+        @cvars {
+            Array[PatternPos] __array;
+            uint __index;
+        }
+
+        oper init(uint index) : __index = index {}
+
+        PatternPos elem() { return __array[__index] }
+        void next() { ++__index }
+        bool isTrue() { return __index < __array.count() }
+    }
+
+    # Find the index of the first PatternPos that starts at or after 'pos'.
+    # Returns the first index after then end if 'pos' is later than all
+    # PatternPos's in the sequence.
+    uint findIndex(uint pos) {
+        uint end = __patterns.count();
+        uint start = 0;
+
+        # Deal with an empty array.
+        if (end == 0)
+            return 0;
+
+        # Rule out the case where the new value is beyond the end.
+        if (pos > __patterns[end - 1].start)
+            return end;
+
+        while (end - start > 1) {
+            uint i = start + (end - start) / 2;
+            curStart := __patterns[i].start;
+            if (curStart < pos)
+                start = i;
+            else
+                end = i;
+        }
+        return pos > __patterns[start].start ? end : start;
+    }
+
+    ## Find the index at or after 'index' of the first PatternPos that
+    ## overlaps with 'pos' (i.e. where pos >= pattern.start && pos <
+    ## pattern.end).  Returns -1 if no patterns are found.
+    int getOverlap(uint pos, int index) {
+        while (index < __patterns.count() && pos >= __patterns[index].start) {
+            if (pos < __patterns[index].end)
+                return index;
+            ++index;
+        }
+        return -1;
+    }
+
+    @final void insert(uint start, Track pattern) {
+        index := findIndex(start);
+        __patterns.insert(index, PatternPos(start, pattern));
+    }
+
+    @final void append(PatternPos pp) {
+        @assert(!__patterns || pp.start >= __patterns[-1].start);
+        __patterns.append(pp);
+    }
+
+    @final void delete(int index) { __patterns.delete(index) }
+
+    @final PatternPos oper [](uint index) {
+        return __patterns[index];
+    }
+
+    Iter iter() {
+        return Iter(__patterns, 0);
+    }
+
+    Track toTrack() {
+        result := Track('arrangsment');
+        uint lastTime;
+        for (p :in __patterns) {
+            for (event :in p.pattern) {
+                eventTime := event.time + p.start;
+                if (!event.isa(EndTrack)) {
+                    event = event.clone();
+                    event.time = eventTime;
+                    result.add(event);
+                }
+                if (eventTime > lastTime)
+                    lastTime = eventTime;
+            }
+        }
+        result.append(EndTrack(lastTime));
+        return result;
+    }
 }

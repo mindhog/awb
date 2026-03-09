@@ -160,8 +160,20 @@ def editInTracker {parent onTerminate track index} {
     give $result
 }
 
+def editArrangement {parent onTerminate track index} {
+    var result [
+        MidiArranger $parent [* 1440 4] [MidiArrangement] $patterns $index
+    ]
+
+    result setFocus 1
+    give $result
+}
+
 var audioPlugins [array]
-var midiPlugins [array [Plugin 'Edit in Tracker' $editInTracker]]
+var midiPlugins [array \
+    [Plugin 'Edit in Tracker' $editInTracker] \
+    [Plugin 'Arranger' $editArrangement]
+]
 
 # Adds a new track.
 def track {file} 'Add a new track file: track <filename>' {
@@ -651,6 +663,9 @@ def showAudioSourceMenu {parent alternate textWidget} {
     }
 }
 
+# The pattern map, should map pattern names to MutMidiTrack objects.
+var patterns [map]
+
 var projectBasename 'project-auto'
 var projectFilename [format $projectBasename '.crash']
 var midiOutChannel [+ 0]
@@ -739,6 +754,11 @@ def v {} 'Bring up the text panel UI.' {
     }
 
     runUI {
+
+        mainColumn bind $KEY_DOWN {
+            # Ignore the result; mainColumn is top-level and should be captive.
+            mainColumn nextCell
+        }
 
         def setAudioFilename {} {
             def callback {text} {
@@ -857,12 +877,30 @@ def v {} 'Bring up the text panel UI.' {
             }
             EntryBar $bottomBar 1 'New name:' $callback $tracklist
         }
+        def storeTrackAsPattern {} {
+            def callback {text} {
+                var eng [get_engine]
+                var section [eng getCurrentSection]
+                var sel [tracklist getSelection]
+                var track [section getTrack $sel]
+                patterns put $text [track mutable]
+            }
+            EntryBar $bottomBar 1 'Pattern:' $callback $tracklist
+        }
         tracklist bind $KEY_ENTER {
             var menu [makeMenu $centerPane $tracklist $tracklist]
             menu add 'Rename track' $renameTrack
             menu add 'Do something else' [def f {} { prerr 'something else' }]
+
             var trackIndex [tracklist getSelection]
             var track [arrayOf [getTracks] | get $trackIndex]
+
+            if {track isMidi} {
+                # This should probably be a midi plugin, but at this point
+                # plugins want to take over the space of the track panel.
+                menu add 'Add as Pattern' $storeTrackAsPattern
+            }
+
             var plugins [
                 if {track isMidi} {
                     give $midiPlugins
@@ -915,6 +953,7 @@ def v {} 'Bring up the text panel UI.' {
         var ui [object {
             var bind $bind
             var setStatusText $setStatusText
+            def getCenterPane {} { give $centerPane }
         }]
         uiCallbacks iter | each callback {
             prerr [format 'wtf??? - ' $ui]
