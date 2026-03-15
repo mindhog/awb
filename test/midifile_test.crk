@@ -1,0 +1,21 @@
+
+import crack.cont.array Array;
+import crack.io cerr, BufferReader, StringWriter;
+import crack.midi.event EndTrack, Event, NoteOn, Track;
+import spug.loop.midifile MidiFile;
+
+@import crack.ann assert;
+
+out := StringWriter();
+mf := MidiFile(100, 60);
+t := Track('foobar', Array[Event]![NoteOn(0, 2, 100, 100), EndTrack(1000)]);
+mf.append(t);
+mf.write(out);
+
+resurrected := MidiFile.read(BufferReader(out.string()));
+@assert(resurrected.tracks[0] == t);
+@assert(resurrected.ticksPerQN == mf.ticksPerQN);
+@assert(resurrected.bpm == mf.bpm);
+
+cerr `ok\n`;
+

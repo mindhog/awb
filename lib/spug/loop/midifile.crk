@@ -76,13 +76,16 @@ class MidiFile {
             # for the first track.
             dest := StringWriter();
             midiWriter := MidiWriter(dest);
-            midiWriter.encodeVarLen(0);  # Time.
-            midiWriter.write(0xff);  # Synthetic event 0x51
-            midiWriter.write(0x51);
-            midiWriter.write(3);  # Number of bytes.
-            midiWriter.write(byte(usecsPerBeat >> 16));  # usecs per beat.
-            midiWriter.write(byte(usecsPerBeat >> 8));
-            midiWriter.write(byte(usecsPerBeat));
+
+            # Meta events for tempo and track name.
+            temp := AppendBuffer![byte(usecsPerBeat >> 16),
+                                  byte(usecsPerBeat >> 8),
+                                  byte(usecsPerBeat),
+                                  ];
+            midiWriter.encodeVarLen(0);
+            MetaEvent(0, 0x51, String(temp, true)).writeTo(midiWriter);
+            midiWriter.encodeVarLen(0);
+            MetaEvent(0, 3, track.name).writeTo(midiWriter);
 
             # Serialize the track.
             track.writeTo(midiWriter);
@@ -134,6 +137,8 @@ class MidiFile {
 
             # Process certain meta events.
             bool gotNonMetaEvents;
+            trim := 0;
+            index := 0;
             for (event :in track) {
                 if (meta := MetaEvent.cast(event, null)) {
                     if (meta.action == 0x51) {
@@ -157,13 +162,32 @@ class MidiFile {
                                          new values is $tempo`
                             );
                         }
+                        if (index <= trim)
+                            ++trim;
                     } else if (meta.action == 3) {
                         # Track name.
                         track.name = meta.contents;
+                        if (index <= trim)
+                            ++trim;
                     }
                 } else {
                     gotNonMetaEvents = true;
                 }
+
+                ++index;
+            }
+
+            # Remove any meta-events that we've dealt with at the beginning of
+            # the track.
+            if (trim) {
+                t := Track(track.name);
+                index = 0;
+                for (event :in track) {
+                    if (index >= trim)
+                        t.add(event);
+                    ++index;
+                }
+                track = t;
             }
 
             # Make sure we got at least one set-tempo event.
