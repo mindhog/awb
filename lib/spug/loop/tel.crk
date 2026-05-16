@@ -9,7 +9,7 @@ import crack.cont.array Array;
 import crack.cont.hashmap HashMap;
 import crack.fs makePath;
 import crack.functor Functor0, Functor1, Functor2;
-import crack.io cin, cout, cerr, FStr;
+import crack.io cin, cout, cerr, FStr, Writer;
 import crack.lang AppendBuffer, CString, Exception;
 import crack.logger levelNames, setLogLevel, DEBUG, ERROR, FATAL, INFO, WARN;
 import crack.math ceil, strtod;
@@ -29,13 +29,13 @@ import crash.crash createRootContext, eval, parseBlockArg, setCrashPathFromEnv,
     SimpleValue, Value;
 import crash.repl repl;
 import crash.stdlib stdlib;
-import crash.types BoolObj, FloatObj, IntObj;
+import crash.types BoolObj, FloatObj, IntObj, TypeError;
 import crash.collections wrapIterator, Iter;
 import spug.loop.evtrec makeEventRecorderModule;
 import spug.loop.midieng ControllerDispatcher, EventProcessor,
     MidiDispatcher, MidiEngine, MidiSequencer, ModelObserver;
-import spug.loop.model EventContext, MidiArrangement, MidiTrack, OmniTrack,
-    Section;
+import spug.loop.model EventContext, MidiArrangement, MidiTrack,
+    MidiArrangementTrack, OmniTrack, Section;
 import spug.loop.sysextra pow;
 import spug.loop.jack jackCallback, RecordBuffer, SequencerWaveModel, Wave,
     WaveAdapter, WaveManager, WaveModel, WindowBufferAdapter;
@@ -495,7 +495,42 @@ class MutMidiTrack = Track {
 }
 
 alias MutMidiTrackObj = ObjOf[MutMidiTrack];
+
+alias MidiArrangementObj = ObjOf[MidiArrangement];
+
 MutMidiTrackObj _makeMutMidiTrack(Track track);
+
+MidiArrangementObj _makeMidiArrangement(MidiArrangement arrangement) {
+    result := MidiArrangementObj(arrangement);
+
+    ## Creates a single midi track from the arrangement.
+    @function(MidiArrangement) MutMidiTrackObj toTrack(String name) {
+        return _makeMutMidiTrack(self.toTrack(name));
+    }
+
+    ## Create an OmniTrack from the arrangement.
+    @function(MidiArrangement) MidiArrangementTrack toOmniTrack(String name) {
+        track := self.toTrack(name);
+        return MidiArrangementTrack(track, self);
+    }
+
+    ## Insert a pattern into the arrangement.
+    @function(MidiArrangement) int insert(int pos, Track track) {
+        self.insert(pos, track);
+        return 0;
+    }
+
+    result.define('toTrack', toTrack(arrangement));
+    result.define('toOmniTrack', toOmniTrack(arrangement));
+    result.define('insert', insert(arrangement));
+
+    return result;
+}
+
+## Create an empty MidiArrangement.
+@function MidiArrangementObj makeMidiArrangement() {
+    return _makeMidiArrangement(MidiArrangement());
+}
 
 TrackObj makeTrackObj(OmniTrack track) {
     result := TrackObj(track);
@@ -512,6 +547,11 @@ TrackObj makeTrackObj(OmniTrack track) {
     ## Returns true if the track is a midi track.
     @function(OmniTrack) bool isMidi() {
         return MidiTrack.cast(self, null);
+    }
+
+    ## Returns true if the track is a midi arrangement track.
+    @function(OmniTrack) bool isMidiArrangement() {
+        return MidiArrangementTrack.cast(self, null);
     }
 
     ## Dump the track to standard output.
@@ -542,6 +582,15 @@ TrackObj makeTrackObj(OmniTrack track) {
         return _makeMutMidiTrack(MidiTrack.clone(mtrk.track));
     }
 
+    @function(OmniTrack) MidiArrangementObj getArrangement() {
+        atrk := MidiArrangementTrack.cast(self, null);
+        if (atrk is null)
+            throw Exception(
+                'Called getArrangement on a non-arrangement track.'
+            );
+        return _makeMidiArrangement(atrk.arrangement);
+    }
+
     ## Returns the span of the underlying track in ticks.
     @function(OmniTrack) int span() {
         return self.span;
@@ -553,11 +602,13 @@ TrackObj makeTrackObj(OmniTrack track) {
     result.define('getName', getName(track));
     result.define('rename', rename(track));
     result.define('isMidi', isMidi(track));
+    result.define('isMidiArrangement', isMidiArrangement(track));
     result.define('dump', dump(track));
     result.define('crunch', crunch(track));
     result.define('clone', clone(track));
     result.define('span', span(track));
     result.define('mutable', mutable(track));
+    result.define('getArrangement', getArrangement(track));
     return result;
 }
 
@@ -634,9 +685,8 @@ MutMidiTrackObj _makeMutMidiTrack(Track track) {
 
 alias MidiFileObj = ObjOf[MidiFile];
 
-@function MidiFileObj readMidiFile(String filename) {
-    mf := MidiFile.read(makePath(filename).reader());
-    result := MidiFileObj(mf);
+MidiFileObj _makeMidiFileObj(MidiFile rep) {
+    result := MidiFileObj(rep);
 
     @function(MidiFile) float getBPM() { return self.bpm }
     @function(MidiFile) int getTicksPerQN() { return int(self.ticksPerQN) }
@@ -649,27 +699,40 @@ alias MidiFileObj = ObjOf[MidiFile];
         return makeArrayObj(result);
     }
 
-    result.define('getBPM', getBPM(mf));
-    result.define('getTicksPerQN', getTicksPerQN(mf));
-    result.define('getTracks', getTracks(mf));
+    ## Add a new track to the midi file.  Returns the total number of tracks.
+    @function(MidiFile) int add(Track track) {
+        self.append(track);
+        return self.tracks.count();
+    }
+
+    ## Write the midi file to 'out'.
+    ##
+    ## 'out' should either be a Writer or an Obj containing a writer.
+    @function(MidiFile) int writeTo(Object out) {
+        Writer wr;
+        if (!(wr = Writer.cast(out, null)) &&
+            !(wr = Writer.cast(ObjOf[Object].cast(out, null).inst, null))
+            )
+            throw TypeError('Argument is not a Writer');
+        self.write(wr);
+        return 0;
+    }
+
+    result.define('getBPM', getBPM(rep));
+    result.define('getTicksPerQN', getTicksPerQN(rep));
+    result.define('getTracks', getTracks(rep));
+    result.define('add', add(rep));
+    result.define('writeTo', writeTo(rep));
     return result;
 }
 
-alias MidiArrangementObj = ObjOf[MidiArrangement];
+@function MidiFileObj readMidiFile(String filename) {
+    return _makeMidiFileObj(MidiFile.read(makePath(filename).reader()));
+}
 
-## Create an empty MidiArrangement.
-@function MidiArrangementObj makeMidiArrangement() {
-    arrangement := MidiArrangement();
-    result := MidiArrangementObj(arrangement);
-
-    ## Creates a single midi track from the arrangement.
-    @function(MidiArrangement) MutMidiTrackObj toTrack() {
-        return _makeMutMidiTrack(self.toTrack());
-    }
-
-    result.define('toTrack', toTrack(arrangement));
-
-    return result;
+## Create a new MidiFile with no tracks.
+@function MidiFileObj makeMidiFile(int ticksPerQN, float bpm) {
+    return _makeMidiFileObj(MidiFile(ticksPerQN, bpm));
 }
 
 ## Returns an iterator over the tracks in the current section (an iterator
@@ -1380,6 +1443,28 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
     return ChannelPredicateObj(ChannelPredicate(channel, delegate));
 }
 
+## Convert an object to an OmniTrack.
+OmniTrack _toOmniTrack(Object track) {
+    OmniTrack omniTrack;
+    if (t := TrackObj.cast(track, null))
+        omniTrack = OmniTrack.cast(t.convertTo(OmniTrack));
+    else if (t := OmniTrack.cast(track, null))
+        omniTrack = t;
+    else if (t := ObjOf[OmniTrack].cast(track, null))
+        omniTrack = t.inst;
+    else if (t := Track.cast(track, null))
+        omniTrack = MidiTrack(t);
+    else if (t := ObjOf[Track].cast(track, null))
+        omniTrack = MidiTrack(t.inst);
+    else if (t := ObjOf[MutMidiTrack].cast(track, null))
+        omniTrack = MidiTrack(t.inst);
+    else
+        throw Exception(
+            FStr() `Can't convert $track to OmniTrack or Track`
+        );
+    return omniTrack;
+}
+
 ## Get the new engine facade.
 @function Obj get_engine() {
     if (_engineObj)
@@ -1449,8 +1534,8 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
         return 0;
     }
 
-    @function(AWBEngine) int addTrack(Track track) {
-        self.addTrack(track);
+    @function(AWBEngine) int addTrack(OmniTrack track) {
+        self.addTrack(_toOmniTrack(track));
         return 0;
     }
 
@@ -1465,17 +1550,7 @@ alias ChannelPredicateObj = ObjOf[ChannelPredicate];
     ## This method can accept any of Track, OmniTrack or their corresponding
     ## crash wrappers (e.g. TrackObj).
     @function(AWBEngine) int replaceTrack(int index, Object track) {
-        OmniTrack omniTrack;
-        if (t := TrackObj.cast(track, null))
-            omniTrack = OmniTrack.cast(t.convertTo(OmniTrack));
-        else if (t := OmniTrack.cast(track, null))
-            omniTrack = t;
-        else if (t := Track.cast(track, null))
-            omniTrack = MidiTrack(t);
-        else
-            throw Exception(
-                FStr() `Can't convert $track to OmniTrack or Track`
-            );
+        omniTrack := _toOmniTrack(track);
         self.replaceTrack(index, omniTrack);
         return 0;
     }
@@ -1741,6 +1816,7 @@ class InterpWrapper {
         ctx.define('MutMidiTrack', makeMutMidiTrack());
         ctx.define('MidiArrangement', makeMidiArrangement());
         ctx.define('readMidiFile', readMidiFile());
+        ctx.define('MidiFile', makeMidiFile());
         ctx.define('getTracks', getTracks());
         ctx.define('loadProject', loadProject());
         ctx.define('saveProject', saveProject());

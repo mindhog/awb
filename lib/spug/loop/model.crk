@@ -986,7 +986,11 @@ class MidiArrangement {
         __patterns.append(pp);
     }
 
-    @final void delete(int index) { __patterns.delete(index) }
+    @final void delete(int index) {
+        cerr `before $__patterns\n`;
+        __patterns.delete(index);
+        cerr `after $__patterns\n`;
+    }
 
     @final PatternPos oper [](uint index) {
         return __patterns[index];
@@ -996,8 +1000,8 @@ class MidiArrangement {
         return Iter(__patterns, 0);
     }
 
-    Track toTrack() {
-        result := Track('arrangsment');
+    Track toTrack(String name) {
+        result := Track(name);
         uint lastTime;
         for (p :in __patterns) {
             for (event :in p.pattern) {
@@ -1013,5 +1017,20 @@ class MidiArrangement {
         }
         result.append(EndTrack(lastTime));
         return result;
+    }
+}
+
+## Can be treated as a midi track for some purposes, but also references a
+## mutable MidiArrangement.
+##
+## Changing the arrangement doesn't change the track: to change in the engine,
+## you'll also need to replace the track with a new one constructed from the
+## arrangement.  The arrangement is stored only to preserve it.
+class MidiArrangementTrack : MidiTrack {
+    MidiArrangement arrangement;
+
+    oper init(Track track, MidiArrangement arrangement) :
+        MidiTrack(track),
+        arrangement = arrangement {
     }
 }

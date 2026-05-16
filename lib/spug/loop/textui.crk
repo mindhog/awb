@@ -880,7 +880,8 @@ class MidiArranger : Window {
             ++index;
         }
 
-        arrangement.delete(lastPatternIndex);
+        if (lastPatternIndex != -1)
+            arrangement.delete(lastPatternIndex);
     }
 }
 

@@ -137,7 +137,7 @@ def Plugin {_name _uiFactory} \
 ## onTerminate: called when the terminate key (F3) is pressed.
 ## track: TrackObj
 def editInTracker {parent onTerminate track index} {
-    var result [Tracker $parent [track clone]]
+    var result [Tracker $parent [track mutable]]
     result bind $KEY_PGUP { result pageUp }
     result bind $KEY_PGDN { result pageDown }
     result bind $KEY_DOWN { result down }
@@ -152,7 +152,7 @@ def editInTracker {parent onTerminate track index} {
                 [eng getCurrentSection] getMeasureSize
             ]
         ]
-        result setTrack $newTrack
+        result setTrack [newTrack mutable]
         eng replaceTrack $index [newTrack clone]
     }
 
@@ -160,20 +160,82 @@ def editInTracker {parent onTerminate track index} {
     give $result
 }
 
+def setArrangerBindings {arranger onTerminate store} {
+    arranger bind $KEY_LEFT {arranger prevCol}
+    arranger bind $KEY_RIGHT {arranger nextCol}
+    arranger bind $KEY_UP {arranger prevRow}
+    arranger bind $KEY_DOWN {arranger nextRow}
+    arranger bind $KEY_ENTER {
+        arranger add
+        store
+        give handled
+    }
+    arranger bind $KEY_DEL {
+        prerr 'delete pressed\n'
+        arranger delete
+        store
+        give handled
+    }
+    arranger bind $KEY_F3 {onTerminate}
+}
+
+## parent: Parent window to place the arrangement editor in
+## entryParent: Parent window to place the "track name" EntryBar in.
+def newArrangement {parent entryParent onTerminate} {
+    var lastParcel [parent getParcel]
+    var arrangement ''
+    var index 0
+    var name ''
+
+    def store {} {
+        get_engine | replaceTrack $index [arrangement toOmniTrack $name]
+    }
+
+    def onArrangerTerminate {} {
+        parent setParcel $lastParcel
+        onTerminate
+    }
+
+    def startArranger {trackName} {
+        set arrangement [MidiArrangement]
+        set index [getTracks | count]
+        set name $trackName
+        get_engine | addTrack [arrangement toTrack $trackName]
+
+        var arranger [
+            MidiArranger $parent [* 1440 4] $arrangement $patterns 0
+        ]
+
+        setArrangerBindings $arranger $onArrangerTerminate $store
+        parent setParcel $arranger
+        arranger setFocus [+ 1]
+    }
+
+    EntryBar $entryParent 1 'Track name:' $startArranger [+ 0]
+}
+
+# UI Factory function for arrangement editor
 def editArrangement {parent onTerminate track index} {
-    var result [
-        MidiArranger $parent [* 1440 4] [MidiArrangement] $patterns $index
+    var arrangement [track getArrangement]
+
+    def store {} {
+        get_engine | replaceTrack $index [
+            arrangement toOmniTrack [track getName]
+        ]
+    }
+
+    var arranger [
+        MidiArranger $parent [* 1440 4] $arrangement $patterns $index
     ]
 
-    result setFocus 1
-    give $result
+    setArrangerBindings $arranger $onTerminate $store
+    arranger setFocus [+ 1]
+    give $arranger
 }
 
 var audioPlugins [array]
-var midiPlugins [array \
-    [Plugin 'Edit in Tracker' $editInTracker] \
-    [Plugin 'Arranger' $editArrangement]
-]
+var midiPlugins [array [Plugin 'Edit in Tracker' $editInTracker]]
+var arrangementPlugins [array [Plugin 'Edit' $editArrangement]]
 
 # Adds a new track.
 def track {file} 'Add a new track file: track <filename>' {
@@ -491,7 +553,8 @@ def ActionButton {parent size text action} \
 ## Call "enterCallback" with the entry text and restore the original parcel
 ## when the user presses "enter".
 ##
-## "restoreFocus" is a widget to restore focus to.
+## "restoreFocus" is a widget to restore focus to, or a false value if the
+## callback has taken care of this.
 def EntryBar {parent size label enterCallback restoreFocus} {
     object {
         var row [Row $parent $size]
@@ -503,7 +566,9 @@ def EntryBar {parent size label enterCallback restoreFocus} {
         entry bind $KEY_ENTER {
             enterCallback [entry getText]
             parent setParcel $lastParcel
-            restoreFocus setFocus [+ 1]
+            if {give $restoreFocus} {
+                restoreFocus setFocus [+ 1]
+            }
         }
     }
 }
@@ -902,7 +967,9 @@ def v {} 'Bring up the text panel UI.' {
             }
 
             var plugins [
-                if {track isMidi} {
+                if {track isMidiArrangement} {
+                    give $arrangementPlugins
+                } elif {track isMidi} {
                     give $midiPlugins
                 } else {
                     give $audioPlugins
@@ -940,6 +1007,13 @@ def v {} 'Bring up the text panel UI.' {
 
         # Upper-case "R" to record over the last track.
         bind 82 {AudioRecorder redo}
+
+        # Lower-case "a" to add a new arrangement.
+        bind 97 {
+            newArrangement $centerPane $bottomBar [
+                def _ {} {tracklist setFocus [+ 1]}
+            ]
+        }
 
         setStatusText 'AWB -- <Space> toggle play, <q> to quit, <Left> back, <Right> Forward'
 

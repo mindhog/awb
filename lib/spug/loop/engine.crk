@@ -233,7 +233,13 @@ class AWBEngine @impl ModelObserver {
         __midi.latchForRecord();
     }
 
+    ## Add a Track to the current section.
     void addTrack(Track track) {
+        __project.addTrack(track);
+    }
+
+    ## Add an OmniTrack to the current section.
+    void addTrack(OmniTrack track) {
         __project.addTrack(track);
     }
 
