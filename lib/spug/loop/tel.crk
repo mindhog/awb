@@ -35,7 +35,7 @@ import spug.loop.evtrec makeEventRecorderModule;
 import spug.loop.midieng ControllerDispatcher, EventProcessor,
     MidiDispatcher, MidiEngine, MidiSequencer, ModelObserver;
 import spug.loop.model EventContext, MidiArrangement, MidiTrack,
-    MidiArrangementTrack, OmniTrack, Section;
+    MidiArrangementTrack, OmniTrack, PatternPos, Section;
 import spug.loop.sysextra pow;
 import spug.loop.jack jackCallback, RecordBuffer, SequencerWaveModel, Wave,
     WaveAdapter, WaveManager, WaveModel, WindowBufferAdapter;
@@ -494,6 +494,25 @@ class MutMidiTrack = Track {
 
 }
 
+alias PatternPosObj = ObjOf[PatternPos];
+
+PatternPosObj makePatternPosObj(PatternPos ppos) {
+    ## Returns the start position of the pattern.
+    @function(PatternPos) int start() { return self.start }
+
+    ## Returns the pattern Track.
+    @function(PatternPos) Track pattern() { return self.pattern }
+
+    ## Returns the name of the pattern track.
+    @function(PatternPos) String name() { return self.pattern.name }
+
+    result := PatternPosObj(ppos);
+    result.define('start', start(ppos));
+    result.define('pattern', pattern(ppos));
+    result.define('name', name(ppos));
+    return result;
+}
+
 alias MutMidiTrackObj = ObjOf[MutMidiTrack];
 
 alias MidiArrangementObj = ObjOf[MidiArrangement];
@@ -520,9 +539,28 @@ MidiArrangementObj _makeMidiArrangement(MidiArrangement arrangement) {
         return 0;
     }
 
+    alias AIter = MidiArrangement.Iter;
+    class ArrangementIter : Iter {
+        @cvars {
+            AIter __rep;
+        }
+
+        Object elem() { return makePatternPosObj(__rep.elem()) }
+        bool next() {
+            __rep.next();
+            return __rep;
+        }
+        bool isTrue() { return __rep }
+    }
+
+    @function(MidiArrangement) Obj iter() {
+        return wrapIterator(ArrangementIter(self.iter()));
+    }
+
     result.define('toTrack', toTrack(arrangement));
     result.define('toOmniTrack', toOmniTrack(arrangement));
     result.define('insert', insert(arrangement));
+    result.define('iter', iter(arrangement));
 
     return result;
 }

@@ -987,9 +987,7 @@ class MidiArrangement {
     }
 
     @final void delete(int index) {
-        cerr `before $__patterns\n`;
         __patterns.delete(index);
-        cerr `after $__patterns\n`;
     }
 
     @final PatternPos oper [](uint index) {

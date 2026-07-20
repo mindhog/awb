@@ -771,10 +771,31 @@ def saveProject {} {
     # Export all of the midi tracks to midi files.
     var i 0
     var out [open $projectFilename w]
-    out write [importer 'makeProject track vol pan gain midiTrack']
+    out write [importer 'makeProject track vol pan gain midiTrack patterns']
     out write 'var project [makeProject]\n'
+
+    patterns iter | each pattern {
+        out write [
+            format 'patterns put ' [pattern key] ' [readMidiFile ' \
+                [pattern key] '.mid | getTracks | get 0]\n'
+        ]
+    }
+
     [getTracks] each track {
-        if {track isMidi} {
+        if {track isMidiArrangement} {
+            var arr [track getArrangement]
+            out write 'var arr [MidiArrangement]\n'
+            arr iter | each p {
+                out write [
+                    format 'arr insert ' [p start] ' [patterns get ' \
+                        [p name] ']\n'
+                ]
+            }
+            out write [
+                format 'get_engine | addTrack [arr toOmniTrack ' \
+                    [track getName] ']\n'
+            ]
+        } elif {track isMidi} {
             exportMidiFile [format [track getName] '.mid'] $i
             out write [format 'midiTrack ' [track getName] '.mid\n']
         } else {
@@ -783,6 +804,7 @@ def saveProject {} {
         }
         set i [+ $i 1]
     }
+
     out write [format 'evalfile ' $projectBasename '-settings.crash\n']
 
     set out [open [format $projectBasename '-settings.crash'] w]
