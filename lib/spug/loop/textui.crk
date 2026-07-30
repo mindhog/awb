@@ -932,6 +932,12 @@ alias MidiArrangerObj = ObjOf[MidiArranger];
         return true;
     }
 
+    ## Return the midi position of the measure that the cursor is on in midi
+    ## pulses.
+    @function(MidiArranger) int getCurPos() {
+        return self.selCol * engine.getCurrentSection().measure;
+    }
+
     result.define('setFocus', setFocus(arranger));
     result.define('nextRow', nextRow(arranger));
     result.define('nextCol', nextCol(arranger));
@@ -939,6 +945,7 @@ alias MidiArrangerObj = ObjOf[MidiArranger];
     result.define('prevCol', prevCol(arranger));
     result.define('add', add(arranger));
     result.define('delete', delete(arranger));
+    result.define('getCurPos', getCurPos(arranger));
     result.define('bind', BindCmd[MidiArranger](arranger, result));
     return result;
 }

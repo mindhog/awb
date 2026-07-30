@@ -1572,7 +1572,7 @@ OmniTrack _toOmniTrack(Object track) {
         return 0;
     }
 
-    @function(AWBEngine) int addTrack(OmniTrack track) {
+    @function(AWBEngine) int addTrack(Object track) {
         self.addTrack(_toOmniTrack(track));
         return 0;
     }
@@ -1714,6 +1714,11 @@ OmniTrack _toOmniTrack(Object track) {
         return 0;
     }
 
+    ## Returns the number of beats per measure in the current section.
+    @function(AWBEngine) int getMeasure() {
+        return self.getCurrentSection().measure / self.getPPB();
+    }
+
     result.define('play', play(engine));
     result.define('pause', pause(engine));
     result.define('addRecorder', addRecorder(engine));
@@ -1746,6 +1751,7 @@ OmniTrack _toOmniTrack(Object track) {
     result.define('createNewSection', createNewSection(engine));
     result.define('setSection', setSection(engine));
     result.define('setMeasure', setMeasure(engine));
+    result.define('getMeasure', getMeasure(engine));
 
     return result;
 }

@@ -176,6 +176,13 @@ def setArrangerBindings {arranger onTerminate store} {
         store
         give handled
     }
+
+    # 's' Seeks the engine to the current cursor position.
+    arranger bind 115 {
+        var eng [get_engine]
+        eng setPos [arranger getCurPos]
+    }
+
     arranger bind $KEY_F3 {onTerminate}
 }
 
@@ -200,7 +207,7 @@ def newArrangement {parent entryParent onTerminate} {
         set arrangement [MidiArrangement]
         set index [getTracks | count]
         set name $trackName
-        get_engine | addTrack [arrangement toTrack $trackName]
+        get_engine | addTrack [arrangement toOmniTrack $trackName]
 
         var arranger [
             MidiArranger $parent [* 1440 4] $arrangement $patterns 0
@@ -773,6 +780,10 @@ def saveProject {} {
     var out [open $projectFilename w]
     out write [importer 'makeProject track vol pan gain midiTrack patterns']
     out write 'var project [makeProject]\n'
+
+    out write [
+        format 'get_engine | setMeasure ' [get_engine | getMeasure] '\n'
+    ]
 
     patterns iter | each pattern {
         out write [
