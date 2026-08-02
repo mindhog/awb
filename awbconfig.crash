@@ -136,31 +136,44 @@ def Plugin {_name _uiFactory} \
 ## parent: TrackList
 ## onTerminate: called when the terminate key (F3) is pressed.
 ## track: TrackObj
+## index: Index of the track in the engine to update on modifications, or
+##      "mutable" if the track can safely be modified in place.
 def editInTracker {parent onTerminate track index} {
     var result [Tracker $parent [track mutable]]
     result bind $KEY_PGUP { result pageUp }
     result bind $KEY_PGDN { result pageDown }
     result bind $KEY_DOWN { result down }
     result bind $KEY_UP { result up }
-    result bind $KEY_F3 { onTerminate }
+    result bind $KEY_F3 { onTerminate; give handled }
+
+    def mutate {action} {
+        var eng [get_engine]
+        var newTrack [
+            [result getTrack] $action [
+                eng getCurrentSection | getMeasureSize
+            ]
+        ]
+        if {!= $index mutable} {
+            result setTrack [newTrack mutable]
+            eng replaceTrack $index [newTrack clone]
+        }
+    }
 
     # '[' Crunches the current track.
     result bind 91 {
-        var eng [get_engine]
-        var newTrack [
-            [result getTrack] crunch [
-                [eng getCurrentSection] getMeasureSize
-            ]
-        ]
-        result setTrack [newTrack mutable]
-        eng replaceTrack $index [newTrack clone]
+        mutate crunch
+    }
+
+    # ']' Clamps the current track.
+    result bind 93 {
+        mutate clamp
     }
 
     result setFocus 1
     give $result
 }
 
-def setArrangerBindings {arranger onTerminate store} {
+def setArrangerBindings {arranger onTerminate store parent} {
     arranger bind $KEY_LEFT {arranger prevCol}
     arranger bind $KEY_RIGHT {arranger nextCol}
     arranger bind $KEY_UP {arranger prevRow}
@@ -181,6 +194,20 @@ def setArrangerBindings {arranger onTerminate store} {
     arranger bind 115 {
         var eng [get_engine]
         eng setPos [arranger getCurPos]
+        give handled
+    }
+
+    # 'e' Edits the current pattern in the tracker.
+    arranger bind 101 {
+        def onTerminate {} {
+            parent setParcel $arranger
+            arranger setFocus [+ 1]
+        }
+
+        var track [arranger getCurPattern]
+
+        parent setParcel [editInTracker $parent $onTerminate $track mutable]
+        give handled
     }
 
     arranger bind $KEY_F3 {onTerminate}
@@ -207,13 +234,15 @@ def newArrangement {parent entryParent onTerminate} {
         set arrangement [MidiArrangement]
         set index [getTracks | count]
         set name $trackName
-        get_engine | addTrack [arrangement toOmniTrack $trackName]
+        var eng [get_engine]
+        eng addTrack [arrangement toOmniTrack $trackName]
+        var tpm [* [eng getPPB] [eng getMeasure]]
 
         var arranger [
-            MidiArranger $parent [* 1440 4] $arrangement $patterns 0
+            MidiArranger $parent $tpm $arrangement $patterns 0
         ]
 
-        setArrangerBindings $arranger $onArrangerTerminate $store
+        setArrangerBindings $arranger $onArrangerTerminate $store $parent
         parent setParcel $arranger
         arranger setFocus [+ 1]
     }
@@ -235,7 +264,7 @@ def editArrangement {parent onTerminate track index} {
         MidiArranger $parent [* 1440 4] $arrangement $patterns $index
     ]
 
-    setArrangerBindings $arranger $onTerminate $store
+    setArrangerBindings $arranger $onTerminate $store $parent
     arranger setFocus [+ 1]
     give $arranger
 }
@@ -777,6 +806,8 @@ def writeTrackAttrs {out index} {
 def saveProject {} {
     # Export all of the midi tracks to midi files.
     var i 0
+    var ppb [get_engine | getPPB]
+    var tempo [+ [get_tempo] 0.0]
     var out [open $projectFilename w]
     out write [importer 'makeProject track vol pan gain midiTrack patterns']
     out write 'var project [makeProject]\n'
@@ -786,10 +817,14 @@ def saveProject {} {
     ]
 
     patterns iter | each pattern {
+        var name [pattern key]
         out write [
-            format 'patterns put ' [pattern key] ' [readMidiFile ' \
-                [pattern key] '.mid | getTracks | get 0]\n'
+            format 'patterns put ' $name ' [readMidiFile ' \
+                $name '.mid | getTracks | get 0]\n'
         ]
+        var midiFile [MidiFile $ppb $tempo]
+        midiFile add [pattern val]
+        midiFile writeTo [open [format $name '.mid'] w]
     }
 
     [getTracks] each track {

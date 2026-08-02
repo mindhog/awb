@@ -26,7 +26,8 @@ import deadly.termlist List;
 import .engine engine, AWBEngine;
 import .model Controller, MidiArrangement, OmniTrack;
 import .midieng MidiEngine, TimeCallback, TimeEvent;
-import .tel AppMethods, CrashCallback, InterpWrapper, MutMidiTrack;
+import .tel makeMutMidiTrackObj, AppMethods, CrashCallback, InterpWrapper,
+    MutMidiTrack, MutMidiTrackObj;
 import .uiutil renderTrack;
 
 @import crack.ann cvars, impl, implements, interface;
@@ -730,7 +731,7 @@ class MidiArranger : Window {
 
     # 'row' is the pattern index, 'col' is effectively the measure.
     # The 'start' values are the offset to the top-left corner.  The 'sel'
-    # values are the selected row
+    # values are the selected cell.
     uint row, col, startRow, startCol, selRow, selCol;
 
     # Sorted pattern names.
@@ -775,12 +776,12 @@ class MidiArranger : Window {
                 break;
 
             name := patternNames[curRow];
-            pad := String(patternColWidth - name.count(), b' ');
-            name = name + pad;
             rowPattern := patterns[name];
 
             attr := _trackAttrs[curRow % _trackAttrs.count()];
 
+            pad := String(patternColWidth - name.count(), b' ');
+            name = name + pad;
             gc.write(0, y, attr, name);
 
             # Paint the row in the pattern grid column.
@@ -938,6 +939,14 @@ alias MidiArrangerObj = ObjOf[MidiArranger];
         return self.selCol * engine.getCurrentSection().measure;
     }
 
+    ## Returns the pattern that the cursor is on (null if there are no
+    ## patterns).
+    @function(MidiArranger) MutMidiTrackObj getCurPattern() {
+        return self.patterns ?
+            makeMutMidiTrackObj(self.patterns[self.patternNames[self.selRow]]) :
+            null;
+    }
+
     result.define('setFocus', setFocus(arranger));
     result.define('nextRow', nextRow(arranger));
     result.define('nextCol', nextCol(arranger));
@@ -946,6 +955,7 @@ alias MidiArrangerObj = ObjOf[MidiArranger];
     result.define('add', add(arranger));
     result.define('delete', delete(arranger));
     result.define('getCurPos', getCurPos(arranger));
+    result.define('getCurPattern', getCurPattern(arranger));
     result.define('bind', BindCmd[MidiArranger](arranger, result));
     return result;
 }

@@ -51,7 +51,7 @@ import .server startServer;
 @import crack.ann assert, cvars, impl, interface, struct;
 @import crash.ann function;
 
-@export_symbols TrackObj;
+@export_symbols MutMidiTrackObj, TrackObj;
 
 ## Toggles "play" in the event manager.
 @function int play() {
@@ -492,6 +492,16 @@ class MutMidiTrack = Track {
         }
     }
 
+    ## "clamps" the end of track event to the end of the measure of the last
+    ## event, where the span of the measure is 'ticks'.
+    void clamp(int ticks) {
+        @assert(this && "Clamping empty track.");
+        eot := EndTrack.cast(this[-1]);
+        if (count() > 1)
+            eot.time = (this[-2].time / ticks + 1) * ticks;
+        else
+            eot.time = 0;
+    }
 }
 
 alias PatternPosObj = ObjOf[PatternPos];
@@ -517,14 +527,14 @@ alias MutMidiTrackObj = ObjOf[MutMidiTrack];
 
 alias MidiArrangementObj = ObjOf[MidiArrangement];
 
-MutMidiTrackObj _makeMutMidiTrack(Track track);
+MutMidiTrackObj makeMutMidiTrackObj(Track track);
 
 MidiArrangementObj _makeMidiArrangement(MidiArrangement arrangement) {
     result := MidiArrangementObj(arrangement);
 
     ## Creates a single midi track from the arrangement.
     @function(MidiArrangement) MutMidiTrackObj toTrack(String name) {
-        return _makeMutMidiTrack(self.toTrack(name));
+        return makeMutMidiTrackObj(self.toTrack(name));
     }
 
     ## Create an OmniTrack from the arrangement.
@@ -605,6 +615,13 @@ TrackObj makeTrackObj(OmniTrack track) {
         return makeTrackObj(MidiTrack(MidiTrack.crunch(mtrk.track, ticks)));
     }
 
+    @function(OmniTrack) TrackObj clamp(int ticks) {
+        mtrk := MidiTrack.cast(self, null);
+        if (mtrk is null)
+            throw Exception('Can only clamp midi tracks.');
+        return makeTrackObj(MidiTrack(MidiTrack.clamp(mtrk.track, ticks)));
+    }
+
     @function(OmniTrack) TrackObj clone() {
         mtrk := MidiTrack.cast(self, null);
         if (mtrk is null)
@@ -617,7 +634,7 @@ TrackObj makeTrackObj(OmniTrack track) {
         mtrk := MidiTrack.cast(self, null);
         if (mtrk is null)
             throw Exception('Can only make midi tracks mutable.');
-        return _makeMutMidiTrack(MidiTrack.clone(mtrk.track));
+        return makeMutMidiTrackObj(MidiTrack.clone(mtrk.track));
     }
 
     @function(OmniTrack) MidiArrangementObj getArrangement() {
@@ -651,7 +668,7 @@ TrackObj makeTrackObj(OmniTrack track) {
 }
 
 ## The track object will be consumed, so it should be owned by the caller.
-MutMidiTrackObj _makeMutMidiTrack(Track track) {
+MutMidiTrackObj makeMutMidiTrackObj(Track track) {
     result := MutMidiTrackObj(mutTrack := MutMidiTrack(track));
 
     @function(MutMidiTrack) String getName() {
@@ -671,13 +688,20 @@ MutMidiTrackObj _makeMutMidiTrack(Track track) {
         return makeTrackObj(MidiTrack(MidiTrack.crunch(self, ticks)));
     }
 
+    ## "clamps" the end of track event to the end of the measure of the last
+    ## event, where the span of the measure is 'ticks'.
+    @function(MutMidiTrack, wrap) MutMidiTrackObj clamp(int ticks) {
+        self.clamp(ticks);
+        return wrap;
+    }
+
     @function(MutMidiTrack) TrackObj clone() {
         return makeTrackObj(MidiTrack(MidiTrack.clone(self)));
     }
 
-    ## Return a mutable copy of the track.
-    @function(MutMidiTrack) MutMidiTrackObj mutable() {
-        return _makeMutMidiTrack(MidiTrack.clone(self));
+    ## Returns the track itself.
+    @function(MutMidiTrack, wrap) MutMidiTrackObj mutable() {
+        return wrap;
     }
 
     ## Returns the span of the underlying track in ticks.
@@ -707,6 +731,7 @@ MutMidiTrackObj _makeMutMidiTrack(Track track) {
     result.define('isMidi', isMidi(mutTrack));
     result.define('dump', dump(mutTrack));
     result.define('crunch', crunch(mutTrack));
+    result.define('clamp', clamp(mutTrack));
     result.define('clone', clone(mutTrack));
     result.define('span', span(mutTrack));
     result.define('mutable', mutable(mutTrack));
@@ -718,7 +743,7 @@ MutMidiTrackObj _makeMutMidiTrack(Track track) {
 ## Create am empty mutable midi track with the given name.
 @function MutMidiTrackObj makeMutMidiTrack(String name) {
     track := Track(name);
-    return _makeMutMidiTrack(track);
+    return makeMutMidiTrackObj(track);
 }
 
 alias MidiFileObj = ObjOf[MidiFile];
@@ -733,7 +758,7 @@ MidiFileObj _makeMidiFileObj(MidiFile rep) {
     @function(MidiFile) ArrayObj getTracks() {
         result := Array[Object]();
         for (track :in self.tracks)
-            result.append(_makeMutMidiTrack(track));
+            result.append(makeMutMidiTrackObj(track));
         return makeArrayObj(result);
     }
 
@@ -1561,6 +1586,9 @@ OmniTrack _toOmniTrack(Object track) {
         return 0;
     }
 
+    ## Returns the engine's "pulses per beat."
+    @function(AWBEngine) int getPPB() { return self.getPPB() }
+
     ## Returns the current section.
     @function(AWBEngine) SectionObj getCurrentSection() {
         return makeSectionObj(self.getCurrentSection());
@@ -1728,6 +1756,7 @@ OmniTrack _toOmniTrack(Object track) {
     result.define('toggleRecord', toggleRecord(engine));
     result.define('togglePlay', togglePlay(engine));
     result.define('setPPB', setPPB(engine));
+    result.define('getPPB', getPPB(engine));
     result.define('addTrack', addTrack(engine));
     result.define('deleteTrack', deleteTrack(engine));
     result.define('replaceTrack', replaceTrack(engine));

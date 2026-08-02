@@ -152,6 +152,21 @@ class MidiTrack @impl OmniTrack {
         return Track(track.name, events);
     }
 
+    ## Static version of clamp() that works on plain track objects.
+    @static Track clamp(Track track, uint ticks) {
+        @assert(track && "Clamping empty track.");
+        events := Array[Event]();
+        for (event :in track)
+            events.append(event.clone());
+
+        eot := EndTrack.cast(events[-1]);
+        if (events.count() > 1)
+            eot.time = (events[-2].time / ticks + 1) * ticks;
+        else
+            eot.time = 0;
+        return Track(track.name, events);
+    }
+
     ## Return a copy of the track with all events shifted back in time by
     ## 'ticks'.  Any events originally between 0 and 'ticks' are given a time
     ## of zero, effectively "crunching" all events in the shifted region to

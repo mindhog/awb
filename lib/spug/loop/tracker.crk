@@ -12,7 +12,7 @@ import crash.types IntObj;
 import deadly.util convertKey;
 import .model MidiTrack, OmniTrack;
 import .textui BindCmd;
-import .tel makeTrackObj, TrackObj;
+import .tel makeTrackObj, makeMutMidiTrackObj, MutMidiTrackObj, TrackObj;
 
 @import crack.ann cvars, define;
 @import crash.ann function;
@@ -184,8 +184,8 @@ alias TrackObj = ObjOf[OmniTrack];
         return 1;
     }
 
-    @function(Tracker) TrackObj getTrack() {
-        return makeTrackObj(MidiTrack(self.track));
+    @function(Tracker) MutMidiTrackObj getTrack() {
+        return makeMutMidiTrackObj(self.track);
     }
 
     @function(Tracker) int setTrack(Track track) {
