@@ -5,11 +5,13 @@ import crack.cont.array Array;
 import crack.cont.hashmap HashMap;
 import crack.exp.termui Event, GraphicsContext, KeyEvent, Window;
 import crack.functor Functor2;
-import crack.io cerr;
+import crack.io cerr, FStr;
 import crack.midi.event NoteEvent, MidiEvent = Event, Track;
+import crack.strutil rjust;
 import crash.crash Builtin, EvalContext, ObjOf, ParmInfo;
 import crash.types IntObj;
 import deadly.util convertKey;
+import .engine engine;
 import .model MidiTrack, OmniTrack;
 import .textui BindCmd;
 import .tel makeTrackObj, makeMutMidiTrackObj, MutMidiTrackObj, TrackObj;
@@ -25,12 +27,14 @@ class Tracker : Window {
         channelAttr = 2,
         noteAttr = 6,
         velAttr = 3,
+        timeAttr = 6,
+        punctAttr = 3,
         selectedRowAttr = 0x40;
 
     Track track;
 
     # Pulses per beat.
-    int __ppb = 1440;
+    int __ppb = engine.getPPB();
 
     # Steps per beat.  In regular mode, this is the number of rows that we
     # will render for each beat.
@@ -126,26 +130,72 @@ class Tracker : Window {
         gc := getGraphicsContext();
         gc.fillRect(0, 0, width, height, backgroundAttr, b' ');
 
+        # Zero-pad the value to make it at least 'size' characters.
+        String zpad(int value, int size) {
+            return rjust(radix(value, 10), 2, b'0');
+        }
+
         if (__irregular) {
             gc.write(0, 0, 7, 'Irregular mode not implemented yet.');
         } else {
+            # Compute pulses per measure (assume 4 beats per measure if not
+            # yet defined)
+            ppm := engine.getCurrentSection().measure;
+            ppm = ppm ? ppm : 4 * __ppb;
             steps := __getSteps();
             pps := @__getPPS();
+
+            # Compute the size of the largest measure number.
+            measureSize := radix(track[-1].time / ppm, 10).count();
+
+            # Compute the size of the beat number and the divisor (the number
+            # of beats per measure that the tracker displays). 'beatPulses' is
+            # the number of pulses per "beat" as displayed on the tracker.
+            int beatSize, beatPulses, beatsPerMeasure;
+            String beatDivisor;
+            if (ppm % pps) {
+                # Pulses per step doesn't evenly divide the measure.  Display
+                # the beat number as beat/ppm, where beat will just be time %
+                # start_of_measure (so beatPulses = 1).
+                beatPulses = 1;
+                beatsPerMeasure = ppm;
+                beatDivisor = radix(ppm, 10);
+                beatSize = beatDivisor.count();
+            } else {
+                # Pulses per step evenly divides the measure.
+                beatPulses = pps;
+                beatsPerMeasure = ppm / pps;
+                beatDivisor = radix(beatsPerMeasure, 10);
+                beatSize = beatDivisor.count();
+            }
+
             for (int i = __top; i < __top + height && i < steps; ++i) {
                 iter := track.iter();
                 pos := i * pps;
                 endPos := pos + pps;
                 col := 0;
+                row := i - __top;
+
+                # Write the measure and note.
+                gc.write(col, row, timeAttr, zpad(pos / ppm, measureSize));
+                col += measureSize;
+                gc.write(col++, row, punctAttr, ',');
+                gc.write(col, row, timeAttr,
+                         zpad((pos % ppm) / beatPulses, beatSize));
+                col += beatSize;
+                gc.write(col++, row, punctAttr, '/');
+                gc.write(col, row, timeAttr, beatDivisor);
+                col += beatSize + 1;
 
                 for (iter.setPos(pos); iter && iter.getPos() < endPos;
                      iter.next()) {
-                    __renderEvent(gc, i - __top, col, iter.elem());
+                    __renderEvent(gc, row, col, iter.elem());
                     col += 5;
                 }
 
                 # Clear out the rest of the selected line.
                 if (i == __curRow && col < width)
-                    gc.write(col, i - __top, selectedRowAttr,
+                    gc.write(col, row, selectedRowAttr,
                              ' ' * (width - col)
                              );
             }
