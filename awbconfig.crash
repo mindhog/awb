@@ -144,6 +144,8 @@ def editInTracker {parent onTerminate track index} {
     result bind $KEY_PGDN { result pageDown }
     result bind $KEY_DOWN { result down }
     result bind $KEY_UP { result up }
+    result bind $KEY_LEFT { result left }
+    result bind $KEY_RIGHT { result right }
     result bind $KEY_F3 { onTerminate; give handled }
 
     def mutate {action} {
