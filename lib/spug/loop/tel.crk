@@ -165,7 +165,7 @@ alias WaveObj = ObjOf[Wave];
 
         for (i = 1; i < beats; ++i) {
             metroTrack.append(NoteOn(start + i * ppb, 9, 33, 127));
-            metroTrack.append(NoteOff(start + i * ppb + 1, 9, 33, 127));
+            metroTrack.append(NoteOff(start + i * ppb + 1, 9, 33, 0));
         }
 
         start += measure;
