@@ -150,6 +150,14 @@ class Tracker : Window {
             --__curCol;
     }
 
+    ## Quantize the selected event to the beginning of its step.
+    void quantize() {
+        if (__selectedEvent) {
+            pps := @__getPPS();
+            track.relocate(__selectedEvent, __selectedEvent.time / pps * pps);
+        }
+    }
+
     void paint() {
         gc := getGraphicsContext();
         gc.fillRect(0, 0, width, height, backgroundAttr, b' ');
@@ -279,6 +287,11 @@ alias TrackObj = ObjOf[OmniTrack];
         return 1;
     }
 
+    @function(Tracker) int quantize() {
+        self.quantize();
+        return 1;
+    }
+
     @function(Tracker) MidiEvent selectedEvent() {
         return self.selectedEvent;
     }
@@ -306,6 +319,7 @@ alias TrackObj = ObjOf[OmniTrack];
     result.define('down', down(tracker));
     result.define('left', left(tracker));
     result.define('right', right(tracker));
+    result.define('quantize', quantize(tracker));
     result.define('selectedEvent', selectedEvent(tracker));
     result.define('getTrack', getTrack(tracker));
     result.define('setTrack', setTrack(tracker));

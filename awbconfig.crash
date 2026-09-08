@@ -171,6 +171,10 @@ def editInTracker {parent onTerminate track index} {
         mutate clamp
     }
 
+    # 'q' Quantizes the selected event.
+    result bind 113 { result quantize }
+
+
     result setFocus 1
     give $result
 }
