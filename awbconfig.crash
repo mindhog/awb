@@ -146,7 +146,11 @@ def editInTracker {parent onTerminate track index} {
     result bind $KEY_UP { result up }
     result bind $KEY_LEFT { result left }
     result bind $KEY_RIGHT { result right }
-    result bind $KEY_F3 { onTerminate; give handled }
+    result bind $KEY_F3 {
+        get_engine | removeInputProcessor $ep
+        onTerminate
+        give handled
+    }
 
     def mutate {action} {
         var eng [get_engine]
@@ -174,6 +178,9 @@ def editInTracker {parent onTerminate track index} {
     # 'q' Quantizes the selected event.
     result bind 113 { result quantize }
 
+    # Send midi events to the tracker.
+    var ep [result makeMidiEventProcessor [getMessageQueue]]
+    get_engine | addInputProcessor $ep
 
     result setFocus 1
     give $result
@@ -918,21 +925,6 @@ def v {} 'Bring up the text panel UI.' {
             }
             EntryBar $bottomBar 1 'Midi Record Track name:' $callback \
                 $midiTrackNameActionButton
-        }
-
-        def setMidiOutChannel {} {
-            def callback {text} {
-                var newChannel [format [+ $text]]
-                if {== $newChannel '0.000000'} {
-                    # Need to report an error here.
-                    return
-                } else {
-                    midiOutChannelActionButton setText $text
-                    setInputChannel $newChannel
-                }
-            }
-            EntryBar $bottomBar 1 'Midi out channel:' $callback \
-                $midiOutChannelActionButton
         }
 
         def setMidiOutChannel {} {

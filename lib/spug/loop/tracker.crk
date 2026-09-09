@@ -4,7 +4,7 @@ import crack.ascii radix;
 import crack.cont.array Array;
 import crack.cont.hashmap HashMap;
 import crack.exp.termui Event, GraphicsContext, KeyEvent, Window;
-import crack.functor Functor2;
+import crack.functor Functor0, Functor2;
 import crack.io cerr, FStr;
 import crack.midi.event NoteEvent, MidiEvent = Event, Track;
 import crack.strutil rjust;
@@ -12,11 +12,13 @@ import crash.crash Builtin, EvalContext, ObjOf, ParmInfo;
 import crash.types IntObj;
 import deadly.util convertKey;
 import .engine engine;
+import .midieng EventProcessor, MidiSequencer;
 import .model MidiTrack, OmniTrack;
-import .textui BindCmd;
+import .textui BindCmd, MessageQueue;
 import .tel makeTrackObj, makeMutMidiTrackObj, MutMidiTrackObj, TrackObj;
 
-@import crack.ann cvars, define, nullable;
+@import crack.ann cvars, define, impl, nullable;
+@import crack.closures closure;
 @import crash.ann function;
 
 ## Tracker-style midi editor.
@@ -249,6 +251,27 @@ class Tracker : Window {
             }
         }
     }
+
+    void onMidiEvent(MidiEvent event) {
+        event.time = __curRow * @__getPPS();
+        track.add(event);
+    }
+
+    class MidiEventProcessor @impl EventProcessor {
+        @cvars {
+            Tracker __tracker;
+            MessageQueue __queue;
+        }
+
+        bool oper call(MidiSequencer seq, MidiEvent event) {
+            __queue.add(
+                @closure[tracker := __tracker, event]() {
+                    tracker.onMidiEvent(event);
+                }
+            );
+            return false;
+        }
+    }
 }
 
 alias TrackerObj = ObjOf[Tracker];
@@ -310,6 +333,11 @@ alias TrackObj = ObjOf[OmniTrack];
         return 0;
     }
 
+    alias MEP = Tracker.MidiEventProcessor;
+    @function(Tracker) MEP makeMidiEventProcessor(MessageQueue queue) {
+        return MEP(self, queue);
+    }
+
     result := TrackerObj(tracker);
     result.define('bind', BindCmd[Tracker](tracker, result));
     result.define('setFocus', setFocus(tracker));
@@ -323,5 +351,6 @@ alias TrackObj = ObjOf[OmniTrack];
     result.define('selectedEvent', selectedEvent(tracker));
     result.define('getTrack', getTrack(tracker));
     result.define('setTrack', setTrack(tracker));
+    result.define('makeMidiEventProcessor', makeMidiEventProcessor(tracker));
     return result;
 }

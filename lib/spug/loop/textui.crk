@@ -34,6 +34,8 @@ import .uiutil renderTrack;
 @import crash.ann function;
 @import .ann over;
 
+@export_symbols Message, MessageQueue;
+
 class AppContext {}
 
 alias BindingMap = HashMap[int, Functor1[bool, AppContext]];
@@ -1144,6 +1146,12 @@ class TextController : Object @implements Controller, AppMethods {
             return 0;
         }
 
+        ## Returns the UI message queue, which can be used to construct
+        ## primitives that send messages to the UI thread.
+        @function(TextController) MessageQueue getMessageQueue() {
+            return self.__controlQueue;
+        }
+
         @function(InterpWrapper) int bind(int key, String command) {
             appBindings[key] = CallbackWrapper(
                 CrashCallback(self.getRootContext(), parseString(command))
@@ -1178,6 +1186,7 @@ class TextController : Object @implements Controller, AppMethods {
         __interp.define('setStatusText', setStatusText(this));
         __interp.define('terminate', terminate(this));
         __interp.define('runInMainThread', runInMainThread(this));
+        __interp.define('getMessageQueue', getMessageQueue(this));
         __interp.define('bind', bind(__interp));
         __interp.define('char', char());
         __interp.define('KEY_UP', ival(KEY_UP));
